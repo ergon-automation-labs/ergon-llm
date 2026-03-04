@@ -1,5 +1,7 @@
 pipeline {
-  agent { label 'air-local' }
+  // Phase 1: Run on built-in controller
+  // Phase 2: Will switch to dedicated 'air-local' agent with proper plugin setup
+  agent { label 'built-in' }
 
   environment {
     MIX_ENV = 'prod'

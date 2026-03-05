@@ -104,14 +104,23 @@ pipeline {
           VERSION=$(awk '{print $2}' ./release-artifact/bot_army_llm/releases/start_erl.data)
         fi
         VERSION=${VERSION:-"0.2.0"}
-        /opt/bot_army/scripts/nats_publish.sh ops.deploy.complete \
-          "{\"bot\":\"${BOT_NAME}\",\"node\":\"air\",\"triggered_by\":\"jenkins\",\"status\":\"success\",\"version\":\"${VERSION}\"}"
+
+        # Build JSON payload with proper formatting
+        PAYLOAD=$(cat <<EOF
+{"bot":"${BOT_NAME}","node":"air","triggered_by":"jenkins","status":"success","version":"${VERSION}"}
+EOF
+)
+        /opt/bot_army/scripts/nats_publish.sh ops.deploy.complete "$PAYLOAD"
       '''
     }
     failure {
       sh '''
-        /opt/bot_army/scripts/nats_publish.sh ops.deploy.failed \
-          "{\"bot\":\"${BOT_NAME}\",\"node\":\"air\",\"triggered_by\":\"jenkins\",\"status\":\"failed\"}"
+        # Build JSON payload for failure
+        PAYLOAD=$(cat <<EOF
+{"bot":"${BOT_NAME}","node":"air","triggered_by":"jenkins","status":"failed"}
+EOF
+)
+        /opt/bot_army/scripts/nats_publish.sh ops.deploy.failed "$PAYLOAD"
       '''
     }
     always {

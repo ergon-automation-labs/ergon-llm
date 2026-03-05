@@ -1,0 +1,4 @@
+Test commit to trigger full pipeline
+- Testing pre-push hook
+- Testing GitHub release
+- Testing Jenkins deployment

@@ -26,6 +26,27 @@ pipeline {
       }
     }
 
+    stage('Run Tests') {
+      steps {
+        sh '''
+          echo "==============================================="
+          echo "Running integration tests"
+          echo "==============================================="
+
+          # Install dependencies
+          mix deps.get
+
+          # Run all tests
+          mix test --cover || {
+            echo "❌ Tests failed - deployment aborted"
+            exit 1
+          }
+
+          echo "✓ All tests passed"
+        '''
+      }
+    }
+
     stage('Download Build Artifact') {
       steps {
         sh '''

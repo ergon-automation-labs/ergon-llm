@@ -36,6 +36,14 @@ if [[ $remote_ref == "refs/heads/main" ]]; then
     echo "⚠️  Linting issues found (non-blocking, will fail in CI)"
   }
 
+  # Run tests (required before release)
+  echo ""
+  echo "🧪 Running tests..."
+  mix test || {
+    echo "❌ Tests failed - push aborted"
+    exit 1
+  }
+
   # Build OTP release
   echo ""
   echo "📦 Building OTP release..."

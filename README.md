@@ -47,3 +47,4 @@ make check    # Run all checks
 - `bot_army_schemas_llm` - LLM message schemas
 - `bot_army_core` - Core library
 - `bot_army_infra` - Deployment infrastructure
+# NATS integration test

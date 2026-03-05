@@ -29,6 +29,13 @@ if [[ $remote_ref == "refs/heads/main" ]]; then
     exit 1
   }
 
+  # Quick linting check (non-blocking)
+  echo ""
+  echo "📝 Running linter..."
+  mix credo --strict || {
+    echo "⚠️  Linting issues found (non-blocking, will fail in CI)"
+  }
+
   # Build OTP release
   echo ""
   echo "📦 Building OTP release..."

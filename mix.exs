@@ -7,7 +7,12 @@ defmodule BotArmyLlm.MixProject do
       version: "0.5.0",
       elixir: "~> 1.14",
       start_permanent: Mix.env() == :prod,
-      deps: deps()
+      deps: deps(),
+      releases: [
+        llm_proxy: [
+          applications: [bot_army_llm: :permanent]
+        ]
+      ]
     ]
   end
 

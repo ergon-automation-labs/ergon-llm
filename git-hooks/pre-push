@@ -40,7 +40,7 @@ if [[ $remote_ref == "refs/heads/main" ]]; then
   # Extract version and create GitHub release
   echo ""
   echo "🚀 Publishing release to GitHub..."
-  VERSION=$(cat _build/prod/rel/llm_proxy/releases/RELEASES | tail -1 | cut -d' ' -f2)
+  VERSION=$(cat _build/prod/rel/llm_proxy/releases/start_erl.data | awk '{print $2}')
   echo "Version: $VERSION"
 
   # Create tarball

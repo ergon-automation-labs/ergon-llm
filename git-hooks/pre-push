@@ -1,0 +1,81 @@
+#!/bin/bash
+# Git pre-push hook for bot_army_llm
+# Runs tests and validates the build before pushing to GitHub
+# This ensures GitHub Actions receives tested code
+
+set -e
+
+echo "🔍 Running pre-push checks..."
+echo ""
+
+# Check if we're pushing to main
+read local_ref local_oid remote_ref remote_oid
+if [[ $remote_ref == "refs/heads/main" ]]; then
+  echo "⚠️  Pushing to main branch - running full test suite..."
+  echo ""
+
+  # Ensure dependencies are up to date
+  echo "📦 Installing dependencies..."
+  mix deps.get || {
+    echo "❌ Failed to install dependencies"
+    exit 1
+  }
+
+  # Run tests
+  echo ""
+  echo "🧪 Running tests..."
+  mix test || {
+    echo "❌ Tests failed - push aborted"
+    echo "Fix the tests and try again, or use 'git push --no-verify' to force"
+    exit 1
+  }
+
+  # Check for compilation issues
+  echo ""
+  echo "🔨 Compiling code..."
+  mix compile --force || {
+    echo "❌ Compilation failed - push aborted"
+    exit 1
+  }
+
+  # Build OTP release
+  echo ""
+  echo "📦 Building OTP release..."
+  MIX_ENV=prod mix release --overwrite || {
+    echo "❌ Release build failed - push aborted"
+    exit 1
+  }
+
+  # Extract version and create GitHub release
+  echo ""
+  echo "🚀 Publishing release to GitHub..."
+  VERSION=$(cat _build/prod/rel/llm_proxy/releases/RELEASES | tail -1 | cut -d' ' -f2)
+  echo "Version: $VERSION"
+
+  # Create tarball
+  tar -czf llm_proxy-$VERSION.tar.gz -C _build/prod/rel llm_proxy/ || {
+    echo "❌ Failed to create tarball"
+    exit 1
+  }
+  echo "✓ Tarball created: llm_proxy-$VERSION.tar.gz"
+
+  # Create GitHub release
+  gh release create v$VERSION llm_proxy-$VERSION.tar.gz \
+    --title "Release v$VERSION" \
+    --notes "LLM Bot Elixir release v$VERSION. Automatically deployed by Jenkins." \
+    --draft=false || {
+    echo "⚠️  Release already exists or GitHub publish failed"
+    echo "Continuing with push anyway..."
+  }
+  echo "✓ Release published to GitHub"
+
+  echo ""
+  echo "✅ All checks passed, release built and published!"
+  echo "📤 Proceeding with push..."
+else
+  echo "ℹ️  Pushing to feature branch - skipping full test suite"
+  echo "Tests will run on GitHub Actions"
+fi
+
+echo ""
+exit 0

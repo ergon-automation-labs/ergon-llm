@@ -1,0 +1,74 @@
+name: Build Release (Disabled)
+
+on:
+  workflow_dispatch: {}
+  # DISABLED: Builds now happen locally with `make release` and `make publish-release`
+  # push:
+  #   branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Elixir
+        uses: erlef/setup-elixir@v1
+        with:
+          elixir-version: '1.17.3'
+          otp-version: '27'
+
+      - name: Clone dependency repositories
+        run: |
+          cd ..
+          [ -d bot_army_core ] || git clone https://github.com/ergon-automation-labs/ergon-core.git bot_army_core
+          [ -d bot_army_runtime ] || git clone https://github.com/ergon-automation-labs/ergon-runtime.git bot_army_runtime
+
+      - name: Cache Mix dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-${{ hashFiles('**/mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-mix-
+
+      - name: Install dependencies
+        run: mix deps.get
+
+      - name: Run tests
+        run: mix test
+
+      - name: Build release
+        run: mix release --overwrite
+        env:
+          MIX_ENV: prod
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: llm-release
+          path: _build/prod/rel/llm_proxy/
+          retention-days: 30
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: _build/prod/rel/llm_proxy/**
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Notify Jenkins of build completion
+        if: always()
+        run: |
+          ARTIFACT_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}"
+          echo "Build completed at: $ARTIFACT_URL"
+          echo "Download the artifact using the Actions UI or API"

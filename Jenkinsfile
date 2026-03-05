@@ -28,6 +28,33 @@ pipeline {
       }
     }
 
+    stage('Restore Cache') {
+      steps {
+        script {
+          // Try to restore compiled dependencies from previous build
+          echo "Checking for cached dependencies..."
+          copyArtifacts(
+            projectName: env.JOB_NAME,
+            filter: 'deps-cache.tar.gz,build-cache.tar.gz',
+            selector: lastSuccessful(),
+            optional: true
+          )
+        }
+        sh '''
+          if [ -f deps-cache.tar.gz ]; then
+            echo "Restoring cached dependencies..."
+            tar -xzf deps-cache.tar.gz
+            rm deps-cache.tar.gz
+          fi
+          if [ -f build-cache.tar.gz ]; then
+            echo "Restoring cached build artifacts..."
+            tar -xzf build-cache.tar.gz
+            rm build-cache.tar.gz
+          fi
+        '''
+      }
+    }
+
     stage('Test') {
       steps {
         sh '''
@@ -79,6 +106,16 @@ pipeline {
 
   post {
     success {
+      sh '''
+        echo "Caching dependencies for next build..."
+        tar -czf deps-cache.tar.gz deps/
+        tar -czf build-cache.tar.gz _build/
+      '''
+      archiveArtifacts(
+        artifacts: 'deps-cache.tar.gz,build-cache.tar.gz',
+        allowEmptyArchive: true,
+        onlyIfSuccessful: true
+      )
       sh '''
         VERSION=$(cat _build/prod/rel/${BOT_NAME}/releases/RELEASES | tail -1 | cut -d' ' -f2)
         /opt/bot_army/scripts/nats_publish.sh ops.deploy.complete \

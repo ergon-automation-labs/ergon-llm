@@ -110,7 +110,8 @@ pipeline {
 {"bot":"${BOT_NAME}","node":"air","triggered_by":"jenkins","status":"success","version":"${VERSION}"}
 EOF
 )
-        /opt/bot_army/scripts/nats_publish.sh ops.deploy.complete "$PAYLOAD"
+        echo "📢 Notifying NATS of successful deployment..."
+        /opt/bot_army/scripts/nats_publish.sh ops.deploy.complete "$PAYLOAD" || echo "⚠️  NATS notification failed (non-blocking)"
       '''
     }
     failure {
@@ -120,7 +121,8 @@ EOF
 {"bot":"${BOT_NAME}","node":"air","triggered_by":"jenkins","status":"failed"}
 EOF
 )
-        /opt/bot_army/scripts/nats_publish.sh ops.deploy.failed "$PAYLOAD"
+        echo "📢 Notifying NATS of failed deployment..."
+        /opt/bot_army/scripts/nats_publish.sh ops.deploy.failed "$PAYLOAD" || echo "⚠️  NATS notification failed (non-blocking)"
       '''
     }
     always {

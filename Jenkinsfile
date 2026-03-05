@@ -4,7 +4,7 @@ pipeline {
   agent { label 'built-in' }
 
   options {
-    timeout(time: 60, unit: 'MINUTES')
+    timeout(time: 120, unit: 'MINUTES')
     timestamps()
   }
 
@@ -60,10 +60,27 @@ pipeline {
     stage('Test') {
       steps {
         sh '''
-          echo "Installing dependencies..."
-          mix deps.get
+          echo "==============================================="
+          echo "Installing dependencies (verbose mode enabled)..."
+          echo "==============================================="
+          echo "Start time: $(date)"
+
+          # Enable verbose output and show progress
+          set -x
+          time mix deps.get --verbose
+          set +x
+
+          echo "Dependencies installed at: $(date)"
+          echo ""
+          echo "Dependency list:"
+          mix deps
+          echo ""
+          echo "==============================================="
           echo "Running tests..."
-          mix test
+          echo "==============================================="
+          echo "Start time: $(date)"
+          time mix test
+          echo "Tests completed at: $(date)"
         '''
       }
     }
@@ -71,9 +88,23 @@ pipeline {
     stage('Build Release') {
       steps {
         sh '''
+          echo "==============================================="
           echo "Building OTP release..."
-          mix deps.get --only prod
-          mix release --overwrite
+          echo "==============================================="
+          echo "Start time: $(date)"
+          echo "System status before build:"
+          df -h / | tail -1
+          ps aux | grep -i beam | grep -v grep || echo "No beam processes yet"
+
+          set -x
+          time mix deps.get --only prod --verbose
+          time mix release --overwrite --verbose
+          set +x
+
+          echo ""
+          echo "Release completed at: $(date)"
+          echo "Release size:"
+          du -sh _build/prod/rel/* 2>/dev/null || echo "Unknown"
         '''
       }
     }

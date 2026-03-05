@@ -7,6 +7,11 @@ pipeline {
     timestamps()
   }
 
+  triggers {
+    // Poll GitHub every 5 minutes for new commits
+    pollSCM('H/5 * * * *')
+  }
+
   environment {
     BOT_NAME = 'llm_proxy'
     RELEASE_DIR = "/opt/ergon/releases/${BOT_NAME}"

@@ -3,6 +3,11 @@ pipeline {
   // Phase 2: Will switch to dedicated 'air-local' agent with proper plugin setup
   agent { label 'built-in' }
 
+  options {
+    timeout(time: 30, unit: 'MINUTES')
+    timestamps()
+  }
+
   environment {
     MIX_ENV = 'prod'
     BOT_NAME = 'llm_proxy'

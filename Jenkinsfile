@@ -100,7 +100,10 @@ pipeline {
     success {
       sh '''
         # Extract version from the deployed release
-        VERSION=$(cat ./release-artifact/bot_army_llm/releases/start_erl.data 2>/dev/null | awk '{print $2}' || echo "0.1.0")
+        if [ -f ./release-artifact/bot_army_llm/releases/start_erl.data ]; then
+          VERSION=$(awk '{print $2}' ./release-artifact/bot_army_llm/releases/start_erl.data)
+        fi
+        VERSION=${VERSION:-"0.2.0"}
         /opt/bot_army/scripts/nats_publish.sh ops.deploy.complete \
           "{\"bot\":\"${BOT_NAME}\",\"node\":\"air\",\"triggered_by\":\"jenkins\",\"status\":\"success\",\"version\":\"${VERSION}\"}"
       '''

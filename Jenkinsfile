@@ -31,27 +31,29 @@ pipeline {
     stage('Restore Cache') {
       steps {
         script {
-          // Try to restore compiled dependencies from previous build
-          echo "Checking for cached dependencies..."
-          copyArtifacts(
-            projectName: env.JOB_NAME,
-            filter: 'deps-cache.tar.gz,build-cache.tar.gz',
-            selector: lastSuccessful(),
-            optional: true
-          )
+          try {
+            echo "Checking for cached dependencies from previous build..."
+            unstash 'deps-cache'
+            sh '''
+              echo "Extracting deps cache..."
+              tar -xzf deps-cache.tar.gz 2>/dev/null || echo "Cache extraction failed or not present"
+              rm -f deps-cache.tar.gz
+            '''
+          } catch (Exception e) {
+            echo "No deps cache found (first build is expected to be slow)"
+          }
+
+          try {
+            unstash 'build-cache'
+            sh '''
+              echo "Extracting build cache..."
+              tar -xzf build-cache.tar.gz 2>/dev/null || echo "Build cache extraction failed or not present"
+              rm -f build-cache.tar.gz
+            '''
+          } catch (Exception e) {
+            echo "No build cache found"
+          }
         }
-        sh '''
-          if [ -f deps-cache.tar.gz ]; then
-            echo "Restoring cached dependencies..."
-            tar -xzf deps-cache.tar.gz
-            rm deps-cache.tar.gz
-          fi
-          if [ -f build-cache.tar.gz ]; then
-            echo "Restoring cached build artifacts..."
-            tar -xzf build-cache.tar.gz
-            rm build-cache.tar.gz
-          fi
-        '''
       }
     }
 
@@ -108,14 +110,22 @@ pipeline {
     success {
       sh '''
         echo "Caching dependencies for next build..."
-        tar -czf deps-cache.tar.gz deps/
-        tar -czf build-cache.tar.gz _build/
+        tar -czf deps-cache.tar.gz deps/ 2>/dev/null || echo "No deps to cache"
+        tar -czf build-cache.tar.gz _build/ 2>/dev/null || echo "No build to cache"
       '''
-      archiveArtifacts(
-        artifacts: 'deps-cache.tar.gz,build-cache.tar.gz',
-        allowEmptyArchive: true,
-        onlyIfSuccessful: true
-      )
+      script {
+        try {
+          stash name: 'deps-cache', includes: 'deps-cache.tar.gz', allowEmpty: true
+        } catch (Exception e) {
+          echo "Failed to stash deps cache: ${e.message}"
+        }
+
+        try {
+          stash name: 'build-cache', includes: 'build-cache.tar.gz', allowEmpty: true
+        } catch (Exception e) {
+          echo "Failed to stash build cache: ${e.message}"
+        }
+      }
       sh '''
         VERSION=$(cat _build/prod/rel/${BOT_NAME}/releases/RELEASES | tail -1 | cut -d' ' -f2)
         /opt/bot_army/scripts/nats_publish.sh ops.deploy.complete \

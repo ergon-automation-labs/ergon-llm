@@ -9,11 +9,12 @@ This project uses Git hooks to automate build validation and release publishing.
 ### What it does:
 1. **On main branch:**
    - Runs `mix deps.get` to ensure dependencies are fresh
-   - Runs `mix test` to validate all tests pass
    - Runs `mix compile --force` to check for compilation errors
+   - Runs `mix credo --strict` for linting (warnings only, doesn't block)
    - **Builds OTP release** with `MIX_ENV=prod mix release`
    - **Creates tarball** and **publishes to GitHub release** automatically
-   - **Blocks the push** if any check fails
+   - **Blocks the push** if compilation or release build fails
+   - Full test suite runs in Jenkins/CI (requires database connectivity)
    - If all succeed, push proceeds and Jenkins automatically detects the new release
 
 2. **On feature branches:**
@@ -51,17 +52,18 @@ git push origin main
         ↓
 Pre-push hook runs locally
   ✓ mix deps.get
-  ✓ mix test
-  ✓ mix compile
+  ✓ mix compile (catches compilation errors)
+  ✓ mix credo (linting, warnings only)
   ✓ MIX_ENV=prod mix release
   ✓ Create tarball
   ✓ gh release create v$VERSION
         ↓
-  All pass? ─→ ✅ Code pushed + Release published
-  Any fail? ─→ ❌ Push blocked (fix and try again)
+  Compilation ok? ─→ ✅ Code pushed + Release published
+  Compilation fail? ─→ ❌ Push blocked (fix and try again)
         ↓
 Jenkins detects new GitHub release
-  ✓ Downloads tarball
+  ✓ Runs full test suite (mix test + database)
+  ✓ Downloads tarball if tests pass
   ✓ Deploys to Air node
   ✓ Publishes NATS events
         ↓

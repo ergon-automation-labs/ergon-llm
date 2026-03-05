@@ -1,7 +1,7 @@
 #!/bin/bash
 # Git pre-push hook for bot_army_llm
-# Validates code compiles and builds release before pushing to GitHub
-# Full test suite runs in Jenkins/CI (requires database)
+# Runs tests and validates the build before pushing to GitHub
+# This ensures GitHub Actions receives tested code
 
 set -e
 
@@ -11,7 +11,7 @@ echo ""
 # Check if we're pushing to main
 read local_ref local_oid remote_ref remote_oid
 if [[ $remote_ref == "refs/heads/main" ]]; then
-  echo "⚠️  Pushing to main branch - validating and building release..."
+  echo "⚠️  Pushing to main branch - running full test suite..."
   echo ""
 
   # Ensure dependencies are up to date
@@ -21,19 +21,21 @@ if [[ $remote_ref == "refs/heads/main" ]]; then
     exit 1
   }
 
+  # Run tests
+  echo ""
+  echo "🧪 Running tests..."
+  mix test || {
+    echo "❌ Tests failed - push aborted"
+    echo "Fix the tests and try again, or use 'git push --no-verify' to force"
+    exit 1
+  }
+
   # Check for compilation issues
   echo ""
   echo "🔨 Compiling code..."
   mix compile --force || {
     echo "❌ Compilation failed - push aborted"
     exit 1
-  }
-
-  # Quick linting check
-  echo ""
-  echo "📝 Running linter..."
-  mix credo --strict || {
-    echo "⚠️  Linting issues found (non-blocking, will fail in CI)"
   }
 
   # Build OTP release
@@ -47,25 +49,18 @@ if [[ $remote_ref == "refs/heads/main" ]]; then
   # Extract version and create GitHub release
   echo ""
   echo "🚀 Publishing release to GitHub..."
-  APP_NAME="bot_army_llm"
-  RELEASE_DIR="_build/prod/rel/$APP_NAME"
-  # Get version from start_erl.data (format: "OTP_VERSION APP_VERSION")
-  VERSION=$(cat "$RELEASE_DIR/releases/start_erl.data" | awk '{print $2}')
-  if [ -z "$VERSION" ]; then
-    echo "❌ Could not extract version from release"
-    exit 1
-  fi
+  VERSION=$(cat _build/prod/rel/llm_proxy/releases/RELEASES | tail -1 | cut -d' ' -f2)
   echo "Version: $VERSION"
 
-  # Create tarball with app name
-  tar -czf "${APP_NAME}-${VERSION}.tar.gz" -C _build/prod/rel "$APP_NAME/" || {
+  # Create tarball
+  tar -czf llm_proxy-$VERSION.tar.gz -C _build/prod/rel llm_proxy/ || {
     echo "❌ Failed to create tarball"
     exit 1
   }
-  echo "✓ Tarball created: ${APP_NAME}-${VERSION}.tar.gz"
+  echo "✓ Tarball created: llm_proxy-$VERSION.tar.gz"
 
   # Create GitHub release
-  gh release create v$VERSION "${APP_NAME}-${VERSION}.tar.gz" \
+  gh release create v$VERSION llm_proxy-$VERSION.tar.gz \
     --title "Release v$VERSION" \
     --notes "LLM Bot Elixir release v$VERSION. Automatically deployed by Jenkins." \
     --draft=false || {

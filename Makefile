@@ -1,10 +1,11 @@
-.PHONY: setup help deps test credo dialyzer coverage check format clean release publish-release
+.PHONY: setup help deps test credo dialyzer coverage check format clean release publish-release setup-hooks
 
 help:
 	@echo "BotArmyLlm - LLM Bot"
 	@echo ""
 	@echo "Available commands:"
-	@echo "  make setup           - Set up project (deps.get)"
+	@echo "  make setup           - Set up project (deps.get + install git hooks)"
+	@echo "  make setup-hooks     - Install git hooks for pre-push validation"
 	@echo "  make test            - Run all tests"
 	@echo "  make credo           - Run linter"
 	@echo "  make dialyzer        - Run static analysis"
@@ -21,8 +22,12 @@ help:
 	@echo "  git push             - Pre-push hook validates, builds, and publishes automatically"
 	@echo ""
 
-setup: init deps
+setup: init deps setup-hooks
 	@echo "Setup complete."
+
+setup-hooks:
+	@git config core.hooksPath git-hooks
+	@echo "✓ Git hooks installed (core.hooksPath = git-hooks)"
 
 init:
 	@if [ ! -d .git ]; then git init; echo "Git initialized."; else echo "Git already initialized."; fi

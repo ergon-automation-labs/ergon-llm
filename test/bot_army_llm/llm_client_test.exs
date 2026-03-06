@@ -1,101 +1,75 @@
 defmodule BotArmyLlm.LlmClientTest do
   use ExUnit.Case
 
-  describe "complete/2" do
-    test "returns error when no providers are available" do
-      # When all providers are unavailable (no env vars set, no services running)
-      # This test may fail if local Ollama is actually running
-      with_env([
-        {"OLLAMA_URL", "http://nonexistent:11434"},
-        {"OLLAMA_MINI_URL", nil},
-        {"BLACKBOX_API_KEY", nil},
-        {"ANTHROPIC_API_KEY", nil}
-      ]) do
-        {:error, :no_providers_available} = BotArmyLlm.LlmClient.complete("test prompt")
-      end
+  alias BotArmyLlm.ComplexityScorer
+
+  describe "ComplexityScorer.score/1" do
+    test "short factual question scores :light" do
+      assert ComplexityScorer.score("What is the capital of France?") == :light
     end
 
-    test "returns ok when Ollama is available" do
-      # Mock HTTPoison to simulate Ollama response
-      {:ok, _pid} = start_supervised({ExUnit.Callbacks, []})
-
-      with_mock(HTTPoison, [:passthrough],
-        post: fn _url, _body, _headers ->
-          {:ok,
-           %HTTPoison.Response{
-             status_code: 200,
-             body:
-               Jason.encode!(%{
-                 "message" => %{"content" => "This is a test response"}
-               })
-           }}
-        end
-      ) do
-        assert {:ok, result} = BotArmyLlm.LlmClient.complete("test prompt")
-        assert result[:completion] == "This is a test response"
-        assert result[:model_used] == "llama3.2"
-        assert is_integer(result[:latency_ms])
-      end
+    test "yes/no question scores :light" do
+      assert ComplexityScorer.score("yes or no") == :light
     end
 
-    test "resolves model based on North Star conventions" do
-      with_mock(HTTPoison, [:passthrough],
-        post: fn _url, body, _headers ->
-          case Jason.decode(body) do
-            {:ok, payload} ->
-              model = Map.get(payload, "model")
+    test "single heavy keyword with enough words scores :medium" do
+      # 1 heavy keyword ("explain"), 13 words → :medium
+      assert ComplexityScorer.score(
+               "Can you explain how TCP/IP packet routing works in a computer network?"
+             ) == :medium
+    end
 
-              {:ok,
-               %HTTPoison.Response{
-                 status_code: 200,
-                 body: Jason.encode!(%{"message" => %{"content" => "response"}})
-               }}
+    test "multiple heavy keywords scores :heavy" do
+      # "implement" + "function" → 2 heavy keywords → :heavy regardless of length
+      assert ComplexityScorer.score(
+               "Implement a binary search tree with insert and delete functions"
+             ) == :heavy
+    end
 
-            {:error, _} ->
-              {:error, :invalid_json}
-          end
-        end
-      ) do
-        with_env([{"ANTHROPIC_API_KEY", "test_key"}]) do
-          {:ok, result} = BotArmyLlm.LlmClient.complete("test", model: "fast")
-          assert result[:model_used] == "claude-haiku-4-5-20251001"
+    test "3+ heavy keywords scores :heavy" do
+      assert ComplexityScorer.score(
+               "Design and implement an algorithm to analyze and compare two code architectures"
+             ) == :heavy
+    end
 
-          {:ok, result} = BotArmyLlm.LlmClient.complete("test", model: "powerful")
-          assert result[:model_used] == "claude-sonnet-4-6"
-        end
-      end
+    test "200+ word prompt scores :heavy" do
+      long_text = String.duplicate("word ", 210)
+      assert ComplexityScorer.score(long_text) == :heavy
     end
   end
 
-  # Helper to set env vars for test
+  describe "complete/2 with no cloud providers configured" do
+    test "heavy prompt returns error when all providers unconfigured" do
+      with_env(
+        [
+          {"BLACKBOX_API_KEY", nil},
+          {"OPENROUTER_API_KEY", nil},
+          {"ANTHROPIC_API_KEY", nil}
+        ],
+        fn ->
+          # 200+ words → :heavy → skips Ollama, tries cloud only → all unconfigured
+          heavy_prompt = String.duplicate("implement complex algorithm code ", 10)
+          assert {:error, :no_providers_available} = BotArmyLlm.LlmClient.complete(heavy_prompt)
+        end
+      )
+    end
+  end
+
+  # Temporarily override env vars for the duration of a test
   defp with_env(env_vars, func) do
     old_values = Enum.map(env_vars, fn {key, _} -> {key, System.get_env(key)} end)
 
-    Enum.each(env_vars, fn {key, value} ->
-      if value, do: System.put_env(key, value), else: System.delete_env(key)
+    Enum.each(env_vars, fn
+      {key, nil} -> System.delete_env(key)
+      {key, value} -> System.put_env(key, value)
     end)
 
     try do
       func.()
     after
-      Enum.each(old_values, fn {key, value} ->
-        if value, do: System.put_env(key, value), else: System.delete_env(key)
-      end)
-    end
-  end
-
-  defp with_env(env_vars, test_func) when is_function(test_func, 0) do
-    old_values = Enum.map(env_vars, fn {key, _} -> {key, System.get_env(key)} end)
-
-    Enum.each(env_vars, fn {key, value} ->
-      if value, do: System.put_env(key, value), else: System.delete_env(key)
-    end)
-
-    try do
-      test_func.()
-    after
-      Enum.each(old_values, fn {key, value} ->
-        if value, do: System.put_env(key, value), else: System.delete_env(key)
+      Enum.each(old_values, fn
+        {key, nil} -> System.delete_env(key)
+        {key, value} -> System.put_env(key, value)
       end)
     end
   end

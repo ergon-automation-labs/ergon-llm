@@ -38,7 +38,8 @@ defmodule BotArmyLlm.ComplexityScorer do
 
     cond do
       word_count > 200 or heavy_hits >= 3 -> :heavy
-      heavy_hits >= 1 and word_count > 30 -> :medium
+      heavy_hits >= 2 -> :heavy
+      heavy_hits >= 1 and word_count > 10 -> :medium
       word_count > 100 -> :medium
       word_count <= 20 and light_hits >= 1 -> :light
       word_count <= 50 -> :light

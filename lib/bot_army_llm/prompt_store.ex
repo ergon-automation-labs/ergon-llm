@@ -96,10 +96,17 @@ defmodule BotArmyLlm.PromptStore do
   def init(_opts) do
     Logger.info("PromptStore started")
     # Load all prompts from database into GenServer state
-    prompts = BotArmyLlm.Repo.all(BotArmyLlm.Schemas.Prompt)
-    state = Enum.reduce(prompts, %{}, fn prompt, acc ->
-      Map.put(acc, prompt.id |> to_string(), schema_to_map(prompt))
-    end)
+    # Gracefully handle database unavailability (e.g., in tests)
+    state = try do
+      prompts = BotArmyLlm.Repo.all(BotArmyLlm.Schemas.Prompt)
+      Enum.reduce(prompts, %{}, fn prompt, acc ->
+        Map.put(acc, prompt.id |> to_string(), schema_to_map(prompt))
+      end)
+    rescue
+      _ ->
+        Logger.warning("Could not load prompts from database (database unavailable). Starting with empty state.")
+        %{}
+    end
     {:ok, state}
   end
 

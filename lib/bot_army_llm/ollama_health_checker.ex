@@ -41,7 +41,10 @@ defmodule BotArmyLlm.OllamaHealthChecker do
   def best_ollama_node(:heavy), do: {:error, :skip_local}
 
   def best_ollama_node(complexity) do
-    GenServer.call(__MODULE__, {:best_node, complexity})
+    case Process.whereis(__MODULE__) do
+      nil -> {:error, :health_checker_not_running}
+      _pid -> GenServer.call(__MODULE__, {:best_node, complexity})
+    end
   end
 
   @doc "Returns current health status of all configured nodes."

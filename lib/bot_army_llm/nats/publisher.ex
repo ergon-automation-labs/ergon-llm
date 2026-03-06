@@ -48,6 +48,10 @@ defmodule BotArmyLlm.NATS.Publisher do
       e ->
         Logger.error("Exception during publish: #{inspect(e)}")
         {:error, e}
+    catch
+      :exit, reason ->
+        Logger.warning("NATS not available, dropping event: #{inspect(reason)}")
+        {:error, :nats_unavailable}
     end
   end
 

@@ -113,3 +113,47 @@ Deployment happens after:
 - `bot_army_schemas_llm` - LLM message schemas
 - `bot_army_core` - Core library and NATS decoder
 - `bot_army_infra` - Deployment infrastructure
+
+---
+
+## Agent Workflow Pattern
+
+**Effective use of Claude Code agents when developing this bot.**
+
+This follows the polyrepo agent strategy documented in `bot_army_infra/CLAUDE.md`.
+
+### When to Use Haiku Agents
+
+- Exploring bot implementation patterns and existing handlers
+- Reading test files to understand expected behavior
+- Diagnostics: checking test failures, understanding error logs
+- Code search: finding where specific functionality is implemented
+- Verification: running tests, confirming deployments
+
+**Why**: Fast iteration loop (seconds vs minutes), perfect for read-heavy tasks and diagnostics.
+
+### When to Use Sonnet Agents
+
+- Implementing new handlers or features
+- Designing multi-provider routing logic (as in llm_client.ex)
+- Validating architecture before writing code
+- Refactoring existing handlers
+- Complex integrations with external APIs
+
+**Why**: Deep reasoning ensures features are designed correctly, multi-file changes are coherent, and edge cases are handled.
+
+### Example: Add New Provider to LLM Client
+
+```
+User: "Add Mistral API support to llm_client"
+  ↓
+1. Haiku (Explore): Read existing providers (blackbox, openrouter, anthropic)
+   Understand provider pattern and error handling
+  ↓
+2. Sonnet (Plan): Design Mistral provider module
+   Identify config changes, integration points, test cases
+  ↓
+3. Sonnet (Implement): Write provider module, update router, add tests
+  ↓
+4. Haiku (Verify): Run test suite, check for syntax errors
+```

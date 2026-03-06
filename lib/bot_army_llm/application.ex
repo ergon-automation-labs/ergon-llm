@@ -16,8 +16,14 @@ defmodule BotArmyLlm.Application do
       # Database connection
       BotArmyLlm.Repo,
 
+      # NATS connection (runtime library)
+      {BotArmyRuntime.NATS.Connection, []},
+
       # Prompt storage (in-memory + Ecto persistence)
       {BotArmyLlm.PromptStore, []},
+
+      # Ollama health checker (probes nodes every 60s, drives routing decisions)
+      {BotArmyLlm.OllamaHealthChecker, []},
 
       # NATS connection and consumer
       {BotArmyLlm.NATS.Consumer, []}

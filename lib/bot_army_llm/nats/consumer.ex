@@ -25,9 +25,7 @@ defmodule BotArmyLlm.NATS.Consumer do
   use GenServer
   require Logger
 
-  @nats_url System.get_env("NATS_URL", "nats://localhost:4222")
   @reconnect_delay_ms 5000
-  @max_reconnect_retries 10
 
   # API
 
@@ -48,8 +46,36 @@ defmodule BotArmyLlm.NATS.Consumer do
       opts: opts
     }
 
-    Logger.info("LLM NATS consumer initialized, ready to receive messages from NATS broker")
-    {:ok, state}
+    {:ok, state, {:continue, :connect}}
+  end
+
+  @impl true
+  def handle_continue(:connect, state) do
+    case GenServer.call(BotArmyRuntime.NATS.Connection, :get_connection, 5000) do
+      {:ok, conn} ->
+        Logger.info("Connected to NATS, subscribing to llm.prompt.submit")
+
+        case Gnat.sub(conn, self(), "llm.prompt.submit") do
+          {:ok, sub} ->
+            Logger.info("LLM consumer subscribed to llm.prompt.submit")
+            {:noreply, %{state | subscriptions: [sub]}}
+
+          {:error, reason} ->
+            Logger.error("Failed to subscribe to NATS: #{inspect(reason)}")
+            Process.send_after(self(), :reconnect, @reconnect_delay_ms)
+            {:noreply, state}
+        end
+
+      {:error, _reason} ->
+        Logger.warning("NATS connection not ready, will retry")
+        Process.send_after(self(), :connect_retry, @reconnect_delay_ms)
+        {:noreply, state}
+    end
+  end
+
+  @impl true
+  def handle_info(:connect_retry, state) do
+    {:noreply, state, {:continue, :connect}}
   end
 
   @impl true

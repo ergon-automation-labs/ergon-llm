@@ -48,7 +48,8 @@ defmodule BotArmyLlm.Handlers.PromptHandler do
   # Private functions
 
   defp validate_submit_payload(payload) when is_map(payload) do
-    with :ok <- require_field(payload, "prompt") do
+    with :ok <- require_field(payload, "text"),
+         :ok <- require_field(payload, "prompt_id") do
       :ok
     end
   end
@@ -63,59 +64,33 @@ defmodule BotArmyLlm.Handlers.PromptHandler do
   end
 
   defp call_llm(payload) do
-    prompt = payload["prompt"]
-    model = Map.get(payload, "model", "gpt-3.5-turbo")
-    _temperature = Map.get(payload, "temperature", 0.7)
-    _max_tokens = Map.get(payload, "max_tokens", 1000)
+    text = payload["text"]
+    model = Map.get(payload, "model", "auto")
 
-    Logger.debug("Calling LLM with prompt: #{String.slice(prompt, 0, 50)}...")
+    Logger.debug("Calling LLM with prompt: #{String.slice(text, 0, 50)}...")
 
-    # Mock LLM response
-    completion = generate_mock_completion(prompt, model)
+    # Call real LLM client
+    case BotArmyLlm.LlmClient.complete(text, model: model) do
+      {:ok, result} ->
+        {:ok, result}
 
-    input_tokens = estimate_tokens(prompt)
-    output_tokens = estimate_tokens(completion)
-
-    response = %{
-      "completion" => completion,
-      "model" => model,
-      "tokens" => %{
-        "input" => input_tokens,
-        "output" => output_tokens,
-        "total" => input_tokens + output_tokens
-      },
-      "latency_ms" => Enum.random(100..500)
-    }
-
-    {:ok, response}
-  end
-
-  defp generate_mock_completion(prompt, _model) do
-    # Mock completion based on prompt content
-    p = String.downcase(prompt)
-    cond do
-      String.contains?(p, "hello") ->
-        "Hello! How can I help you today?"
-
-      String.contains?(p, "what") ->
-        "That's an interesting question. Let me think about that for a moment. Based on my knowledge, I can provide some insights on this topic."
-
-      String.contains?(p, "how") ->
-        "Here's how you can approach this: First, consider the core requirements. Second, break it down into smaller steps. Third, implement and test each component."
-
-      true ->
-        "I understand your prompt. This is a mock LLM response for testing purposes. In production, this would be replaced with actual calls to Claude API or similar."
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
-  defp estimate_tokens(text) when is_binary(text) do
-    # Simple estimation: ~4 characters per token on average
-    String.length(text) / 4 |> Float.round() |> trunc()
-  end
-
-  defp estimate_tokens(_), do: 0
-
   defp publish_completion(payload, response, event_id, _original_message) do
+    prompt_id = payload["prompt_id"]
+
+    # Persist to database
+    case persist_completion(prompt_id, response) do
+      {:ok, _completion} ->
+        Logger.info("Completion persisted to database for prompt #{prompt_id}")
+
+      {:error, reason} ->
+        Logger.error("Failed to persist completion: #{inspect(reason)}")
+    end
+
     event_data = %{
       "event" => "llm.completion",
       "event_id" => UUID.uuid4(),
@@ -126,10 +101,13 @@ defmodule BotArmyLlm.Handlers.PromptHandler do
       "schema_version" => "1.0",
       "payload" => %{
         "completion" => response["completion"],
-        "model" => response["model"],
-        "tokens" => response["tokens"],
+        "model" => response["model_used"],
+        "tokens" => %{
+          "input" => Map.get(response, "tokens_input", 0),
+          "output" => Map.get(response, "tokens_output", 0)
+        },
         "latency_ms" => response["latency_ms"],
-        "original_prompt_id" => Map.get(payload, "prompt_id", "unknown"),
+        "original_prompt_id" => prompt_id,
         "triggered_by_event_id" => event_id
       }
     }
@@ -137,6 +115,22 @@ defmodule BotArmyLlm.Handlers.PromptHandler do
     case BotArmyLlm.NATS.Publisher.publish(event_data) do
       :ok -> Logger.debug("Published completion event")
       {:error, reason} -> Logger.error("Failed to publish completion: #{inspect(reason)}")
+    end
+  end
+
+  defp persist_completion(prompt_id, response) do
+    case Ecto.UUID.cast(prompt_id) do
+      {:ok, uuid} ->
+        BotArmyLlm.Repo.insert(%BotArmyLlm.Schemas.Completion{
+          completion_text: response["completion"],
+          model_used: response["model_used"],
+          tokens_input: Map.get(response, "tokens_input"),
+          tokens_output: Map.get(response, "tokens_output"),
+          prompt_id: uuid
+        })
+
+      :error ->
+        {:error, :invalid_prompt_id}
     end
   end
 

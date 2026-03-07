@@ -10,3 +10,6 @@ config :bot_army_llm, BotArmyLlm.Repo,
   password: System.get_env("BOT_ARMY_LLM_DB_PASSWORD", "postgres"),
   pool: Ecto.Adapters.SQL.Sandbox,
   pool_size: 1
+
+# Use mock LLM client in tests
+config :bot_army_llm, llm_client: BotArmyLlm.LlmClientMock

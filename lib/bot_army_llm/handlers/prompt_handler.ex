@@ -69,8 +69,9 @@ defmodule BotArmyLlm.Handlers.PromptHandler do
 
     Logger.debug("Calling LLM with prompt: #{String.slice(text, 0, 50)}...")
 
-    # Call real LLM client
-    case BotArmyLlm.LlmClient.complete(text, model: model) do
+    # Call configured LLM client (real or mock in tests)
+    llm_client = Application.get_env(:bot_army_llm, :llm_client, BotArmyLlm.LlmClient)
+    case llm_client.complete(text, model: model) do
       {:ok, result} ->
         {:ok, result}
 

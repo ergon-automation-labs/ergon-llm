@@ -22,3 +22,4 @@ config :bot_army_runtime, :nats,
   ping_interval: 30_000,
   max_reconnect_attempts: 10,
   reconnect_delay_ms: 1000
+

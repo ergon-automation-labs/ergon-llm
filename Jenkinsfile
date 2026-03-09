@@ -14,6 +14,7 @@ pipeline {
 
   environment {
     BOT_NAME = 'llm_proxy'
+    STATE_NAME = 'llm_bot'
     RELEASE_DIR = "/opt/ergon/releases/${BOT_NAME}"
     GITHUB_REPO = "ergon-automation-labs/ergon-llm"
   }
@@ -87,8 +88,8 @@ pipeline {
           echo "Updating current symlink..."
           ln -sfn "${DEST}" "${RELEASE_DIR}/current"
 
-          echo "Restarting service..."
-          launchctl kickstart -k system/com.botarmy.${BOT_NAME} || launchctl load /Library/LaunchDaemons/com.botarmy.${BOT_NAME}.plist
+          echo "Deploying service via Salt..."
+          sudo /opt/salt/salt-call --local state.apply bots.${STATE_NAME}
 
           echo "Checking service health..."
           /opt/bot_army/scripts/health_check.sh ${BOT_NAME}
@@ -107,7 +108,7 @@ pipeline {
           echo "==============================================="
 
           # Get the release binary path
-          RELEASE_BIN="${RELEASE_DIR}/current/bot_army_llm/bin/bot_army_llm"
+          RELEASE_BIN="${RELEASE_DIR}/current/llm_proxy/bin/llm_proxy"
 
           if [ ! -f "$RELEASE_BIN" ]; then
             echo "⚠️  Release binary not found at $RELEASE_BIN"
@@ -117,9 +118,9 @@ pipeline {
 
           # Run migrations using the release
           # The release has database config from launchd environment
-          echo "Running: $RELEASE_BIN eval 'BotArmyLlm.Release.migrate()'"
+          echo "Running: $RELEASE_BIN eval 'LlmProxy.Release.migrate()'"
 
-          $RELEASE_BIN eval 'BotArmyLlm.Release.migrate()' || {
+          $RELEASE_BIN eval 'LlmProxy.Release.migrate()' || {
             echo "⚠️  Migration failed or Release module not found"
             echo "Continuing with deployment (manual migration may be needed)"
           }

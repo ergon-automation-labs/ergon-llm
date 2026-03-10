@@ -78,10 +78,10 @@ pipeline {
           echo "Start time: $(date)"
 
           # Clear any stuck Salt locks from previous failed runs
-          echo "Clearing Salt locks..."
-          sudo killall -9 salt-call 2>/dev/null || true
-          sudo rm -rf /var/cache/salt/minion/proc/* 2>/dev/null || true
-          sleep 1
+          #echo "Clearing Salt locks..."
+          #sudo killall -9 salt-call 2>/dev/null || true
+          #sudo rm -rf /var/cache/salt/minion/proc/* 2>/dev/null || true
+          #sleep 1
 
           TIMESTAMP=$(date +%Y%m%d%H%M%S)
           DEST="${RELEASE_DIR}/releases/${TIMESTAMP}"

@@ -4,6 +4,23 @@ Guidance for Claude Code when working with `bot_army_llm`.
 
 ---
 
+## Parent Framework
+
+This repo follows the architecture and patterns defined in the parent governance framework:
+
+**[→ See parent GOVERNANCE.md](/code/elixir_bots/GOVERNANCE.md)**
+
+Key sections:
+- **Core Principles** - Event-driven NATS, Ecto persistence, dependency injection
+- **NATS Message Pattern** - Standard envelope structure for all messages
+- **Handler Pattern** - Validation → processing → publishing pattern used by all handlers
+- **Store Pattern** - GenServer-based data persistence (ConversationStore follows this pattern)
+- **Testing Patterns** - Mox mocking for isolation, no DB access in tests
+
+Repo-specific decisions are documented in `memory/DECISIONS.md` with parent references.
+
+---
+
 ## Purpose
 
 **bot_army_llm** is the LLM (Large Language Model) operations bot implementation.
@@ -69,7 +86,11 @@ Handles:
 ├── README.md
 ├── SETUP.md
 ├── CLAUDE.md
-└── .gitignore
+├── .gitignore
+└── memory/
+    ├── MEMORY.md                # Session summaries
+    ├── DECISIONS.md             # Architectural decisions with parent links
+    └── PATTERNS.md              # Repo-specific code patterns
 ```
 
 ---

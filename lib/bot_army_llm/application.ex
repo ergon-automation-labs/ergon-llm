@@ -22,6 +22,9 @@ defmodule BotArmyLlm.Application do
       # Prompt storage (in-memory + Ecto persistence)
       {BotArmyLlm.PromptStore, []},
 
+      # Conversation storage (in-memory + Ecto persistence)
+      {BotArmyLlm.ConversationStore, []},
+
       # Ollama health checker (probes nodes every 60s, drives routing decisions)
       {BotArmyLlm.OllamaHealthChecker, []},
 

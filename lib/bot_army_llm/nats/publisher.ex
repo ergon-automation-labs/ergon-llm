@@ -79,6 +79,11 @@ defmodule BotArmyLlm.NATS.Publisher do
     case event_type do
       "llm.completion" -> "events.llm.completion"
       "llm.error" -> "events.llm.error"
+      "llm.chain.step.completed" -> "events.llm.chain.step.completed"
+      "llm.chain.completed" -> "events.llm.chain.completed"
+      "llm.conversation.replied" -> "events.llm.conversation.replied"
+      "llm.response.parsed" -> "events.llm.response.parsed"
+      "llm.vision.analyzed" -> "events.llm.vision.analyzed"
       _ -> "events.llm.unknown"
     end
   end

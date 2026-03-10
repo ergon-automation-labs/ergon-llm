@@ -2,11 +2,11 @@ defmodule BotArmyLlm.LlmClientMock do
   @moduledoc "Mock LLM client for testing"
 
   @default_response {:ok, %{
-    "completion" => "Test response",
-    "model_used" => "test-model",
-    "tokens_input" => 5,
-    "tokens_output" => 12,
-    "latency_ms" => 100
+    completion: "Test response",
+    model_used: "test-model",
+    tokens_input: 5,
+    tokens_output: 12,
+    latency_ms: 100
   }}
 
   def complete(text, _opts \\ []) when is_binary(text) do
@@ -125,11 +125,11 @@ defmodule BotArmyLlm.Handlers.PromptHandlerTest do
 
   defp stub_llm_success do
     Process.put({:llm_client_mock, :response}, {:ok, %{
-      "completion" => "Elixir is a functional programming language.",
-      "model_used" => "test-model",
-      "tokens_input" => 5,
-      "tokens_output" => 12,
-      "latency_ms" => 100
+      completion: "Elixir is a functional programming language.",
+      model_used: "test-model",
+      tokens_input: 5,
+      tokens_output: 12,
+      latency_ms: 100
     }})
   end
 

@@ -101,13 +101,13 @@ defmodule BotArmyLlm.Handlers.PromptHandler do
       "triggered_by" => "llm.bot",
       "schema_version" => "1.0",
       "payload" => %{
-        "completion" => response["completion"],
-        "model" => response["model_used"],
+        "completion" => response.completion,
+        "model" => response.model_used,
         "tokens" => %{
-          "input" => Map.get(response, "tokens_input", 0),
-          "output" => Map.get(response, "tokens_output", 0)
+          "input" => Map.get(response, :tokens_input, 0),
+          "output" => Map.get(response, :tokens_output, 0)
         },
-        "latency_ms" => response["latency_ms"],
+        "latency_ms" => response.latency_ms,
         "original_prompt_id" => prompt_id,
         "triggered_by_event_id" => event_id
       }
@@ -123,10 +123,10 @@ defmodule BotArmyLlm.Handlers.PromptHandler do
     case Ecto.UUID.cast(prompt_id) do
       {:ok, uuid} ->
         BotArmyLlm.Repo.insert(%BotArmyLlm.Schemas.Completion{
-          completion_text: response["completion"],
-          model_used: response["model_used"],
-          tokens_input: Map.get(response, "tokens_input"),
-          tokens_output: Map.get(response, "tokens_output"),
+          completion_text: response.completion,
+          model_used: response.model_used,
+          tokens_input: Map.get(response, :tokens_input),
+          tokens_output: Map.get(response, :tokens_output),
           prompt_id: uuid
         })
 

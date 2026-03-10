@@ -52,25 +52,50 @@ defmodule BotArmyLlm.NATS.Consumer do
   @impl true
   def handle_continue(:connect, state) do
     case GenServer.call(BotArmyRuntime.NATS.Connection, :get_connection, 5000) do
-      {:ok, conn} ->
-        Logger.info("Connected to NATS, subscribing to llm.prompt.submit")
+      {:ok, conn} -> subscribe_to_topics(conn, state)
+      {:error, _reason} -> handle_connection_unavailable(state)
+    end
+  end
 
-        case Gnat.sub(conn, self(), "llm.prompt.submit") do
+  defp subscribe_to_topics(conn, state) do
+    Logger.info("Connected to NATS, subscribing to LLM topics")
+
+    subjects = [
+      "llm.prompt.submit",
+      "llm.inference.chain",
+      "llm.inference.converse",
+      "llm.response.parse",
+      "llm.vision.analyze"
+    ]
+
+    subs =
+      Enum.reduce_while(subjects, [], fn subject, acc ->
+        case Gnat.sub(conn, self(), subject) do
           {:ok, sub} ->
-            Logger.info("LLM consumer subscribed to llm.prompt.submit")
-            {:noreply, %{state | subscriptions: [sub]}}
+            Logger.info("LLM consumer subscribed to #{subject}")
+            {:cont, [sub | acc]}
 
           {:error, reason} ->
-            Logger.error("Failed to subscribe to NATS: #{inspect(reason)}")
-            Process.send_after(self(), :reconnect, @reconnect_delay_ms)
-            {:noreply, state}
+            Logger.error("Failed to subscribe to #{subject}: #{inspect(reason)}")
+            {:halt, acc}
         end
+      end)
 
-      {:error, _reason} ->
-        Logger.warning("NATS connection not ready, will retry")
-        Process.send_after(self(), :connect_retry, @reconnect_delay_ms)
+    case subs do
+      subs when length(subs) == length(subjects) ->
+        {:noreply, %{state | subscriptions: subs}}
+
+      _ ->
+        Logger.error("Failed to subscribe to all LLM topics")
+        Process.send_after(self(), :reconnect, @reconnect_delay_ms)
         {:noreply, state}
     end
+  end
+
+  defp handle_connection_unavailable(state) do
+    Logger.warning("NATS connection not ready, will retry")
+    Process.send_after(self(), :connect_retry, @reconnect_delay_ms)
+    {:noreply, state}
   end
 
   @impl true
@@ -121,8 +146,23 @@ defmodule BotArmyLlm.NATS.Consumer do
     event = message["event"]
 
     case event do
-      "llm.prompt.submit" -> BotArmyLlm.Handlers.PromptHandler.handle_submit(message)
-      _ -> Logger.debug("Unknown LLM event type: #{event}")
+      "llm.prompt.submit" ->
+        BotArmyLlm.Handlers.PromptHandler.handle_submit(message)
+
+      "llm.inference.chain" ->
+        BotArmyLlm.Handlers.InferenceHandler.handle_chain(message)
+
+      "llm.inference.converse" ->
+        BotArmyLlm.Handlers.InferenceHandler.handle_converse(message)
+
+      "llm.response.parse" ->
+        BotArmyLlm.Handlers.ResponseHandler.handle_parse(message)
+
+      "llm.vision.analyze" ->
+        BotArmyLlm.Handlers.VisionHandler.handle_analyze(message)
+
+      _ ->
+        Logger.debug("Unknown LLM event type: #{event}")
     end
   end
 end

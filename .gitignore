@@ -16,4 +16,6 @@ erl_crash.dump
 .excoveralls.json
 .elixir_ls/
 *.beam
+*.crash
 *.tar.gz
+*.tar.xz

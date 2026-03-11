@@ -123,15 +123,20 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
     steps = payload["steps"]
     initial_input = payload["initial_input"]
     model_override = Map.get(payload, "model")
+    metadata = Map.get(payload, "metadata", %{})
 
     Logger.debug("Starting chain #{chain_id} with #{length(steps)} steps")
 
     result =
-      Enum.reduce_while(steps, {:ok, initial_input, []}, fn step, {:ok, input, outputs} ->
+      Enum.reduce_while(steps, {:ok, initial_input, []}, fn step, {:ok, input, step_results} ->
         case execute_step(input, step, model_override) do
           {:ok, output} ->
+            step_result = %{
+              "name" => Map.get(step, "name", "step_#{length(step_results) + 1}"),
+              "output" => output
+            }
             publish_step_completed(chain_id, step, output, event_id)
-            {:cont, {:ok, output, outputs ++ [output]}}
+            {:cont, {:ok, output, step_results ++ [step_result]}}
 
           {:error, reason} ->
             Logger.error("Chain #{chain_id} step failed: #{inspect(reason)}")
@@ -140,8 +145,8 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
       end)
 
     case result do
-      {:ok, _final_output, all_outputs} ->
-        publish_chain_completed(chain_id, all_outputs, event_id)
+      {:ok, _final_output, step_results} ->
+        publish_chain_completed(chain_id, step_results, metadata, event_id)
 
       {:error, reason} ->
         publish_error(event_id, reason, "Chain execution failed")
@@ -239,11 +244,12 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
     end
   end
 
-  defp publish_chain_completed(chain_id, all_outputs, triggered_by_event_id) do
+  defp publish_chain_completed(chain_id, step_results, metadata, triggered_by_event_id) do
     event_data = EventBuilder.build("llm.chain.completed", %{
       "chain_id" => chain_id,
-      "step_outputs" => all_outputs,
-      "total_steps" => length(all_outputs),
+      "steps" => step_results,
+      "total_steps" => length(step_results),
+      "metadata" => metadata,
       "triggered_by_event_id" => triggered_by_event_id
     })
 

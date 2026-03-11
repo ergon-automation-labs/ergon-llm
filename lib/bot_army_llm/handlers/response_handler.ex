@@ -63,11 +63,14 @@ defmodule BotArmyLlm.Handlers.ResponseHandler do
     output_schema = payload["output_schema"]
     max_retries = Map.get(payload, "max_retries", 3)
 
+    # Pass through any context fields the caller included (e.g. inbox_item_id, source)
+    context = Map.drop(payload, ["text", "output_schema", "max_retries"])
+
     Logger.debug("Parsing JSON response (max_retries=#{max_retries})")
 
     case attempt_parse(text, output_schema, max_retries, 0) do
       {:ok, structured_data} ->
-        publish_parsed(structured_data, event_id)
+        publish_parsed(structured_data, context, event_id)
 
       {:error, reason} ->
         Logger.error("Failed to parse response after #{max_retries} retries: #{inspect(reason)}")
@@ -137,11 +140,11 @@ defmodule BotArmyLlm.Handlers.ResponseHandler do
     end
   end
 
-  defp publish_parsed(structured_data, triggered_by_event_id) do
-    event_data = EventBuilder.build("llm.response.parsed", %{
+  defp publish_parsed(structured_data, context, triggered_by_event_id) do
+    event_data = EventBuilder.build("llm.response.parsed", Map.merge(context, %{
       "structured_data" => structured_data,
       "triggered_by_event_id" => triggered_by_event_id
-    })
+    }))
 
     case BotArmyLlm.NATS.Publisher.publish(event_data) do
       :ok -> Logger.debug("Published parsed response event")

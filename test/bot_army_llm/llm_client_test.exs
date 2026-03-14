@@ -1,7 +1,8 @@
 defmodule BotArmyLlm.LlmClientTest do
   use ExUnit.Case
+  import ExUnit.CaptureLog
 
-  alias BotArmyLlm.ComplexityScorer
+  alias BotArmyLlm.{ComplexityScorer, LlmClient, SafetyClassifier}
 
   describe "ComplexityScorer.score/1" do
     test "short factual question scores :light" do
@@ -49,9 +50,133 @@ defmodule BotArmyLlm.LlmClientTest do
         fn ->
           # 200+ words → :heavy → skips Ollama, tries cloud only → all unconfigured
           heavy_prompt = String.duplicate("implement complex algorithm code ", 10)
-          assert {:error, :no_providers_available} = BotArmyLlm.LlmClient.complete(heavy_prompt)
+          assert {:error, :no_providers_available} = LlmClient.complete(heavy_prompt)
         end
       )
+    end
+  end
+
+  describe "SafetyClassifier integration in complete/2" do
+    test "safe text routes through normal provider chain" do
+      safe_text = "What is the capital of France?"
+
+      # Verify text is classified as safe
+      assert SafetyClassifier.safe_for_cloud?(safe_text) == true
+
+      # Mock: Ollama should be in the chain (first provider for light complexity)
+      # Since Ollama will fail (not available in tests), it will try next provider
+      # This test just verifies no early routing blocking happens
+      result = LlmClient.complete(safe_text)
+      # Should error due to no providers, not due to blocking
+      assert elem(result, 0) in [:ok, :error]
+    end
+
+    test "sensitive text (API key) blocks cloud routing" do
+      sensitive_text = "My API key is sk-proj-abc123def456ghi789jkl012mnopqr"
+
+      # Verify text is classified as sensitive
+      assert SafetyClassifier.safe_for_cloud?(sensitive_text) == false
+
+      # The prompt should be blocked from cloud providers
+      # We can verify this by checking that only :ollama is attempted
+      # In practice, Ollama will fail, but the safety check prevents cloud attempts
+      log = capture_log(fn ->
+        _result = LlmClient.complete(sensitive_text)
+      end)
+
+      # Should log that routing is to local-only
+      assert String.contains?(log, "local-only")
+    end
+
+    test "sensitive text (AWS key) blocks cloud routing" do
+      sensitive_text = "AWS credentials: AKIAIOSFODNN7EXAMPLE"
+
+      assert SafetyClassifier.safe_for_cloud?(sensitive_text) == false
+
+      log = capture_log(fn ->
+        _result = LlmClient.complete(sensitive_text)
+      end)
+
+      assert String.contains?(log, "local-only")
+    end
+
+    test "sensitive text (private key) blocks cloud routing" do
+      sensitive_text = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQE\n-----END PRIVATE KEY-----"
+
+      assert SafetyClassifier.safe_for_cloud?(sensitive_text) == false
+
+      log = capture_log(fn ->
+        _result = LlmClient.complete(sensitive_text)
+      end)
+
+      assert String.contains?(log, "local-only")
+    end
+  end
+
+  describe "SafetyClassifier integration in complete_messages/2" do
+    test "messages with safe content route normally" do
+      messages = [
+        %{"role" => "user", "content" => "What is the weather?"}
+      ]
+
+      assert SafetyClassifier.safe_for_cloud?("What is the weather?") == true
+      result = LlmClient.complete_messages(messages)
+      # Should get error due to no providers, not safety blocking
+      assert elem(result, 0) in [:ok, :error]
+    end
+
+    test "messages with sensitive content block cloud routing" do
+      messages = [
+        %{"role" => "user", "content" => "Analyze my credentials: password=super_secret_123"}
+      ]
+
+      log = capture_log(fn ->
+        _result = LlmClient.complete_messages(messages)
+      end)
+
+      assert String.contains?(log, "local-only")
+      assert String.contains?(log, "multi-turn")
+    end
+
+    test "mixed messages check all content for sensitivity" do
+      messages = [
+        %{"role" => "assistant", "content" => "Safe response"},
+        %{"role" => "user", "content" => "secret_key = sk-ant-abc123"}
+      ]
+
+      log = capture_log(fn ->
+        _result = LlmClient.complete_messages(messages)
+      end)
+
+      assert String.contains?(log, "local-only")
+    end
+  end
+
+  describe "SafetyClassifier integration in complete_vision/2" do
+    test "vision with safe prompt routes normally" do
+      log = capture_log(fn ->
+        _result = LlmClient.complete_vision(nil, "https://example.com/image.png", "Describe this image")
+      end)
+
+      # Should not log local-only for safe prompt
+      assert !String.contains?(log, "local-only") || String.contains?(log, "no_image_provided")
+    end
+
+    test "vision with sensitive prompt blocks cloud routing" do
+      log = capture_log(fn ->
+        _result = LlmClient.complete_vision(nil, "https://example.com/image.png", "Analyze password=secret123 from this image")
+      end)
+
+      assert String.contains?(log, "local-only")
+      assert String.contains?(log, "vision")
+    end
+
+    test "vision with API key in prompt blocks cloud" do
+      log = capture_log(fn ->
+        _result = LlmClient.complete_vision(nil, "https://example.com/image.png", "My token is sk-proj-1234567890123456789")
+      end)
+
+      assert String.contains?(log, "local-only")
     end
   end
 

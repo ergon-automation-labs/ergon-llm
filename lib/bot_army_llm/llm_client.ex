@@ -29,10 +29,13 @@ defmodule BotArmyLlm.LlmClient do
 
   require Logger
 
-  alias BotArmyLlm.{ComplexityScorer, OllamaHealthChecker}
+  alias BotArmyLlm.{ComplexityScorer, OllamaHealthChecker, SafetyClassifier}
 
   @doc """
   Complete a prompt using the best available provider.
+
+  Checks payload for sensitive data (API keys, credentials, PII, etc.)
+  and routes to local-only providers if sensitive content detected.
 
   Options:
     - `model`: Override model selection ("auto" uses complexity routing)
@@ -42,9 +45,17 @@ defmodule BotArmyLlm.LlmClient do
   def complete(text, opts \\ []) when is_binary(text) do
     start_time = System.monotonic_time(:millisecond)
     complexity = ComplexityScorer.score(text)
-    providers = provider_chain(complexity)
 
-    Logger.debug("LLM routing: complexity=#{complexity}, chain=#{inspect(providers)}")
+    # Check for sensitive data before routing
+    providers =
+      if SafetyClassifier.safe_for_cloud?(text) do
+        provider_chain(complexity)
+      else
+        SafetyClassifier.log_decision(:contains_sensitive, "routing to local-only providers")
+        [:ollama]  # Local only
+      end
+
+    Logger.debug("LLM routing: complexity=#{complexity}, chain=#{inspect(providers)}, safety_checked=true")
 
     case try_providers(providers, text, complexity, opts) do
       {:ok, result} ->
@@ -60,6 +71,7 @@ defmodule BotArmyLlm.LlmClient do
   Complete using a pre-built messages list (for multi-turn conversations).
 
   Takes a messages list with format: [%{"role" => "user|assistant", "content" => text}, ...]
+  Checks all message content for sensitive data and routes to local-only if found.
 
   Options:
     - `model`: Override model selection ("auto" uses complexity routing)
@@ -79,9 +91,18 @@ defmodule BotArmyLlm.LlmClient do
         _ -> :medium
       end
 
-    providers = provider_chain(complexity)
+    # Check all messages for sensitive data
+    messages_text = messages |> Enum.map(& &1["content"]) |> Enum.join(" ")
 
-    Logger.debug("LLM routing (messages): complexity=#{complexity}, chain=#{inspect(providers)}")
+    providers =
+      if SafetyClassifier.safe_for_cloud?(messages_text) do
+        provider_chain(complexity)
+      else
+        SafetyClassifier.log_decision(:contains_sensitive, "routing to local-only providers (multi-turn)")
+        [:ollama]  # Local only
+      end
+
+    Logger.debug("LLM routing (messages): complexity=#{complexity}, chain=#{inspect(providers)}, safety_checked=true")
 
     case try_providers_messages(providers, messages, complexity, opts) do
       {:ok, result} ->
@@ -97,6 +118,7 @@ defmodule BotArmyLlm.LlmClient do
   Analyze an image using a vision model.
 
   Takes either `image_data` (base64) or `image_url` or both.
+  Checks prompt text for sensitive data and routes to local-only if found.
 
   Options:
     - `temperature`: Generation temperature (default: 0.7)
@@ -112,9 +134,17 @@ defmodule BotArmyLlm.LlmClient do
       {:error, :no_image_provided}
     else
       start_time = System.monotonic_time(:millisecond)
-      providers = [:ollama_vision, :anthropic_vision, :openrouter_vision]
 
-      Logger.debug("LLM vision routing: chain=#{inspect(providers)}")
+      # Check prompt for sensitive data
+      providers =
+        if SafetyClassifier.safe_for_cloud?(prompt_text) do
+          [:ollama_vision, :anthropic_vision, :openrouter_vision]
+        else
+          SafetyClassifier.log_decision(:contains_sensitive, "routing vision to local-only providers")
+          [:ollama_vision]  # Local only
+        end
+
+      Logger.debug("LLM vision routing: chain=#{inspect(providers)}, safety_checked=true")
 
       case try_vision_providers(providers, image_data_base64, image_url, prompt_text, opts) do
         {:ok, result} ->

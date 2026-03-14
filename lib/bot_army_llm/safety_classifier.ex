@@ -65,6 +65,8 @@ defmodule BotArmyLlm.SafetyClassifier do
   """
   @spec safe_for_cloud?(String.t()) :: boolean
   def safe_for_cloud?(text) do
+    # Only return true for :safe classification
+    # Both :unknown and :contains_sensitive block cloud routing
     classify(text) == :safe
   end
 
@@ -112,13 +114,15 @@ defmodule BotArmyLlm.SafetyClassifier do
       String.match?(text_lower, ~r/aizasy[a-z0-9_-]{20,}/i) ||
       # GitHub: ghp_ or github_pat_
       String.match?(text_lower, ~r/(ghp_|github_pat_)[a-z0-9_]+/i) ||
-      # Explicit secret key markers
-      String.match?(text_lower, ~r/secret[_-]?key\s*[:=]\s*['"a-z0-9]{10,}/i)
+      # Explicit secret/api key markers - api_key high confidence only if value looks like a real key
+      String.match?(text_lower, ~r/secret[_-]?key\s*[:=]\s*['"a-z0-9]{3,}/i) ||
+      String.match?(text_lower, ~r/api[_-]?key\s*[:=]\s*['"][a-z0-9]+['"]/i)
   end
 
   # Cryptographic key patterns
   defp detect_crypto_keys(text_lower) do
     # PEM format: "-----BEGIN PRIVATE KEY-----", "-----BEGIN RSA PRIVATE KEY-----", etc.
+    # Only high-confidence for actual PEM blocks, not just variable declarations
     String.contains?(text_lower, [
       "-----begin private key-----",
       "-----begin rsa private key-----",
@@ -127,17 +131,20 @@ defmodule BotArmyLlm.SafetyClassifier do
       "-----begin ec private key-----",
       "-----begin pgp private key block-----"
     ]) ||
-      # Explicit private key declarations
-      String.match?(text_lower, ~r/private[_-]?key\s*[:=]\s*['"]/i) ||
-      # Hex-encoded 256-bit keys (common for crypto)
-      String.match?(text_lower, ~r/[0-9a-f]{64}(?:\s|,|$)/i)
+      # Hex-encoded 256-bit keys (common for crypto) - allow quotes or delimiters
+      String.match?(text_lower, ~r/[0-9a-f]{64}(?:\s|,|'|"|$)/i) ||
+      # Explicit private_key assignments with values (quoted or unquoted)
+      String.match?(text_lower, ~r/private[_-]?key\s*[:=]\s*['"][a-z0-9]{20,}['"]/i) ||
+      String.match?(text_lower, ~r/private[_-]?key\s*[:=]\s+[a-z0-9]{6,}/i)
   end
 
   # Credential and token patterns
   defp detect_credentials(text_lower) do
     # Explicit credential patterns
-    String.match?(text_lower, ~r/password\s*[:=]\s*['"a-z0-9]/i) ||
-      String.match?(text_lower, ~r/token\s*[:=]\s*['"a-z0-9]/i) ||
+    # Use negative lookbehind to avoid matching prefixed versions (e.g., bearer_token)
+    # which should be caught by medium-confidence detector instead
+    String.match?(text_lower, ~r/(?<![a-z_-])password\s*[:=]\s*['"a-z0-9]/i) ||
+      String.match?(text_lower, ~r/(?<![a-z_-])token\s*[:=]\s*['"a-z0-9]/i) ||
       String.match?(text_lower, ~r/bearer\s+[a-z0-9._-]{20,}/i) ||
       # JWT tokens (eyJ... base64 format)
       String.match?(text_lower, ~r/eyj[a-z0-9_-]{20,}\.[a-z0-9_-]{20,}\.[a-z0-9_-]{20,}/i) ||
@@ -201,9 +208,14 @@ defmodule BotArmyLlm.SafetyClassifier do
   # Explicit secret markers (even if value is redacted or obfuscated)
   defp detect_explicit_secret_markers(text_lower) do
     # Look for patterns like "secret_key =", "api_key:", etc with = or : nearby
-    # OR just the presence of these sensitive keywords as standalone words
-    String.match?(text_lower, ~r/(secret|api_?key|private_?key|encryption_?key|auth_?token|access_?token|refresh_?token|bearer_?token|client_?secret)\s*[:=]/i) ||
-      (String.contains?(text_lower, " secret ") and String.length(text_lower) < 200)
+    # Match with both underscore and hyphen variants
+    String.match?(text_lower, ~r/(secret[-_]?key|api[-_]?key|private[-_]?key|encryption[-_]?key|password[-_]?field|password|auth[-_]?token|access[-_]?token|refresh[-_]?token|bearer[-_]?token|client[-_]?secret)\s*[:=]/i) ||
+      # Bare "secret" word with assignment (at start or surrounded by spaces)
+      String.match?(text_lower, ~r/^secret\s*[:=]/i) ||
+      String.match?(text_lower, ~r/\s+secret\s*[:=]/i) ||
+      # Bare "secret" word mentioned standalone (medium confidence)
+      # Match "secret" at the start or surrounded by spaces
+      (String.match?(text_lower, ~r/(^|\s)secret(\s|$)/i) and String.length(text_lower) < 200)
   end
 
   # ============================================================================

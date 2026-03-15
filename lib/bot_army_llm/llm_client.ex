@@ -70,12 +70,26 @@ defmodule BotArmyLlm.LlmClient do
   @doc """
   Generate embeddings for a text string using OpenAI-compatible or Ollama API.
 
-  Returns: `{:ok, %{embedding: [float], model_used: str}}`
+  Checks payload for sensitive data (API keys, credentials, PII, etc.)
+  and routes to local-only providers if sensitive content detected.
+
+  Returns: `{:ok, %{embedding: [float], model_used: str, latency_ms: int}}`
   """
   def embed(text, model \\ "nomic-embed-text") when is_binary(text) and is_binary(model) do
     start_time = System.monotonic_time(:millisecond)
 
-    case try_embed_providers(text, model) do
+    # Check for sensitive data before routing
+    providers =
+      if SafetyClassifier.safe_for_cloud?(text) do
+        [:ollama_embed, :openrouter_embed]
+      else
+        SafetyClassifier.log_decision(:contains_sensitive, "routing embed to local-only providers")
+        [:ollama_embed]  # Local only
+      end
+
+    Logger.debug("Embed routing: providers=#{inspect(providers)}, safety_checked=true")
+
+    case try_embed_providers(providers, text, model) do
       {:ok, result} ->
         latency = System.monotonic_time(:millisecond) - start_time
         {:ok, Map.put(result, :latency_ms, latency)}
@@ -858,9 +872,7 @@ defmodule BotArmyLlm.LlmClient do
 
   # Embedding providers
 
-  defp try_embed_providers(text, model) do
-    providers = [:ollama_embed, :openrouter_embed]
-
+  defp try_embed_providers(providers, text, model) do
     case try_embed_chain(providers, text, model) do
       {:ok, result} ->
         Logger.info("Embedding provider succeeded, model=#{result.model_used}")

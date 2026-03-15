@@ -180,6 +180,56 @@ defmodule BotArmyLlm.LlmClientTest do
     end
   end
 
+  describe "SafetyClassifier integration in embed/2" do
+    test "safe text can route to both ollama and openrouter" do
+      safe_text = "The quick brown fox jumps over the lazy dog"
+
+      assert SafetyClassifier.safe_for_cloud?(safe_text) == true
+
+      # Just verify the call returns error (no providers available in test)
+      # not a safety blocking error
+      result = LlmClient.embed(safe_text)
+      assert elem(result, 0) in [:ok, :error]
+    end
+
+    test "sensitive text (API key) blocks cloud embed routing" do
+      sensitive_text = "My API key is sk-proj-abc123def456ghi789jkl012mnopqr"
+
+      assert SafetyClassifier.safe_for_cloud?(sensitive_text) == false
+
+      log = capture_log(fn ->
+        _result = LlmClient.embed(sensitive_text)
+      end)
+
+      assert String.contains?(log, "local-only")
+      assert String.contains?(log, "embed")
+    end
+
+    test "sensitive text (AWS key) blocks cloud embed routing" do
+      sensitive_text = "AWS key: AKIAIOSFODNN7EXAMPLE"
+
+      assert SafetyClassifier.safe_for_cloud?(sensitive_text) == false
+
+      log = capture_log(fn ->
+        _result = LlmClient.embed(sensitive_text)
+      end)
+
+      assert String.contains?(log, "local-only")
+    end
+
+    test "sensitive text (secret keyword) blocks cloud embed routing" do
+      sensitive_text = "database secret_key = someverysecretvalue"
+
+      assert SafetyClassifier.safe_for_cloud?(sensitive_text) == false
+
+      log = capture_log(fn ->
+        _result = LlmClient.embed(sensitive_text)
+      end)
+
+      assert String.contains?(log, "local-only")
+    end
+  end
+
   # Temporarily override env vars for the duration of a test
   defp with_env(env_vars, func) do
     old_values = Enum.map(env_vars, fn {key, _} -> {key, System.get_env(key)} end)

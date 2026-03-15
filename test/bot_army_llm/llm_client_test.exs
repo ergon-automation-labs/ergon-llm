@@ -230,6 +230,85 @@ defmodule BotArmyLlm.LlmClientTest do
     end
   end
 
+  describe "load-based routing" do
+    test "light prompt with load acceptable includes Ollama in chain" do
+      # When load is acceptable, Ollama should be attempted before cloud providers
+      # Since Ollama will fail (not running), we check that the error doesn't mention "under load"
+      defmodule MockHealthCheckerLoad do
+        def load_acceptable?(), do: true
+        def best_ollama_node(:light), do: {:error, :no_healthy_nodes}
+        def best_ollama_node(:medium), do: {:error, :no_healthy_nodes}
+        def best_ollama_node(:heavy), do: {:error, :skip_local}
+        def node_status, do: []
+      end
+
+      Application.put_env(:bot_army_llm, :ollama_health_checker, MockHealthCheckerLoad)
+
+      try do
+        light_prompt = "What is 2+2?"
+
+        log = capture_log(fn ->
+          _result = LlmClient.complete(light_prompt)
+        end)
+
+        # Should not log "under load" message when load is acceptable
+        refute String.contains?(log, "under load")
+      after
+        Application.delete_env(:bot_army_llm, :ollama_health_checker)
+      end
+    end
+
+    test "light prompt with high load skips Ollama and logs routing decision" do
+      defmodule MockHealthCheckerHighLoad do
+        def load_acceptable?(), do: false
+        def best_ollama_node(complexity), do: {:error, :no_healthy_nodes}
+        def node_status, do: []
+      end
+
+      Application.put_env(:bot_army_llm, :ollama_health_checker, MockHealthCheckerHighLoad)
+
+      try do
+        light_prompt = "What is the weather?"
+
+        log = capture_log(fn ->
+          _result = LlmClient.complete(light_prompt)
+        end)
+
+        # Should log "under load" message indicating Ollama was skipped
+        assert String.contains?(log, "under load")
+        assert String.contains?(log, "cloud providers")
+      after
+        Application.delete_env(:bot_army_llm, :ollama_health_checker)
+      end
+    end
+
+    test "sensitive prompt still forces Ollama even with high load" do
+      defmodule MockHealthCheckerHighLoadSensitive do
+        def load_acceptable?(), do: false
+        def best_ollama_node(complexity), do: {:error, :no_healthy_nodes}
+        def node_status, do: []
+      end
+
+      Application.put_env(:bot_army_llm, :ollama_health_checker, MockHealthCheckerHighLoadSensitive)
+
+      try do
+        # Sensitive prompt with API key
+        sensitive_prompt = "My API key is sk-proj-abc123def456ghi789jkl012mnopqr"
+
+        log = capture_log(fn ->
+          _result = LlmClient.complete(sensitive_prompt)
+        end)
+
+        # Should log local-only routing (safety overrides load)
+        assert String.contains?(log, "local-only")
+        # Should NOT log "under load" — safety check prevents even getting to load check
+        refute String.contains?(log, "under load")
+      after
+        Application.delete_env(:bot_army_llm, :ollama_health_checker)
+      end
+    end
+  end
+
   # Temporarily override env vars for the duration of a test
   defp with_env(env_vars, func) do
     old_values = Enum.map(env_vars, fn {key, _} -> {key, System.get_env(key)} end)

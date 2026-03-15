@@ -31,6 +31,11 @@ defmodule BotArmyLlm.LlmClient do
 
   alias BotArmyLlm.{ComplexityScorer, OllamaHealthChecker, SafetyClassifier}
 
+  # Get health checker module from app config (for testing) or use default
+  defp health_checker_module do
+    Application.get_env(:bot_army_llm, :ollama_health_checker, OllamaHealthChecker)
+  end
+
   @doc """
   Complete a prompt using the best available provider.
 
@@ -191,8 +196,18 @@ defmodule BotArmyLlm.LlmClient do
 
   # Provider chain selection
 
-  defp provider_chain(:heavy), do: [:blackbox, :openrouter, :anthropic]
-  defp provider_chain(_), do: [:ollama, :blackbox, :openrouter, :anthropic]
+  defp provider_chain(:heavy) do
+    [:blackbox, :openrouter, :anthropic]
+  end
+
+  defp provider_chain(_complexity) do
+    if health_checker_module().load_acceptable?() do
+      [:ollama, :blackbox, :openrouter, :anthropic]
+    else
+      Logger.info("LLM: Local nodes under load — routing to cloud providers")
+      [:blackbox, :openrouter, :anthropic]
+    end
+  end
 
   # Chain traversal
 
@@ -215,7 +230,7 @@ defmodule BotArmyLlm.LlmClient do
   # Provider implementations
 
   defp call_provider(:ollama, text, complexity, _opts) do
-    case OllamaHealthChecker.best_ollama_node(complexity) do
+    case health_checker_module().best_ollama_node(complexity) do
       {:ok, {url, model}} ->
         case ollama_call(url, model, text) do
           {:ok, completion} -> {:ok, %{completion: completion, model_used: model}}
@@ -447,7 +462,7 @@ defmodule BotArmyLlm.LlmClient do
   end
 
   defp call_provider_messages(:ollama, messages, _complexity, _opts) do
-    case OllamaHealthChecker.best_ollama_node(:medium) do
+    case health_checker_module().best_ollama_node(:medium) do
       {:ok, {url, model}} ->
         case ollama_call_messages(url, model, messages) do
           {:ok, completion} -> {:ok, %{completion: completion, model_used: model}}
@@ -649,7 +664,7 @@ defmodule BotArmyLlm.LlmClient do
   end
 
   defp call_vision_provider(:ollama_vision, image_data, _image_url, prompt, _opts) do
-    case OllamaHealthChecker.best_ollama_node(:heavy) do
+    case health_checker_module().best_ollama_node(:heavy) do
       {:ok, {url, _}} ->
         model = System.get_env("OLLAMA_VISION_MODEL", "llava:latest")
         case ollama_vision_call(url, model, image_data, prompt) do
@@ -900,7 +915,7 @@ defmodule BotArmyLlm.LlmClient do
   end
 
   defp call_embed_provider(:ollama_embed, text, model) do
-    case OllamaHealthChecker.best_ollama_node(:light) do
+    case health_checker_module().best_ollama_node(:light) do
       {:ok, {url, _}} ->
         ollama_embed_call(url, model, text)
 

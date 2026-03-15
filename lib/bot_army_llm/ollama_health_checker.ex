@@ -52,6 +52,15 @@ defmodule BotArmyLlm.OllamaHealthChecker do
     GenServer.call(__MODULE__, :node_status)
   end
 
+  @doc """
+  Returns true if all enabled nodes have acceptable CPU and memory load.
+  When metrics are unavailable (Prometheus unreachable), treats as acceptable (fail-open).
+  """
+  @spec load_acceptable?() :: boolean()
+  def load_acceptable?() do
+    GenServer.call(__MODULE__, :load_acceptable?)
+  end
+
   # GenServer callbacks
 
   @impl true
@@ -75,7 +84,10 @@ defmodule BotArmyLlm.OllamaHealthChecker do
     result =
       state.nodes
       |> Enum.filter(fn {_name, node} -> node.healthy end)
-      |> Enum.sort_by(fn {_name, node} -> node.latency_ms || 999_999 end)
+      |> Enum.sort_by(fn {_name, node} ->
+        penalty = if (node.memory_pressure || 0) > 0.7, do: 5_000, else: 0
+        (node.latency_ms || 0) + penalty
+      end)
       |> case do
         [{_name, node} | _] -> {:ok, {node.url, model}}
         [] -> {:error, :no_healthy_nodes}
@@ -101,6 +113,23 @@ defmodule BotArmyLlm.OllamaHealthChecker do
     {:reply, status, state}
   end
 
+  @impl true
+  def handle_call(:load_acceptable?, _from, state) do
+    mem_threshold = System.get_env("OLLAMA_HIGH_MEMORY_THRESHOLD", "0.80") |> String.to_float()
+    cpu_threshold = System.get_env("OLLAMA_HIGH_CPU_THRESHOLD", "0.80") |> String.to_float()
+
+    acceptable =
+      state.nodes
+      |> Enum.filter(fn {_name, node} -> node.enabled end)
+      |> Enum.all?(fn {_name, node} ->
+        mem_ok = node.memory_pressure == nil or node.memory_pressure < mem_threshold
+        cpu_ok = node.cpu_load == nil or node.cpu_load < cpu_threshold
+        mem_ok and cpu_ok
+      end)
+
+    {:reply, acceptable, state}
+  end
+
   # Private
 
   defp build_initial_state do
@@ -111,14 +140,18 @@ defmodule BotArmyLlm.OllamaHealthChecker do
           latency_ms: nil,
           last_probe_at: nil,
           healthy: false,
-          memory_pressure: nil
+          memory_pressure: nil,
+          cpu_load: nil,
+          enabled: true
         },
         mini: %{
           url: System.get_env("OLLAMA_MINI_URL", ""),
           latency_ms: nil,
           last_probe_at: nil,
           healthy: false,
-          memory_pressure: nil
+          memory_pressure: nil,
+          cpu_load: nil,
+          enabled: true
         }
       },
       probe_model: System.get_env("OLLAMA_PROBE_MODEL", "gemma3:1b"),
@@ -151,6 +184,7 @@ defmodule BotArmyLlm.OllamaHealthChecker do
       :ok ->
         latency = System.monotonic_time(:millisecond) - start
         memory_pressure = check_memory_pressure(name)
+        cpu_load = check_cpu_load(node.url)
         healthy = latency < degraded_latency_ms
 
         unless healthy do
@@ -159,14 +193,15 @@ defmodule BotArmyLlm.OllamaHealthChecker do
           )
         end
 
-        Logger.debug("Ollama node #{name} probe ok: #{latency}ms, memory=#{inspect(memory_pressure)}")
+        Logger.debug("Ollama node #{name} probe ok: #{latency}ms, memory=#{inspect(memory_pressure)}, cpu_load=#{inspect(cpu_load)}")
 
         %{
           node
           | latency_ms: latency,
             healthy: healthy,
             last_probe_at: DateTime.utc_now(),
-            memory_pressure: memory_pressure
+            memory_pressure: memory_pressure,
+            cpu_load: cpu_load
         }
 
       {:error, reason} ->
@@ -217,6 +252,30 @@ defmodule BotArmyLlm.OllamaHealthChecker do
           {:ok, %{"data" => %{"result" => [%{"value" => [_, value]} | _]}}} ->
             {pressure, _} = Float.parse(value)
             pressure
+
+          _ ->
+            nil
+        end
+
+      _ ->
+        nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  # Query Prometheus for node CPU load (normalized by logical processors)
+  defp check_cpu_load(_node_url) do
+    prometheus_url = System.get_env("PROMETHEUS_URL", @prometheus_url)
+    url = "#{prometheus_url}/api/v1/query?query=#{URI.encode("node_load1")}"
+    cpu_count = max(:erlang.system_info(:logical_processors), 1)
+
+    case HTTPoison.get(url, [], recv_timeout: 2_000, connect_timeout: 1_000) do
+      {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
+        case Jason.decode(body) do
+          {:ok, %{"data" => %{"result" => [%{"value" => [_, val]} | _]}}} ->
+            {load, _} = Float.parse(val)
+            load / cpu_count
 
           _ ->
             nil

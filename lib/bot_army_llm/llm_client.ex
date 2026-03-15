@@ -68,6 +68,24 @@ defmodule BotArmyLlm.LlmClient do
   end
 
   @doc """
+  Generate embeddings for a text string using OpenAI-compatible or Ollama API.
+
+  Returns: `{:ok, %{embedding: [float], model_used: str}}`
+  """
+  def embed(text, model \\ "nomic-embed-text") when is_binary(text) and is_binary(model) do
+    start_time = System.monotonic_time(:millisecond)
+
+    case try_embed_providers(text, model) do
+      {:ok, result} ->
+        latency = System.monotonic_time(:millisecond) - start_time
+        {:ok, Map.put(result, :latency_ms, latency)}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  @doc """
   Complete using a pre-built messages list (for multi-turn conversations).
 
   Takes a messages list with format: [%{"role" => "user|assistant", "content" => text}, ...]
@@ -829,6 +847,127 @@ defmodule BotArmyLlm.LlmClient do
 
       {:ok, %HTTPoison.Response{status_code: status, body: body}} ->
         Logger.warning("OpenRouter vision call failed: status=#{status}, body=#{body}")
+        {:error, {:http_error, status}}
+
+      {:error, reason} ->
+        {:error, {:connection_error, reason}}
+    end
+  rescue
+    _ -> {:error, :request_failed}
+  end
+
+  # Embedding providers
+
+  defp try_embed_providers(text, model) do
+    providers = [:ollama_embed, :openrouter_embed]
+
+    case try_embed_chain(providers, text, model) do
+      {:ok, result} ->
+        Logger.info("Embedding provider succeeded, model=#{result.model_used}")
+        {:ok, result}
+
+      {:error, reason} ->
+        Logger.warning("All embedding providers failed: #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
+
+  defp try_embed_chain([], _text, _model) do
+    {:error, :no_providers_available}
+  end
+
+  defp try_embed_chain([provider | rest], text, model) do
+    case call_embed_provider(provider, text, model) do
+      {:ok, result} ->
+        {:ok, Map.put(result, :model_used, model)}
+
+      {:error, reason} ->
+        Logger.warning("Embed provider #{provider} failed: #{inspect(reason)}, trying next")
+        try_embed_chain(rest, text, model)
+    end
+  end
+
+  defp call_embed_provider(:ollama_embed, text, model) do
+    case OllamaHealthChecker.best_ollama_node(:light) do
+      {:ok, {url, _}} ->
+        ollama_embed_call(url, model, text)
+
+      {:error, reason} ->
+        {:error, {:ollama_unavailable, reason}}
+    end
+  end
+
+  defp call_embed_provider(:openrouter_embed, text, model) do
+    api_key = System.get_env("OPENROUTER_API_KEY")
+
+    case api_key do
+      nil -> {:error, :provider_not_configured}
+      key -> openrouter_embed_call(key, model, text)
+    end
+  end
+
+  defp ollama_embed_call(url, model, text) do
+    endpoint = "#{url}/api/embed"
+    headers = [{"Content-Type", "application/json"}]
+
+    payload =
+      Jason.encode!(%{
+        "model" => model,
+        "prompt" => text
+      })
+
+    case HTTPoison.post(endpoint, payload, headers, recv_timeout: 30_000, timeout: 30_000) do
+      {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
+        with {:ok, response} <- Jason.decode(body),
+             embedding when is_list(embedding) <- response["embedding"] do
+          {:ok, %{embedding: embedding}}
+        else
+          _ -> {:error, :invalid_response_format}
+        end
+
+      {:ok, %HTTPoison.Response{status_code: status}} ->
+        {:error, {:http_error, status}}
+
+      {:error, reason} ->
+        {:error, {:connection_error, reason}}
+    end
+  rescue
+    _ -> {:error, :request_failed}
+  end
+
+  defp openrouter_embed_call(api_key, model, text) do
+    headers = [
+      {"Content-Type", "application/json"},
+      {"Authorization", "Bearer #{api_key}"},
+      {"HTTP-Referer", "https://github.com/ergon-automation-labs"}
+    ]
+
+    payload =
+      Jason.encode!(%{
+        "model" => model,
+        "input" => text
+      })
+
+    case HTTPoison.post(
+           "https://openrouter.ai/api/v1/embeddings",
+           payload,
+           headers,
+           recv_timeout: 30_000,
+           timeout: 30_000
+         ) do
+      {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
+        with {:ok, response} <- Jason.decode(body),
+             embedding when is_list(embedding) <-
+               get_in(response, ["data", Access.at(0), "embedding"]) do
+          {:ok, %{embedding: embedding}}
+        else
+          _ -> {:error, :invalid_response_format}
+        end
+
+      {:ok, %HTTPoison.Response{status_code: 429}} ->
+        {:error, :rate_limited}
+
+      {:ok, %HTTPoison.Response{status_code: status}} ->
         {:error, {:http_error, status}}
 
       {:error, reason} ->

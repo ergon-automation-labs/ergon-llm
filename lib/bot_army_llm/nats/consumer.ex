@@ -65,7 +65,8 @@ defmodule BotArmyLlm.NATS.Consumer do
       "llm.inference.chain",
       "llm.inference.converse",
       "llm.response.parse",
-      "llm.vision.analyze"
+      "llm.vision.analyze",
+      "llm.embed.request"
     ]
 
     subs =
@@ -160,6 +161,9 @@ defmodule BotArmyLlm.NATS.Consumer do
 
       "llm.vision.analyze" ->
         BotArmyLlm.Handlers.VisionHandler.handle_analyze(message)
+
+      "llm.embed.request" ->
+        BotArmyLlm.Handlers.EmbeddingHandler.handle_embed(message)
 
       _ ->
         Logger.debug("Unknown LLM event type: #{event}")

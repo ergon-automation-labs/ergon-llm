@@ -84,6 +84,7 @@ defmodule BotArmyLlm.NATS.Publisher do
       "llm.conversation.replied" -> "events.llm.conversation.replied"
       "llm.response.parsed" -> "events.llm.response.parsed"
       "llm.vision.analyzed" -> "events.llm.vision.analyzed"
+      "llm.embedding.created" -> "events.llm.embedding.created"
       _ -> "events.llm.unknown"
     end
   end

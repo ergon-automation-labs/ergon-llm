@@ -16,6 +16,10 @@ defmodule BotArmyLlm.Handlers.PromptHandler do
 
   require Logger
 
+  defp repo do
+    Application.get_env(:bot_army_llm, :repo, BotArmyLlm.Repo)
+  end
+
   @doc """
   Handle prompt submission event.
 
@@ -122,7 +126,7 @@ defmodule BotArmyLlm.Handlers.PromptHandler do
   defp persist_completion(prompt_id, response) do
     case Ecto.UUID.cast(prompt_id) do
       {:ok, uuid} ->
-        BotArmyLlm.Repo.insert(%BotArmyLlm.Schemas.Completion{
+        repo().insert(%BotArmyLlm.Schemas.Completion{
           completion_text: response.completion,
           model_used: response.model_used,
           tokens_input: Map.get(response, :tokens_input),

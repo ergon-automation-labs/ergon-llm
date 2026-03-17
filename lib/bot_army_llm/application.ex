@@ -10,6 +10,8 @@ defmodule BotArmyLlm.Application do
 
   use Application
 
+  @env Mix.env()
+
   @impl true
   def start(_type, _args) do
     children = [
@@ -35,15 +37,31 @@ defmodule BotArmyLlm.Application do
       {BotArmyLlm.OllamaHealthChecker, []},
 
       # NATS message consumer (depends on BotArmyRuntime.NATS.Connection being available)
+      # Not started in tests to avoid connecting to real NATS
       {BotArmyLlm.NATS.Consumer, []}
     ]
+    |> maybe_exclude_consumer()
 
     opts = [strategy: :one_for_one, name: BotArmyLlm.Supervisor]
     {:ok, pid} = Supervisor.start_link(children, opts)
 
-    # Setup telemetry handlers after supervisor starts
-    BotArmyLlm.Telemetry.setup()
+    # Setup telemetry handlers after supervisor starts (only in non-test)
+    if @env != :test do
+      BotArmyLlm.Telemetry.setup()
+    end
 
     {:ok, pid}
+  end
+
+  # Exclude Consumer in tests to avoid connecting to real NATS
+  defp maybe_exclude_consumer(children) do
+    if @env == :test do
+      Enum.reject(children, fn
+        {BotArmyLlm.NATS.Consumer, []} -> true
+        _ -> false
+      end)
+    else
+      children
+    end
   end
 end

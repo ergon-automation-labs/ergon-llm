@@ -15,27 +15,51 @@ defmodule BotArmyLlm.LlmClientMock do
   end
 end
 
+defmodule BotArmyLlm.PromptHandlerTestRepoMock do
+  @moduledoc "Mock Repo for PromptHandler testing"
+
+  def insert(struct_or_changeset) do
+    # Handle both raw structs and changesets
+    changeset = case struct_or_changeset do
+      %Ecto.Changeset{} = cs -> cs
+      struct -> Ecto.Changeset.change(struct)
+    end
+
+    case changeset.valid? do
+      true ->
+        {:ok, %{
+          changeset.data
+          | id: UUID.uuid4(),
+            inserted_at: DateTime.utc_now(),
+            updated_at: DateTime.utc_now()
+        }}
+
+      false ->
+        {:error, changeset}
+    end
+  end
+end
+
 defmodule BotArmyLlm.Handlers.PromptHandlerTest do
   use ExUnit.Case, async: false
 
   setup do
     # Set the mock LLM client in Application config
     Application.put_env(:bot_army_llm, :llm_client, BotArmyLlm.LlmClientMock)
+    Application.put_env(:bot_army_llm, :repo, BotArmyLlm.PromptHandlerTestRepoMock)
 
     on_exit(fn ->
-      # Restore the real LLM client after the test
+      # Restore the real clients after the test
       Application.put_env(:bot_army_llm, :llm_client, BotArmyLlm.LlmClient)
+      Application.put_env(:bot_army_llm, :repo, BotArmyLlm.Repo)
     end)
 
     :ok
   end
 
   defp create_test_prompt do
-    {:ok, prompt} = BotArmyLlm.Repo.insert(%BotArmyLlm.Schemas.Prompt{
-      text: "Test prompt",
-      model: "test-model"
-    })
-    prompt.id
+    # Generate a UUID directly (no database hit)
+    UUID.uuid4()
   end
 
   describe "handle_submit/1" do

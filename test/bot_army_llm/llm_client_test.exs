@@ -89,27 +89,51 @@ defmodule BotArmyLlm.LlmClientTest do
     end
 
     test "sensitive text (AWS key) blocks cloud routing" do
-      sensitive_text = "AWS credentials: AKIAIOSFODNN7EXAMPLE"
+      defmodule MockHealthCheckerSensitiveAWS do
+        def load_acceptable?(), do: true
+        def best_ollama_node(_complexity), do: {:error, :no_healthy_nodes}
+        def node_status, do: []
+      end
 
-      assert SafetyClassifier.safe_for_cloud?(sensitive_text) == false
+      Application.put_env(:bot_army_llm, :ollama_health_checker, MockHealthCheckerSensitiveAWS)
 
-      log = capture_log(fn ->
-        _result = LlmClient.complete(sensitive_text)
-      end)
+      try do
+        sensitive_text = "AWS credentials: AKIAIOSFODNN7EXAMPLE"
 
-      assert String.contains?(log, "local-only")
+        assert SafetyClassifier.safe_for_cloud?(sensitive_text) == false
+
+        log = capture_log(fn ->
+          _result = LlmClient.complete(sensitive_text)
+        end)
+
+        assert String.contains?(log, "local-only")
+      after
+        Application.delete_env(:bot_army_llm, :ollama_health_checker)
+      end
     end
 
     test "sensitive text (private key) blocks cloud routing" do
-      sensitive_text = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQE\n-----END PRIVATE KEY-----"
+      defmodule MockHealthCheckerSensitiveKey do
+        def load_acceptable?(), do: true
+        def best_ollama_node(_complexity), do: {:error, :no_healthy_nodes}
+        def node_status, do: []
+      end
 
-      assert SafetyClassifier.safe_for_cloud?(sensitive_text) == false
+      Application.put_env(:bot_army_llm, :ollama_health_checker, MockHealthCheckerSensitiveKey)
 
-      log = capture_log(fn ->
-        _result = LlmClient.complete(sensitive_text)
-      end)
+      try do
+        sensitive_text = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQE\n-----END PRIVATE KEY-----"
 
-      assert String.contains?(log, "local-only")
+        assert SafetyClassifier.safe_for_cloud?(sensitive_text) == false
+
+        log = capture_log(fn ->
+          _result = LlmClient.complete(sensitive_text)
+        end)
+
+        assert String.contains?(log, "local-only")
+      after
+        Application.delete_env(:bot_army_llm, :ollama_health_checker)
+      end
     end
   end
 
@@ -126,29 +150,53 @@ defmodule BotArmyLlm.LlmClientTest do
     end
 
     test "messages with sensitive content block cloud routing" do
-      messages = [
-        %{"role" => "user", "content" => "Analyze my credentials: password=super_secret_123"}
-      ]
+      defmodule MockHealthCheckerMessagesAuth do
+        def load_acceptable?(), do: true
+        def best_ollama_node(_complexity), do: {:error, :no_healthy_nodes}
+        def node_status, do: []
+      end
 
-      log = capture_log(fn ->
-        _result = LlmClient.complete_messages(messages)
-      end)
+      Application.put_env(:bot_army_llm, :ollama_health_checker, MockHealthCheckerMessagesAuth)
 
-      assert String.contains?(log, "local-only")
-      assert String.contains?(log, "multi-turn")
+      try do
+        messages = [
+          %{"role" => "user", "content" => "Analyze my credentials: password=super_secret_123"}
+        ]
+
+        log = capture_log(fn ->
+          _result = LlmClient.complete_messages(messages)
+        end)
+
+        assert String.contains?(log, "local-only")
+        assert String.contains?(log, "multi-turn")
+      after
+        Application.delete_env(:bot_army_llm, :ollama_health_checker)
+      end
     end
 
     test "mixed messages check all content for sensitivity" do
-      messages = [
-        %{"role" => "assistant", "content" => "Safe response"},
-        %{"role" => "user", "content" => "secret_key = sk-ant-abc123"}
-      ]
+      defmodule MockHealthCheckerMessagesMixed do
+        def load_acceptable?(), do: true
+        def best_ollama_node(_complexity), do: {:error, :no_healthy_nodes}
+        def node_status, do: []
+      end
 
-      log = capture_log(fn ->
-        _result = LlmClient.complete_messages(messages)
-      end)
+      Application.put_env(:bot_army_llm, :ollama_health_checker, MockHealthCheckerMessagesMixed)
 
-      assert String.contains?(log, "local-only")
+      try do
+        messages = [
+          %{"role" => "assistant", "content" => "Safe response"},
+          %{"role" => "user", "content" => "secret_key = sk-ant-abc123"}
+        ]
+
+        log = capture_log(fn ->
+          _result = LlmClient.complete_messages(messages)
+        end)
+
+        assert String.contains?(log, "local-only")
+      after
+        Application.delete_env(:bot_army_llm, :ollama_health_checker)
+      end
     end
   end
 

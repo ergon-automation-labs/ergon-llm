@@ -25,6 +25,12 @@ defmodule BotArmyLlm.Application do
       # Conversation storage (in-memory + Ecto persistence)
       {BotArmyLlm.ConversationStore, []},
 
+      # Vector store for RAG (pgvector embeddings)
+      {BotArmyLlm.VectorStore, []},
+
+      # Metrics collection (in-memory counters and percentiles)
+      {BotArmyLlm.Metrics, []},
+
       # Ollama health checker (probes nodes every 60s, drives routing decisions)
       {BotArmyLlm.OllamaHealthChecker, []},
 
@@ -33,6 +39,11 @@ defmodule BotArmyLlm.Application do
     ]
 
     opts = [strategy: :one_for_one, name: BotArmyLlm.Supervisor]
-    Supervisor.start_link(children, opts)
+    {:ok, pid} = Supervisor.start_link(children, opts)
+
+    # Setup telemetry handlers after supervisor starts
+    BotArmyLlm.Telemetry.setup()
+
+    {:ok, pid}
   end
 end

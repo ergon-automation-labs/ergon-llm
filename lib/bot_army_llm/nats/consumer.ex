@@ -66,7 +66,12 @@ defmodule BotArmyLlm.NATS.Consumer do
       "llm.inference.converse",
       "llm.response.parse",
       "llm.vision.analyze",
-      "llm.embed.request"
+      "llm.embed.request",
+      "llm.rag.index",
+      "llm.rag.search",
+      "llm.rag.delete",
+      "llm.usage.query",
+      "llm.metrics.get"
     ]
 
     subs =
@@ -110,7 +115,12 @@ defmodule BotArmyLlm.NATS.Consumer do
 
     case BotArmyCore.NATS.Decoder.decode(msg.body) do
       {:ok, decoded_message} ->
-        route_message(decoded_message)
+        # Check if this is a request/reply message (has reply_to)
+        if msg.reply_to do
+          handle_request_reply(msg.topic, decoded_message, msg.reply_to)
+        else
+          route_message(decoded_message)
+        end
 
       {:error, reason} ->
         Logger.warning("Failed to decode message from #{msg.topic}: #{inspect(reason)}")
@@ -140,6 +150,119 @@ defmodule BotArmyLlm.NATS.Consumer do
 
   # Private functions
 
+  defp handle_request_reply(subject, message, reply_to) do
+    case subject do
+      "llm.usage.query" ->
+        handle_usage_query(message, reply_to)
+
+      "llm.metrics.get" ->
+        handle_metrics_get(message, reply_to)
+
+      _ ->
+        Logger.debug("Unknown request/reply subject: #{subject}")
+    end
+  end
+
+  defp handle_usage_query(message, reply_to) do
+    payload = message["payload"] || %{}
+
+    case BotArmyLlm.TokenAccounting.query(build_query_opts(payload)) do
+      {:ok, summary} ->
+        response = %{
+          "event" => "llm.usage.summary",
+          "event_id" => message["event_id"],
+          "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601(),
+          "source" => "bot_army_llm",
+          "source_node" => node() |> Atom.to_string(),
+          "schema_version" => "1.0",
+          "payload" => summary
+        }
+
+        publish_reply(reply_to, response)
+
+      {:error, reason} ->
+        Logger.error("Usage query failed: #{inspect(reason)}")
+        error_response = %{
+          "event" => "llm.error",
+          "event_id" => message["event_id"],
+          "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601(),
+          "source" => "bot_army_llm",
+          "source_node" => node() |> Atom.to_string(),
+          "schema_version" => "1.0",
+          "payload" => %{"error" => "Query failed", "reason" => inspect(reason)}
+        }
+
+        publish_reply(reply_to, error_response)
+    end
+  end
+
+  defp handle_metrics_get(message, reply_to) do
+    case BotArmyLlm.Metrics.get_summary() do
+      summary when is_map(summary) ->
+        response = %{
+          "event" => "llm.metrics.summary",
+          "event_id" => message["event_id"],
+          "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601(),
+          "source" => "bot_army_llm",
+          "source_node" => node() |> Atom.to_string(),
+          "schema_version" => "1.0",
+          "payload" => summary
+        }
+
+        publish_reply(reply_to, response)
+
+      {:error, reason} ->
+        Logger.error("Metrics query failed: #{inspect(reason)}")
+        error_response = %{
+          "event" => "llm.error",
+          "event_id" => message["event_id"],
+          "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601(),
+          "source" => "bot_army_llm",
+          "source_node" => node() |> Atom.to_string(),
+          "schema_version" => "1.0",
+          "payload" => %{"error" => "Metrics query failed", "reason" => inspect(reason)}
+        }
+
+        publish_reply(reply_to, error_response)
+    end
+  end
+
+  defp publish_reply(reply_to, response) do
+    case Jason.encode(response) do
+      {:ok, body} ->
+        case GenServer.call(BotArmyRuntime.NATS.Connection, :get_connection, 5000) do
+          {:ok, conn} ->
+            Gnat.pub(conn, reply_to, body)
+
+          {:error, reason} ->
+            Logger.error("Failed to get NATS connection for reply: #{inspect(reason)}")
+        end
+
+      {:error, reason} ->
+        Logger.error("Failed to encode reply: #{inspect(reason)}")
+    end
+  end
+
+  defp build_query_opts(payload) do
+    opts = []
+
+    opts =
+      if is_binary(payload["source"]) do
+        Keyword.put(opts, :source, payload["source"])
+      else
+        opts
+      end
+
+    opts =
+      if is_binary(payload["provider"]) do
+        Keyword.put(opts, :provider, payload["provider"])
+      else
+        opts
+      end
+
+    opts
+  end
+
   @doc """
   Route decoded message to appropriate handler based on event type.
   """
@@ -164,6 +287,15 @@ defmodule BotArmyLlm.NATS.Consumer do
 
       "llm.embed.request" ->
         BotArmyLlm.Handlers.EmbeddingHandler.handle_embed(message)
+
+      "llm.rag.index" ->
+        BotArmyLlm.Handlers.RAGHandler.handle_index(message)
+
+      "llm.rag.search" ->
+        BotArmyLlm.Handlers.RAGHandler.handle_search(message)
+
+      "llm.rag.delete" ->
+        BotArmyLlm.Handlers.RAGHandler.handle_delete(message)
 
       _ ->
         Logger.debug("Unknown LLM event type: #{event}")

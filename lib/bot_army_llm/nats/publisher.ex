@@ -85,6 +85,9 @@ defmodule BotArmyLlm.NATS.Publisher do
       "llm.response.parsed" -> "events.llm.response.parsed"
       "llm.vision.analyzed" -> "events.llm.vision.analyzed"
       "llm.embedding.created" -> "events.llm.embedding.created"
+      "llm.rag.indexed" -> "events.llm.rag.indexed"
+      "llm.rag.search.result" -> "events.llm.rag.search.result"
+      "llm.rag.deleted" -> "events.llm.rag.deleted"
       _ -> "events.llm.unknown"
     end
   end

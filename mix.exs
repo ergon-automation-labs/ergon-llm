@@ -29,6 +29,7 @@ defmodule BotArmyLlm.MixProject do
       {:bot_army_runtime, path: "../bot_army_runtime"},
       {:ecto_sql, "~> 3.10"},
       {:postgrex, "~> 0.17"},
+      {:pgvector, "~> 0.2"},
       {:jason, "~> 1.4"},
       {:logger_json, "~> 5.1"},
       {:elixir_uuid, "~> 1.2"},

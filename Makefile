@@ -1,4 +1,4 @@
-.PHONY: setup help deps test credo dialyzer coverage check format clean release publish-release setup-hooks setup-db reset-db
+.PHONY: setup help deps test credo dialyzer coverage check format clean release publish-release setup-hooks setup-db reset-db logs logs-tail logs-errors
 
 help:
 	@echo "BotArmyLlm - LLM Bot"
@@ -17,6 +17,11 @@ help:
 	@echo "  make check           - Run all checks (test, credo, dialyzer)"
 	@echo "  make format          - Format Elixir code"
 	@echo "  make clean           - Clean build artifacts"
+	@echo ""
+	@echo "Logging commands:"
+	@echo "  make logs            - View last 100 lines of llm_proxy logs"
+	@echo "  make logs-tail       - Tail llm_proxy logs (live updates)"
+	@echo "  make logs-errors     - Show only error lines from logs"
 	@echo ""
 	@echo "Release commands (normally automatic via git hook):"
 	@echo "  make release         - Build OTP release locally (manual, if needed)"
@@ -119,3 +124,17 @@ publish-release: release
 	echo "2. Trigger deployment in Jenkins UI or wait for auto-deployment"; \
 	echo "3. Check deployment status: make jenkins-logs"; \
 	echo ""
+
+logs:
+	@echo "Last 100 lines of llm_proxy logs:"
+	@echo "=================================="
+	@tail -100 /var/log/bot_army/llm_proxy.log 2>/dev/null || echo "Log file not found at /var/log/bot_army/llm_proxy.log"
+
+logs-tail:
+	@echo "Tailing llm_proxy logs (Ctrl+C to exit)..."
+	@tail -f /var/log/bot_army/llm_proxy.log 2>/dev/null || echo "Log file not found at /var/log/bot_army/llm_proxy.log"
+
+logs-errors:
+	@echo "Error and warning lines from llm_proxy logs:"
+	@echo "============================================="
+	@grep -E '\[error\]|\[warning\]' /var/log/bot_army/llm_proxy.log 2>/dev/null | tail -50 || echo "No errors found or log file not accessible"

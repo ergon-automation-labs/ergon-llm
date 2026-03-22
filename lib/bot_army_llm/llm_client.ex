@@ -197,7 +197,7 @@ defmodule BotArmyLlm.LlmClient do
   # Provider chain selection
 
   defp provider_chain(:heavy) do
-    [:blackbox, :openrouter, :anthropic]
+    [:blackbox, :openrouter, :anthropic, :ollama]
   end
 
   defp provider_chain(_complexity) do

@@ -5,6 +5,9 @@
 
 set -e
 
+# Load shell environment to get mix, mise, etc. in PATH
+[ -f ~/.zshrc ] && source ~/.zshrc
+
 echo "🔍 Running pre-push checks..."
 echo ""
 

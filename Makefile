@@ -138,3 +138,5 @@ logs-errors:
 	@echo "Error and warning lines from llm_proxy logs:"
 	@echo "============================================="
 	@grep -E '\[error\]|\[warning\]' /var/log/bot_army/llm_proxy.log 2>/dev/null | tail -50 || echo "No errors found or log file not accessible"
+
+# Test pre-push hook workflow - v0.5.6

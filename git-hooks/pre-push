@@ -6,7 +6,15 @@
 set -e
 
 # Load shell environment to get mix, mise, etc. in PATH
-[ -f ~/.zshrc ] && source ~/.zshrc
+if [ -f "$HOME/.zshrc" ]; then
+  source "$HOME/.zshrc"
+fi
+
+# Verify mix is available
+if ! command -v mix &> /dev/null; then
+  echo "❌ 'mix' command not found. Make sure Elixir/mise is installed."
+  exit 1
+fi
 
 echo "🔍 Running pre-push checks..."
 echo ""
@@ -69,14 +77,17 @@ if [[ $remote_ref == "refs/heads/main" ]]; then
   echo "✓ Tarball created: llm_proxy-$VERSION.tar.gz"
 
   # Create GitHub release
-  gh release create v$VERSION llm_proxy-$VERSION.tar.gz \
+  if gh release create v$VERSION llm_proxy-$VERSION.tar.gz \
     --title "Release v$VERSION" \
     --notes "LLM Bot Elixir release v$VERSION. Automatically deployed by Jenkins." \
-    --draft=false || {
-    echo "⚠️  Release already exists or GitHub publish failed"
-    echo "Continuing with push anyway..."
-  }
-  echo "✓ Release published to GitHub"
+    --draft=false 2>&1; then
+    echo "✓ Release published to GitHub"
+  else
+    release_error=$?
+    echo "❌ Failed to publish release to GitHub (exit code: $release_error)"
+    echo "   Check: GitHub API token, network connectivity, or if release already exists"
+    exit 1
+  fi
 
   echo ""
   echo "✅ All checks passed, release built and published!"

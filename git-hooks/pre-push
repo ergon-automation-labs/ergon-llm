@@ -17,11 +17,15 @@ if ! command -v mix &> /dev/null; then
 fi
 
 echo "🔍 Running pre-push checks..."
+echo "DEBUG: Hook started at $(date)" >> /tmp/pre-push-hook.log
 echo ""
 
 # Check if we're pushing to main
 read local_ref local_oid remote_ref remote_oid
+echo "DEBUG: remote_ref=$remote_ref, local_ref=$local_ref" >> /tmp/pre-push-hook.log
+
 if [[ $remote_ref == "refs/heads/main" ]]; then
+  echo "DEBUG: Detected main branch push" >> /tmp/pre-push-hook.log
   echo "⚠️  Pushing to main branch - validating and building release..."
   echo ""
 
@@ -68,6 +72,7 @@ if [[ $remote_ref == "refs/heads/main" ]]; then
   echo "🚀 Publishing release to GitHub..."
   VERSION=$(cat _build/prod/rel/llm_proxy/releases/start_erl.data | awk '{print $2}')
   echo "Version: $VERSION"
+  echo "DEBUG: Publishing v$VERSION at $(date)" >> /tmp/pre-push-hook.log
 
   # Create tarball
   tar -czf llm_proxy-$VERSION.tar.gz -C _build/prod/rel llm_proxy/ || {

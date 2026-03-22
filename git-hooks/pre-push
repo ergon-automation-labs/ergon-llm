@@ -5,14 +5,13 @@
 
 set -e
 
-# Load shell environment to get mix, mise, etc. in PATH
-if [ -f "$HOME/.zshrc" ]; then
-  source "$HOME/.zshrc"
-fi
+# Setup PATH for mise shims (don't source .zshrc - it fails in hook context)
+export PATH="$HOME/.local/share/mise/shims:$PATH"
 
 # Verify mix is available
 if ! command -v mix &> /dev/null; then
-  echo "❌ 'mix' command not found. Make sure Elixir/mise is installed."
+  echo "❌ 'mix' command not found in PATH"
+  echo "   Expected at: $HOME/.local/share/mise/shims/mix"
   exit 1
 fi
 

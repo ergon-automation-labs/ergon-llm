@@ -41,17 +41,28 @@ defmodule BotArmyLlm.LlmClientTest do
 
   describe "complete/2 with no cloud providers configured" do
     test "heavy prompt returns error when all providers unconfigured" do
+      defmodule MockHealthCheckerUnavailable do
+        def best_ollama_node(_complexity), do: {:error, :no_healthy_nodes}
+        def load_acceptable?(), do: true
+        def node_status, do: []
+      end
+
       with_env(
         [
           {"BLACKBOX_API_KEY", nil},
           {"OPENROUTER_API_KEY", nil},
-          {"ANTHROPIC_API_KEY", nil},
-          {"OLLAMA_URL", ""}
+          {"ANTHROPIC_API_KEY", nil}
         ],
         fn ->
-          # 200+ words → :heavy → tries cloud + Ollama, all unconfigured → fails
-          heavy_prompt = String.duplicate("implement complex algorithm code ", 10)
-          assert {:error, :no_providers_available} = LlmClient.complete(heavy_prompt)
+          Application.put_env(:bot_army_llm, :ollama_health_checker, MockHealthCheckerUnavailable)
+
+          try do
+            # 200+ words → :heavy → tries cloud + Ollama, all unavailable → fails
+            heavy_prompt = String.duplicate("implement complex algorithm code ", 10)
+            assert {:error, :no_providers_available} = LlmClient.complete(heavy_prompt)
+          after
+            Application.delete_env(:bot_army_llm, :ollama_health_checker)
+          end
         end
       )
     end
@@ -287,7 +298,7 @@ defmodule BotArmyLlm.LlmClientTest do
         def load_acceptable?(), do: true
         def best_ollama_node(:light), do: {:error, :no_healthy_nodes}
         def best_ollama_node(:medium), do: {:error, :no_healthy_nodes}
-        def best_ollama_node(:heavy), do: {:error, :skip_local}
+        def best_ollama_node(:heavy), do: {:error, :no_healthy_nodes}
         def node_status, do: []
       end
 

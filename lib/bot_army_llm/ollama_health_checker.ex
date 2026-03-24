@@ -288,4 +288,5 @@ defmodule BotArmyLlm.OllamaHealthChecker do
 
   defp local_model_for(:light), do: System.get_env("OLLAMA_MODEL_LIGHT", "ministral-3:3b")
   defp local_model_for(:medium), do: System.get_env("OLLAMA_MODEL_MEDIUM", "ministral-3:8b")
+  defp local_model_for(:heavy), do: System.get_env("OLLAMA_MODEL_HEAVY", "ministral-3:8b")
 end

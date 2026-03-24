@@ -36,6 +36,9 @@ defmodule BotArmyLlm.Application do
       # Ollama health checker (probes nodes every 60s, drives routing decisions)
       {BotArmyLlm.OllamaHealthChecker, []},
 
+      # Local queue manager (tracks pending Ollama requests for visibility)
+      {BotArmyLlm.LocalQueueManager, []},
+
       # NATS message consumer (depends on BotArmyRuntime.NATS.Connection being available)
       # Not started in tests to avoid connecting to real NATS
       {BotArmyLlm.NATS.Consumer, []}

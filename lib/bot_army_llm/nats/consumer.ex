@@ -71,7 +71,8 @@ defmodule BotArmyLlm.NATS.Consumer do
       "llm.rag.search",
       "llm.rag.delete",
       "llm.usage.query",
-      "llm.metrics.get"
+      "llm.metrics.get",
+      "llm.queue.status"
     ]
 
     subs =
@@ -158,6 +159,9 @@ defmodule BotArmyLlm.NATS.Consumer do
       "llm.metrics.get" ->
         handle_metrics_get(message, reply_to)
 
+      "llm.queue.status" ->
+        handle_queue_status(message, reply_to)
+
       _ ->
         Logger.debug("Unknown request/reply subject: #{subject}")
     end
@@ -225,6 +229,22 @@ defmodule BotArmyLlm.NATS.Consumer do
 
         publish_reply(reply_to, error_response)
     end
+  end
+
+  defp handle_queue_status(message, reply_to) do
+    pending_count = BotArmyLlm.LocalQueueManager.pending_count()
+
+    response = %{
+      "event" => "llm.queue.status.response",
+      "event_id" => message["event_id"],
+      "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601(),
+      "source" => "bot_army_llm",
+      "source_node" => node() |> Atom.to_string(),
+      "schema_version" => "1.0",
+      "payload" => %{"pending_local_requests" => pending_count}
+    }
+
+    publish_reply(reply_to, response)
   end
 
   defp publish_reply(reply_to, response) do

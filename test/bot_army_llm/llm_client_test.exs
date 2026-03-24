@@ -45,10 +45,11 @@ defmodule BotArmyLlm.LlmClientTest do
         [
           {"BLACKBOX_API_KEY", nil},
           {"OPENROUTER_API_KEY", nil},
-          {"ANTHROPIC_API_KEY", nil}
+          {"ANTHROPIC_API_KEY", nil},
+          {"OLLAMA_URL", ""}
         ],
         fn ->
-          # 200+ words → :heavy → skips Ollama, tries cloud only → all unconfigured
+          # 200+ words → :heavy → tries cloud + Ollama, all unconfigured → fails
           heavy_prompt = String.duplicate("implement complex algorithm code ", 10)
           assert {:error, :no_providers_available} = LlmClient.complete(heavy_prompt)
         end

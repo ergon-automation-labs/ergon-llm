@@ -112,12 +112,13 @@ defmodule BotArmyLlm.NATS.Consumer do
 
   @impl true
   def handle_info({:msg, msg}, state) do
-    Logger.debug("Received NATS message on subject: #{msg.topic}")
+    Logger.debug("Received NATS message on subject: #{msg.topic}, has_reply_to: #{msg.reply_to != nil}")
 
     case BotArmyCore.NATS.Decoder.decode(msg.body) do
       {:ok, decoded_message} ->
         # Check if this is a request/reply message (has reply_to)
         if msg.reply_to do
+          Logger.debug("Processing request/reply on #{msg.topic}, reply_to: #{msg.reply_to}")
           handle_request_reply(msg.topic, decoded_message, msg.reply_to)
         else
           route_message(decoded_message)
@@ -232,7 +233,9 @@ defmodule BotArmyLlm.NATS.Consumer do
   end
 
   defp handle_queue_status(message, reply_to) do
+    Logger.debug("handle_queue_status called, reply_to: #{reply_to}")
     pending_count = BotArmyLlm.LocalQueueManager.pending_count()
+    Logger.debug("Queue status: #{pending_count} pending requests")
 
     response = %{
       "event" => "llm.queue.status.response",
@@ -244,6 +247,7 @@ defmodule BotArmyLlm.NATS.Consumer do
       "payload" => %{"pending_local_requests" => pending_count}
     }
 
+    Logger.debug("Publishing queue status response")
     publish_reply(reply_to, response)
   end
 

@@ -391,7 +391,7 @@ defmodule BotArmyLlm.OllamaHealthCheckerTest do
       end)
     end
 
-    test "skips heavy complexity as before" do
+    test "supports heavy complexity by routing to healthy Ollama nodes" do
       state = %{
         nodes: %{
           air: %{
@@ -418,7 +418,7 @@ defmodule BotArmyLlm.OllamaHealthCheckerTest do
       }
 
       with_state(state, fn ->
-        {:error, :skip_local} = OllamaHealthChecker.best_ollama_node(:heavy)
+        {:ok, {"http://localhost:11434", "ministral-3:8b"}} = OllamaHealthChecker.best_ollama_node(:heavy)
       end)
     end
   end

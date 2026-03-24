@@ -38,8 +38,6 @@ defmodule BotArmyLlm.OllamaHealthChecker do
   """
   @spec best_ollama_node(:light | :medium | :heavy) ::
           {:ok, {String.t(), String.t()}} | {:error, atom()}
-  def best_ollama_node(:heavy), do: {:error, :skip_local}
-
   def best_ollama_node(complexity) do
     case Process.whereis(__MODULE__) do
       nil -> {:error, :health_checker_not_running}

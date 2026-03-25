@@ -30,13 +30,14 @@ defmodule BotArmyLlm.Handlers.PromptHandler do
   def handle_submit(message) do
     event_id = message["event_id"]
     payload = message["payload"]
+    source_metadata = message["source_metadata"] || %{}
 
     case validate_submit_payload(payload) do
       :ok ->
         case call_llm(payload) do
           {:ok, response} ->
             Logger.info("LLM completion generated: event_id=#{event_id}")
-            publish_completion(payload, response, event_id, message)
+            publish_completion(payload, response, event_id, source_metadata)
 
           {:error, reason} ->
             Logger.error("LLM call failed: #{inspect(reason)}")
@@ -84,7 +85,7 @@ defmodule BotArmyLlm.Handlers.PromptHandler do
     end
   end
 
-  defp publish_completion(payload, response, event_id, _original_message) do
+  defp publish_completion(payload, response, event_id, source_metadata) do
     prompt_id = payload["prompt_id"]
 
     # Persist to database
@@ -113,7 +114,8 @@ defmodule BotArmyLlm.Handlers.PromptHandler do
         },
         "latency_ms" => response.latency_ms,
         "original_prompt_id" => prompt_id,
-        "triggered_by_event_id" => event_id
+        "triggered_by_event_id" => event_id,
+        "source_metadata" => source_metadata
       }
     }
 

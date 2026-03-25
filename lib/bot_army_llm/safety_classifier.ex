@@ -176,7 +176,17 @@ defmodule BotArmyLlm.SafetyClassifier do
 
     detect_internal_infrastructure(text_lower) ||
       detect_personal_identifiers(text_lower) ||
-      detect_explicit_secret_markers(text_lower)
+      detect_explicit_secret_markers(text_lower) ||
+      detect_personal_work_context(text_lower)
+  end
+
+  # Detect resume and work-related personal data
+  defp detect_personal_work_context(text_lower) do
+    # Flag resume/CV content and work history as personal data that should stay local
+    String.match?(text_lower, ~r/(resume|cv|curriculum\s+vitae|professional\s+summary|years?\s+of\s+experience|relevant\s+experience|key\s+achievements?|accomplishments?)/i) ||
+      # Flag when combined with typical job application context
+      (String.match?(text_lower, ~r/(job\s+title|company|employment|role|position|responsibility|achievement|bullet|skill|expertise)/i) &&
+         String.match?(text_lower, ~r/(worked|developed|led|managed|designed|implemented|built|created)/i))
   end
 
   # Internal infrastructure patterns

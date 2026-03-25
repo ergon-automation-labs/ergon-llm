@@ -114,18 +114,24 @@ defmodule BotArmyLlm.NATS.Consumer do
   def handle_info({:msg, msg}, state) do
     Logger.debug("Received NATS message on subject: #{msg.topic}, has_reply_to: #{msg.reply_to != nil}")
 
-    case BotArmyCore.NATS.Decoder.decode(msg.body) do
-      {:ok, decoded_message} ->
-        # Check if this is a request/reply message (has reply_to)
-        if msg.reply_to do
-          Logger.debug("Processing request/reply on #{msg.topic}, reply_to: #{msg.reply_to}")
+    # Handle request/reply messages first (they may not have valid envelope structure)
+    if msg.reply_to do
+      Logger.debug("Processing request/reply on #{msg.topic}, reply_to: #{msg.reply_to}")
+      case BotArmyCore.NATS.Decoder.decode(msg.body) do
+        {:ok, decoded_message} ->
           handle_request_reply(msg.topic, decoded_message, msg.reply_to)
-        else
+        {:error, _reason} ->
+          # Request/reply messages may not decode - handle by subject
+          handle_request_reply(msg.topic, %{}, msg.reply_to)
+      end
+    else
+      case BotArmyCore.NATS.Decoder.decode(msg.body) do
+        {:ok, decoded_message} ->
           route_message(decoded_message)
-        end
 
-      {:error, reason} ->
-        Logger.warning("Failed to decode message from #{msg.topic}: #{inspect(reason)}")
+        {:error, reason} ->
+          Logger.warning("Failed to decode message from #{msg.topic}: #{inspect(reason)}")
+      end
     end
 
     {:noreply, state}

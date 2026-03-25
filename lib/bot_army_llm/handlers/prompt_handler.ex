@@ -31,13 +31,16 @@ defmodule BotArmyLlm.Handlers.PromptHandler do
     event_id = message["event_id"]
     payload = message["payload"]
     source_metadata = message["source_metadata"] || %{}
+    source = message["source"]
+
+    completion_event = derive_completion_event(source, source_metadata)
 
     case validate_submit_payload(payload) do
       :ok ->
         case call_llm(payload) do
           {:ok, response} ->
             Logger.info("LLM completion generated: event_id=#{event_id}")
-            publish_completion(payload, response, event_id, source_metadata)
+            publish_completion(payload, response, event_id, source_metadata, completion_event)
 
           {:error, reason} ->
             Logger.error("LLM call failed: #{inspect(reason)}")
@@ -68,6 +71,21 @@ defmodule BotArmyLlm.Handlers.PromptHandler do
     end
   end
 
+  defp derive_completion_event(source, source_metadata) do
+    source_domain = source_metadata["source_domain"]
+    bot_name = normalize_bot_name(source)
+
+    if source_domain && bot_name do
+      "llm.completion.#{bot_name}.#{source_domain}"
+    else
+      "llm.completion"
+    end
+  end
+
+  defp normalize_bot_name("bot_army_" <> rest), do: rest
+  defp normalize_bot_name(source) when is_binary(source), do: source
+  defp normalize_bot_name(_), do: nil
+
   defp call_llm(payload) do
     text = payload["text"]
     model = Map.get(payload, "model", "auto")
@@ -85,7 +103,7 @@ defmodule BotArmyLlm.Handlers.PromptHandler do
     end
   end
 
-  defp publish_completion(payload, response, event_id, source_metadata) do
+  defp publish_completion(payload, response, event_id, source_metadata, completion_event) do
     prompt_id = payload["prompt_id"]
 
     # Persist to database
@@ -98,7 +116,7 @@ defmodule BotArmyLlm.Handlers.PromptHandler do
     end
 
     event_data = %{
-      "event" => "llm.completion",
+      "event" => completion_event,
       "event_id" => UUID.uuid4(),
       "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601(),
       "source" => "bot_army_llm",
@@ -120,7 +138,7 @@ defmodule BotArmyLlm.Handlers.PromptHandler do
     }
 
     case BotArmyLlm.NATS.Publisher.publish(event_data) do
-      :ok -> Logger.debug("Published completion event")
+      :ok -> Logger.debug("Published completion event to #{completion_event}")
       {:error, reason} -> Logger.error("Failed to publish completion: #{inspect(reason)}")
     end
   end

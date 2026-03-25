@@ -165,7 +165,12 @@ llm.vision.analyze         → VisionHandler.handle_analyze/1
 ### Message Subjects (Outgoing)
 
 ```
-events.llm.completion              # From PromptHandler
+events.llm.completion                              # From PromptHandler (fallback, no source_domain)
+events.llm.completion.{bot_name}.{request_type}   # From PromptHandler (typed completions)
+  Example: events.llm.completion.job_applications.cover_letter
+  bot_name: derived by stripping "bot_army_" prefix from envelope source
+  request_type: source_metadata["source_domain"]
+
 events.llm.chain.step.completed    # From InferenceHandler (chain)
 events.llm.chain.completed         # From InferenceHandler (chain)
 events.llm.conversation.replied    # From InferenceHandler (converse)

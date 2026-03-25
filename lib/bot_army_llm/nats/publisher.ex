@@ -78,6 +78,7 @@ defmodule BotArmyLlm.NATS.Publisher do
   defp derive_subject(event_type) when is_binary(event_type) do
     case event_type do
       "llm.completion" -> "events.llm.completion"
+      "llm.completion." <> _rest -> "events." <> event_type
       "llm.error" -> "events.llm.error"
       "llm.chain.step.completed" -> "events.llm.chain.step.completed"
       "llm.chain.completed" -> "events.llm.chain.completed"

@@ -105,6 +105,7 @@ defmodule BotArmyLlm.Handlers.PromptHandler do
       "source_node" => get_node_name(),
       "triggered_by" => "llm.bot",
       "schema_version" => "1.0",
+      "source_metadata" => source_metadata,
       "payload" => %{
         "completion" => response.completion,
         "model" => response.model_used,
@@ -114,8 +115,7 @@ defmodule BotArmyLlm.Handlers.PromptHandler do
         },
         "latency_ms" => response.latency_ms,
         "original_prompt_id" => prompt_id,
-        "triggered_by_event_id" => event_id,
-        "source_metadata" => source_metadata
+        "triggered_by_event_id" => event_id
       }
     }
 

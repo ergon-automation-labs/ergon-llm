@@ -1,22 +1,23 @@
 defmodule BotArmyLlm.LocalQueueManager do
   @moduledoc """
-  Tracks pending local (Ollama) request queue depth.
+  Tracks pending LLM request queue depth for visibility in TUI status display.
 
-  When the safety classifier detects sensitive data or explicit local routing occurs,
-  requests are queued to Ollama. This GenServer maintains a simple counter of pending
-  requests to provide visibility into local processing backlog.
+  This GenServer maintains a counter of in-flight LLM requests across all providers
+  (Ollama, Blackbox, OpenRouter, Anthropic) to provide TUI with queue depth metrics.
 
-  The counter increments when a request is about to be sent to Ollama and decrements
-  when the request completes (success or failure).
+  The counter increments when an LLM request is submitted and decrements when it
+  completes (success or failure). Queue status is polled every 2 seconds by the TUI
+  via llm.queue.status request/reply endpoint.
 
   ## Usage
 
       LocalQueueManager.increment()
-      # ... do work ...
+      # ... do LLM work ...
       LocalQueueManager.decrement()
 
-      # Query current depth
-      count = LocalQueueManager.pending_count()
+      # Query current depth and breakdown
+      status = LocalQueueManager.queue_status()
+      # Returns: %{pending_total: int, actively_processing: int, queued_waiting: int, last_activity_at: timestamp}
   """
 
   use GenServer

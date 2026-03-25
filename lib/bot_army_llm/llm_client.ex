@@ -62,12 +62,17 @@ defmodule BotArmyLlm.LlmClient do
 
     Logger.debug("LLM routing: complexity=#{complexity}, chain=#{inspect(providers)}, safety_checked=true")
 
+    # Track all LLM requests (not just Ollama) for queue status visibility
+    BotArmyLlm.LocalQueueManager.increment()
+
     case try_providers(providers, text, complexity, opts) do
       {:ok, result} ->
+        BotArmyLlm.LocalQueueManager.decrement()
         latency = System.monotonic_time(:millisecond) - start_time
         {:ok, Map.put(result, :latency_ms, latency)}
 
       {:error, reason} ->
+        BotArmyLlm.LocalQueueManager.decrement()
         {:error, reason}
     end
   end
@@ -141,12 +146,17 @@ defmodule BotArmyLlm.LlmClient do
 
     Logger.debug("LLM routing (messages): complexity=#{complexity}, chain=#{inspect(providers)}, safety_checked=true")
 
+    # Track all LLM requests (not just Ollama) for queue status visibility
+    BotArmyLlm.LocalQueueManager.increment()
+
     case try_providers_messages(providers, messages, complexity, opts) do
       {:ok, result} ->
+        BotArmyLlm.LocalQueueManager.decrement()
         latency = System.monotonic_time(:millisecond) - start_time
         {:ok, Map.put(result, :latency_ms, latency)}
 
       {:error, reason} ->
+        BotArmyLlm.LocalQueueManager.decrement()
         {:error, reason}
     end
   end
@@ -232,15 +242,9 @@ defmodule BotArmyLlm.LlmClient do
   defp call_provider(:ollama, text, complexity, _opts) do
     case health_checker_module().best_ollama_node(complexity) do
       {:ok, {url, model}} ->
-        BotArmyLlm.LocalQueueManager.increment()
-
-        try do
-          case ollama_call(url, model, text) do
-            {:ok, completion} -> {:ok, %{completion: completion, model_used: model}}
-            {:error, reason} -> {:error, reason}
-          end
-        after
-          BotArmyLlm.LocalQueueManager.decrement()
+        case ollama_call(url, model, text) do
+          {:ok, completion} -> {:ok, %{completion: completion, model_used: model}}
+          {:error, reason} -> {:error, reason}
         end
 
       {:error, reason} ->
@@ -470,15 +474,9 @@ defmodule BotArmyLlm.LlmClient do
   defp call_provider_messages(:ollama, messages, _complexity, _opts) do
     case health_checker_module().best_ollama_node(:medium) do
       {:ok, {url, model}} ->
-        BotArmyLlm.LocalQueueManager.increment()
-
-        try do
-          case ollama_call_messages(url, model, messages) do
-            {:ok, completion} -> {:ok, %{completion: completion, model_used: model}}
-            {:error, reason} -> {:error, reason}
-          end
-        after
-          BotArmyLlm.LocalQueueManager.decrement()
+        case ollama_call_messages(url, model, messages) do
+          {:ok, completion} -> {:ok, %{completion: completion, model_used: model}}
+          {:error, reason} -> {:error, reason}
         end
 
       {:error, reason} ->

@@ -240,8 +240,8 @@ defmodule BotArmyLlm.NATS.Consumer do
 
   defp handle_queue_status(message, reply_to) do
     Logger.debug("handle_queue_status called, reply_to: #{reply_to}")
-    pending_count = BotArmyLlm.LocalQueueManager.pending_count()
-    Logger.debug("Queue status: #{pending_count} pending requests")
+    queue_status = BotArmyLlm.LocalQueueManager.queue_status()
+    Logger.debug("Queue status: #{inspect(queue_status)}")
 
     response = %{
       "event" => "llm.queue.status.response",
@@ -250,7 +250,7 @@ defmodule BotArmyLlm.NATS.Consumer do
       "source" => "bot_army_llm",
       "source_node" => node() |> Atom.to_string(),
       "schema_version" => "1.0",
-      "payload" => %{"pending_local_requests" => pending_count}
+      "payload" => queue_status
     }
 
     Logger.debug("Publishing queue status response")

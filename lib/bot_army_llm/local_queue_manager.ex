@@ -44,16 +44,21 @@ defmodule BotArmyLlm.LocalQueueManager do
     GenServer.call(__MODULE__, :get_count)
   end
 
+  @doc "Get queue status including active/queued breakdown and last activity time."
+  def queue_status() do
+    GenServer.call(__MODULE__, :get_status)
+  end
+
   # GenServer callbacks
 
   @impl true
   def init(_opts) do
-    {:ok, %{pending: 0}}
+    {:ok, %{pending: 0, last_activity_at: nil}}
   end
 
   @impl true
   def handle_cast(:increment, state) do
-    new_state = %{state | pending: state.pending + 1}
+    new_state = %{state | pending: state.pending + 1, last_activity_at: DateTime.utc_now()}
     Logger.debug("Local AI queue incremented: #{new_state.pending} pending requests")
     {:noreply, new_state}
   end
@@ -61,7 +66,7 @@ defmodule BotArmyLlm.LocalQueueManager do
   @impl true
   def handle_cast(:decrement, state) do
     new_count = max(0, state.pending - 1)
-    new_state = %{state | pending: new_count}
+    new_state = %{state | pending: new_count, last_activity_at: DateTime.utc_now()}
     Logger.debug("Local AI queue decremented: #{new_count} pending requests")
     {:noreply, new_state}
   end
@@ -70,4 +75,23 @@ defmodule BotArmyLlm.LocalQueueManager do
   def handle_call(:get_count, _from, state) do
     {:reply, state.pending, state}
   end
+
+  @impl true
+  def handle_call(:get_status, _from, state) do
+    # Assume 1 request actively processing when queue > 0, rest are waiting
+    active = min(1, state.pending)
+    queued = max(0, state.pending - active)
+
+    response = %{
+      "pending_total" => state.pending,
+      "actively_processing" => active,
+      "queued_waiting" => queued,
+      "last_activity_at" => state.last_activity_at |> format_timestamp()
+    }
+
+    {:reply, response, state}
+  end
+
+  defp format_timestamp(nil), do: nil
+  defp format_timestamp(dt), do: DateTime.to_iso8601(dt)
 end

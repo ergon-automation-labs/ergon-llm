@@ -92,13 +92,18 @@ defmodule BotArmyLlm.Handlers.PromptHandler do
 
     Logger.debug("Calling LLM with prompt: #{String.slice(text, 0, 50)}...")
 
+    # Track queue for this service-level LLM request
+    BotArmyLlm.LocalQueueManager.increment()
+
     # Call configured LLM client (real or mock in tests)
     llm_client = Application.get_env(:bot_army_llm, :llm_client, BotArmyLlm.LlmClient)
     case llm_client.complete(text, model: model) do
       {:ok, result} ->
+        BotArmyLlm.LocalQueueManager.decrement()
         {:ok, result}
 
       {:error, reason} ->
+        BotArmyLlm.LocalQueueManager.decrement()
         {:error, reason}
     end
   end

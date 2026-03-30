@@ -164,9 +164,16 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
 
     llm_client = Application.get_env(:bot_army_llm, :llm_client, BotArmyLlm.LlmClient)
 
+    BotArmyLlm.LocalQueueManager.increment()
+
     case llm_client.complete(prompt, model: model) do
-      {:ok, result} -> {:ok, result.completion}
-      {:error, reason} -> {:error, reason}
+      {:ok, result} ->
+        BotArmyLlm.LocalQueueManager.decrement()
+        {:ok, result.completion}
+
+      {:error, reason} ->
+        BotArmyLlm.LocalQueueManager.decrement()
+        {:error, reason}
     end
   end
 
@@ -205,8 +212,12 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
     messages = conversation["messages"] ++ [%{"role" => "user", "content" => user_message}]
 
     # Call LLM with conversation history
+    BotArmyLlm.LocalQueueManager.increment()
+
     case llm_client.complete_messages(messages, model: model_override || conversation["model"] || "auto") do
       {:ok, response} ->
+        BotArmyLlm.LocalQueueManager.decrement()
+
         # Append assistant response to messages
         assistant_message = %{"role" => "assistant", "content" => response.completion}
 
@@ -225,6 +236,7 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
         end
 
       {:error, reason} ->
+        BotArmyLlm.LocalQueueManager.decrement()
         Logger.error("LLM call failed: #{inspect(reason)}")
         publish_error(event_id, reason, "LLM inference failed")
     end

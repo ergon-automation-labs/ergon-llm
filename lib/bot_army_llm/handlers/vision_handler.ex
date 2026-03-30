@@ -86,8 +86,11 @@ defmodule BotArmyLlm.Handlers.VisionHandler do
 
     Logger.debug("Analyzing image with vision model")
 
+    BotArmyLlm.LocalQueueManager.increment()
+
     case llm_client.complete_vision(image_data, image_url, prompt, model: model_override || "auto") do
       {:ok, response} ->
+        BotArmyLlm.LocalQueueManager.decrement()
         raw_analysis = response.completion
 
         # Try to extract structured data if schema provided (best-effort)
@@ -116,6 +119,7 @@ defmodule BotArmyLlm.Handlers.VisionHandler do
         publish_analyzed(raw_analysis, structured_data, response.model_used, event_id)
 
       {:error, reason} ->
+        BotArmyLlm.LocalQueueManager.decrement()
         Logger.error("Vision analysis failed: #{inspect(reason)}")
         publish_error(event_id, reason, "Vision analysis failed")
     end

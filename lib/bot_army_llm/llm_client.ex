@@ -194,6 +194,49 @@ defmodule BotArmyLlm.LlmClient do
     end
   end
 
+  @doc """
+  Direct pass-through to Anthropic API for Claude Code requests.
+
+  Accepts the full Anthropic Messages API payload (messages, tools, system, etc.)
+  and forwards it directly to Anthropic, preserving all features like tools and
+  system prompts. No complexity scoring — this is for Claude Code itself.
+
+  Uses model from ANTHROPIC_MODEL_CLAUDE_CODE env var (default: claude-haiku-4-5-20251001).
+  Falls back to OpenRouter if Anthropic fails or rate-limits.
+
+  Returns: {:ok, response_body_json_string} | {:error, reason}
+  """
+  def anthropic_passthrough(payload) when is_map(payload) do
+    api_key = System.get_env("ANTHROPIC_API_KEY")
+    model = System.get_env("ANTHROPIC_MODEL_CLAUDE_CODE", "claude-haiku-4-5-20251001")
+
+    case {api_key, model} do
+      {nil, _} ->
+        Logger.warning("ANTHROPIC_API_KEY not configured, trying OpenRouter fallback")
+        try_openrouter_passthrough(payload)
+
+      {_, ""} ->
+        Logger.warning("ANTHROPIC_MODEL_CLAUDE_CODE not configured, trying OpenRouter fallback")
+        try_openrouter_passthrough(payload)
+
+      {key, m} ->
+        payload_with_model = Map.put(payload, "model", m)
+
+        case anthropic_passthrough_call(key, payload_with_model) do
+          {:ok, response_body} ->
+            {:ok, response_body}
+
+          {:error, :rate_limited} ->
+            Logger.warning("Anthropic rate-limited, trying OpenRouter fallback")
+            try_openrouter_passthrough(payload)
+
+          {:error, reason} ->
+            Logger.error("Anthropic passthrough failed: #{inspect(reason)}, trying OpenRouter fallback")
+            try_openrouter_passthrough(payload)
+        end
+    end
+  end
+
   # Provider chain selection
 
   defp provider_chain(:heavy) do
@@ -311,9 +354,27 @@ defmodule BotArmyLlm.LlmClient do
 
   # HTTP implementations
 
+  defp ollama_timeout_ms do
+    parse_timeout_ms(System.get_env("OLLAMA_TIMEOUT_MS"), 600_000)
+  end
+
+  defp ollama_embed_timeout_ms do
+    parse_timeout_ms(System.get_env("OLLAMA_EMBED_TIMEOUT_MS"), 120_000)
+  end
+
+  defp parse_timeout_ms(nil, default), do: default
+
+  defp parse_timeout_ms(value, default) do
+    case Integer.parse(value) do
+      {parsed, ""} when parsed > 0 -> parsed
+      _ -> default
+    end
+  end
+
   defp ollama_call(url, model, text) do
     endpoint = "#{url}/api/chat"
     headers = [{"Content-Type", "application/json"}]
+    timeout_ms = ollama_timeout_ms()
 
     payload =
       Jason.encode!(%{
@@ -322,7 +383,7 @@ defmodule BotArmyLlm.LlmClient do
         "stream" => false
       })
 
-    case HTTPoison.post(endpoint, payload, headers, recv_timeout: 120_000, timeout: 120_000) do
+    case HTTPoison.post(endpoint, payload, headers, recv_timeout: timeout_ms, timeout: timeout_ms) do
       {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
         with {:ok, response} <- Jason.decode(body),
              completion when is_binary(completion) <- get_in(response, ["message", "content"]) do
@@ -517,6 +578,7 @@ defmodule BotArmyLlm.LlmClient do
   defp ollama_call_messages(url, model, messages) do
     endpoint = "#{url}/api/chat"
     headers = [{"Content-Type", "application/json"}]
+    timeout_ms = ollama_timeout_ms()
 
     payload =
       Jason.encode!(%{
@@ -525,7 +587,7 @@ defmodule BotArmyLlm.LlmClient do
         "stream" => false
       })
 
-    case HTTPoison.post(endpoint, payload, headers, recv_timeout: 120_000, timeout: 120_000) do
+    case HTTPoison.post(endpoint, payload, headers, recv_timeout: timeout_ms, timeout: timeout_ms) do
       {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
         with {:ok, response} <- Jason.decode(body),
              completion when is_binary(completion) <- get_in(response, ["message", "content"]) do
@@ -704,6 +766,7 @@ defmodule BotArmyLlm.LlmClient do
   defp ollama_vision_call(url, model, image_data, prompt) when is_binary(image_data) do
     endpoint = "#{url}/api/chat"
     headers = [{"Content-Type", "application/json"}]
+    timeout_ms = ollama_timeout_ms()
 
     payload =
       Jason.encode!(%{
@@ -718,7 +781,7 @@ defmodule BotArmyLlm.LlmClient do
         "stream" => false
       })
 
-    case HTTPoison.post(endpoint, payload, headers, recv_timeout: 120_000, timeout: 120_000) do
+    case HTTPoison.post(endpoint, payload, headers, recv_timeout: timeout_ms, timeout: timeout_ms) do
       {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
         with {:ok, response} <- Jason.decode(body),
              analysis when is_binary(analysis) <- get_in(response, ["message", "content"]) do
@@ -936,6 +999,7 @@ defmodule BotArmyLlm.LlmClient do
   defp ollama_embed_call(url, model, text) do
     endpoint = "#{url}/api/embed"
     headers = [{"Content-Type", "application/json"}]
+    timeout_ms = ollama_embed_timeout_ms()
 
     payload =
       Jason.encode!(%{
@@ -943,7 +1007,7 @@ defmodule BotArmyLlm.LlmClient do
         "prompt" => text
       })
 
-    case HTTPoison.post(endpoint, payload, headers, recv_timeout: 30_000, timeout: 30_000) do
+    case HTTPoison.post(endpoint, payload, headers, recv_timeout: timeout_ms, timeout: timeout_ms) do
       {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
         with {:ok, response} <- Jason.decode(body),
              embedding when is_list(embedding) <- response["embedding"] do
@@ -1002,5 +1066,136 @@ defmodule BotArmyLlm.LlmClient do
     end
   rescue
     _ -> {:error, :request_failed}
+  end
+
+  # Claude Code pass-through implementations
+
+  defp anthropic_passthrough_call(api_key, payload) do
+    headers = [
+      {"Content-Type", "application/json"},
+      {"x-api-key", api_key},
+      {"anthropic-version", "2023-06-01"},
+      {"anthropic-beta", "tools-2024-04-04"}  # enable tools support
+    ]
+
+    # Encode the payload — should already be a map with all the fields
+    case Jason.encode(payload) do
+      {:ok, body} ->
+        case HTTPoison.post("https://api.anthropic.com/v1/messages", body, headers,
+               recv_timeout: 120_000,
+               timeout: 120_000
+             ) do
+          {:ok, %HTTPoison.Response{status_code: 200, body: response_body}} ->
+            # Return the raw response body as-is (already JSON string)
+            {:ok, response_body}
+
+          {:ok, %HTTPoison.Response{status_code: 429}} ->
+            {:error, :rate_limited}
+
+          {:ok, %HTTPoison.Response{status_code: status}} ->
+            Logger.warning("Anthropic passthrough failed with status #{status}")
+            {:error, {:http_error, status}}
+
+          {:error, reason} ->
+            Logger.error("Anthropic passthrough connection error: #{inspect(reason)}")
+            {:error, {:connection_error, reason}}
+        end
+
+      {:error, reason} ->
+        Logger.error("Failed to encode payload for Anthropic: #{inspect(reason)}")
+        {:error, {:encode_error, reason}}
+    end
+  rescue
+    _ -> {:error, :request_failed}
+  end
+
+  defp try_openrouter_passthrough(payload) do
+    api_key = System.get_env("OPENROUTER_API_KEY")
+    model = System.get_env("OPENROUTER_MODEL_CLAUDE_CODE", "anthropic/claude-3.5-sonnet")
+
+    case {api_key, model} do
+      {nil, _} ->
+        {:error, {:provider_not_configured, "OpenRouter"}}
+
+      {_, ""} ->
+        {:error, {:model_not_configured, "OpenRouter"}}
+
+      {key, m} ->
+        payload_with_model = Map.put(payload, "model", m)
+
+        headers = [
+          {"Content-Type", "application/json"},
+          {"Authorization", "Bearer #{key}"},
+          {"HTTP-Referer", "https://github.com/ergon-automation-labs"}
+        ]
+
+        case Jason.encode(payload_with_model) do
+          {:ok, body} ->
+            case HTTPoison.post("https://openrouter.ai/api/v1/chat/completions", body, headers,
+                   recv_timeout: 120_000,
+                   timeout: 120_000
+                 ) do
+              {:ok, %HTTPoison.Response{status_code: 200, body: response_body}} ->
+                # OpenRouter uses a different response format, convert to Anthropic format
+                {:ok, convert_openrouter_to_anthropic(response_body)}
+
+              {:ok, %HTTPoison.Response{status_code: 429}} ->
+                {:error, :rate_limited}
+
+              {:ok, %HTTPoison.Response{status_code: status}} ->
+                Logger.warning("OpenRouter passthrough failed with status #{status}")
+                {:error, {:http_error, status}}
+
+              {:error, reason} ->
+                Logger.error("OpenRouter passthrough connection error: #{inspect(reason)}")
+                {:error, {:connection_error, reason}}
+            end
+
+          {:error, reason} ->
+            Logger.error("Failed to encode payload for OpenRouter: #{inspect(reason)}")
+            {:error, {:encode_error, reason}}
+        end
+    end
+  rescue
+    _ -> {:error, :request_failed}
+  end
+
+  # Convert OpenRouter's chat/completions response to Anthropic Messages API format
+  defp convert_openrouter_to_anthropic(openrouter_body) do
+    case Jason.decode(openrouter_body) do
+      {:ok, response} ->
+        # Build Anthropic-format response from OpenRouter response
+        %{
+          "id" => response["id"] || "msg-oai-passthrough",
+          "type" => "message",
+          "role" => "assistant",
+          "content" => [
+            %{
+              "type" => "text",
+              "text" =>
+                get_in(response, ["choices", Access.at(0), "message", "content"]) ||
+                  "No response"
+            }
+          ],
+          "model" =>
+            response["model"] ||
+              System.get_env("OPENROUTER_MODEL_CLAUDE_CODE", "anthropic/claude-3.5-sonnet"),
+          "stop_reason" => "end_turn",
+          "usage" => %{
+            "input_tokens" => response["usage"]["prompt_tokens"] || 0,
+            "output_tokens" => response["usage"]["completion_tokens"] || 0
+          }
+        }
+        |> Jason.encode!()
+
+      {:error, _} ->
+        # If decoding fails, return a minimal error response
+        Jason.encode!(%{
+          "error" => %{
+            "type" => "invalid_response",
+            "message" => "Invalid response from OpenRouter"
+          }
+        })
+    end
   end
 end

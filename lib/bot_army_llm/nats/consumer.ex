@@ -70,6 +70,7 @@ defmodule BotArmyLlm.NATS.Consumer do
       "llm.rag.index",
       "llm.rag.search",
       "llm.rag.delete",
+      "llm.claude_code.complete",
       "llm.usage.query",
       "llm.metrics.get",
       "llm.queue.status"
@@ -160,6 +161,9 @@ defmodule BotArmyLlm.NATS.Consumer do
 
   defp handle_request_reply(subject, message, reply_to) do
     case subject do
+      "llm.claude_code.complete" ->
+        BotArmyLlm.Handlers.ClaudeCodeHandler.handle_complete(message, reply_to)
+
       "llm.usage.query" ->
         handle_usage_query(message, reply_to)
 

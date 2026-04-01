@@ -84,6 +84,7 @@ format:
 clean:
 	mix clean
 	rm -rf _build cover
+	rm -rf llm_proxy-*.tar.gz
 
 release: check
 	@echo "==============================================="

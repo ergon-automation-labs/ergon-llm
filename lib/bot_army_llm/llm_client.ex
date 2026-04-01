@@ -207,33 +207,43 @@ defmodule BotArmyLlm.LlmClient do
   Returns: {:ok, response_body_json_string} | {:error, reason}
   """
   def anthropic_passthrough(payload) when is_map(payload) do
+    # Try OpenRouter first, fall back to Anthropic
+    case try_openrouter_passthrough(payload) do
+      {:ok, response_body} ->
+        {:ok, response_body}
+
+      {:error, {:provider_not_configured, _}} ->
+        Logger.info("OpenRouter not configured, trying Anthropic fallback")
+        try_anthropic_passthrough(payload)
+
+      {:error, {:model_not_configured, _}} ->
+        Logger.info("OpenRouter model not configured, trying Anthropic fallback")
+        try_anthropic_passthrough(payload)
+
+      {:error, :rate_limited} ->
+        Logger.warning("OpenRouter rate-limited, trying Anthropic fallback")
+        try_anthropic_passthrough(payload)
+
+      {:error, reason} ->
+        Logger.error("OpenRouter passthrough failed: #{inspect(reason)}, trying Anthropic fallback")
+        try_anthropic_passthrough(payload)
+    end
+  end
+
+  defp try_anthropic_passthrough(payload) do
     api_key = System.get_env("ANTHROPIC_API_KEY")
     model = System.get_env("ANTHROPIC_MODEL_CLAUDE_CODE", "claude-haiku-4-5-20251001")
 
     case {api_key, model} do
       {nil, _} ->
-        Logger.warning("ANTHROPIC_API_KEY not configured, trying OpenRouter fallback")
-        try_openrouter_passthrough(payload)
+        {:error, {:provider_not_configured, "Anthropic"}}
 
       {_, ""} ->
-        Logger.warning("ANTHROPIC_MODEL_CLAUDE_CODE not configured, trying OpenRouter fallback")
-        try_openrouter_passthrough(payload)
+        {:error, {:model_not_configured, "Anthropic"}}
 
       {key, m} ->
         payload_with_model = Map.put(payload, "model", m)
-
-        case anthropic_passthrough_call(key, payload_with_model) do
-          {:ok, response_body} ->
-            {:ok, response_body}
-
-          {:error, :rate_limited} ->
-            Logger.warning("Anthropic rate-limited, trying OpenRouter fallback")
-            try_openrouter_passthrough(payload)
-
-          {:error, reason} ->
-            Logger.error("Anthropic passthrough failed: #{inspect(reason)}, trying OpenRouter fallback")
-            try_openrouter_passthrough(payload)
-        end
+        anthropic_passthrough_call(key, payload_with_model)
     end
   end
 

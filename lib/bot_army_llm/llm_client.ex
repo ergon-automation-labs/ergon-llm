@@ -242,7 +242,11 @@ defmodule BotArmyLlm.LlmClient do
         {:error, {:model_not_configured, "Anthropic"}}
 
       {key, m} ->
-        payload_with_model = Map.put(payload, "model", m)
+        payload_with_model =
+          payload
+          |> Map.put("model", m)
+          |> Map.put_new("stream", false)
+
         anthropic_passthrough_call(key, payload_with_model)
     end
   end
@@ -1131,7 +1135,10 @@ defmodule BotArmyLlm.LlmClient do
         {:error, {:model_not_configured, "OpenRouter"}}
 
       {key, m} ->
-        payload_with_model = Map.put(payload, "model", m)
+        payload_with_model =
+          payload
+          |> Map.put("model", m)
+          |> Map.put_new("stream", false)
 
         headers = [
           {"Content-Type", "application/json"},

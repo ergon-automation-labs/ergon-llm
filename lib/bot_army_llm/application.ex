@@ -16,7 +16,7 @@ defmodule BotArmyLlm.Application do
   def start(_type, _args) do
     children =
       [
-        # Database connection
+        # Database connection (optional in test when :start_repo is false — see config/test.exs)
         BotArmyLlm.Repo,
 
         # Note: BotArmyRuntime.NATS.Connection is started by BotArmyRuntime.Application supervisor.
@@ -44,6 +44,7 @@ defmodule BotArmyLlm.Application do
         # Not started in tests to avoid connecting to real NATS
         {BotArmyLlm.NATS.Consumer, []}
       ]
+      |> maybe_exclude_repo()
       |> maybe_exclude_consumer()
       |> maybe_http_proxy_children()
 
@@ -56,6 +57,15 @@ defmodule BotArmyLlm.Application do
     end
 
     {:ok, pid}
+  end
+
+  # Skip Repo in test unless BOT_ARMY_LLM_TEST_REPO=1 (avoids Postgrex errors when DB is missing)
+  defp maybe_exclude_repo(children) do
+    if Application.get_env(:bot_army_llm, :start_repo, true) do
+      children
+    else
+      Enum.reject(children, &(&1 == BotArmyLlm.Repo))
+    end
   end
 
   # Exclude Consumer in tests to avoid connecting to real NATS

@@ -2,35 +2,25 @@
 # Git pre-push hook for bot_army_llm
 # Validates compilation and builds release before pushing to GitHub
 # Tests run in Jenkins (not locally)
+# Uses absolute paths since git hooks run in a restricted environment
 
 set -e
 
-# Setup PATH for mise shims (don't source .zshrc - it fails in hook context)
-export PATH="$HOME/.local/share/mise/shims:$PATH"
-
-# Verify mix is available
-if ! command -v mix &> /dev/null; then
-  echo "❌ 'mix' command not found in PATH"
-  echo "   Expected at: $HOME/.local/share/mise/shims/mix"
-  exit 1
-fi
+# Use absolute path to mix since git hooks have limited environment
+MIX_BIN="/Users/abby/.local/share/mise/shims/mix"
 
 echo "🔍 Running pre-push checks..."
-echo "DEBUG: Hook started at $(date)" >> /tmp/pre-push-hook.log
 echo ""
 
 # Check if we're pushing to main
 read local_ref local_oid remote_ref remote_oid
-echo "DEBUG: remote_ref=$remote_ref, local_ref=$local_ref" >> /tmp/pre-push-hook.log
-
 if [[ $remote_ref == "refs/heads/main" ]]; then
-  echo "DEBUG: Detected main branch push" >> /tmp/pre-push-hook.log
   echo "⚠️  Pushing to main branch - validating and building release..."
   echo ""
 
   # Ensure dependencies are up to date
   echo "📦 Installing dependencies..."
-  mix deps.get || {
+  $MIX_BIN deps.get || {
     echo "❌ Failed to install dependencies"
     exit 1
   }
@@ -38,7 +28,7 @@ if [[ $remote_ref == "refs/heads/main" ]]; then
   # Check for compilation issues (quick validation)
   echo ""
   echo "🔨 Compiling code..."
-  mix compile --force || {
+  $MIX_BIN compile --force || {
     echo "❌ Compilation failed - push aborted"
     exit 1
   }
@@ -46,14 +36,14 @@ if [[ $remote_ref == "refs/heads/main" ]]; then
   # Quick linting check (non-blocking)
   echo ""
   echo "📝 Running linter..."
-  mix credo --strict || {
+  $MIX_BIN credo --strict || {
     echo "⚠️  Linting issues found (non-blocking, will fail in CI)"
   }
 
   # Run tests (required before release)
   echo ""
   echo "🧪 Running tests..."
-  mix test || {
+  $MIX_BIN test || {
     echo "❌ Tests failed - push aborted"
     exit 1
   }
@@ -61,7 +51,7 @@ if [[ $remote_ref == "refs/heads/main" ]]; then
   # Build OTP release
   echo ""
   echo "📦 Building OTP release..."
-  MIX_ENV=prod mix release --overwrite || {
+  MIX_ENV=prod $MIX_BIN release --overwrite || {
     echo "❌ Release build failed - push aborted"
     exit 1
   }

@@ -14,6 +14,8 @@ defmodule BotArmyLlm.Schemas.TokenUsage do
     field :tokens_output, :integer
     field :estimated_cost_usd, :float
     field :latency_ms, :integer
+    field :tenant_id, :binary_id
+    field :user_id, :binary_id
 
     timestamps(only: [:inserted_at], type: :utc_datetime)
   end
@@ -29,7 +31,9 @@ defmodule BotArmyLlm.Schemas.TokenUsage do
       :tokens_input,
       :tokens_output,
       :estimated_cost_usd,
-      :latency_ms
+      :latency_ms,
+      :tenant_id,
+      :user_id
     ])
     |> Ecto.Changeset.validate_required([
       :event_id,

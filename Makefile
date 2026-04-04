@@ -1,3 +1,5 @@
+SCRIPTS_DIRECTORY ?= $(abspath $(CURDIR)/../scripts)
+
 .PHONY: setup help deps test credo dialyzer coverage check format clean release publish-release setup-hooks setup-db reset-db logs logs-tail logs-errors
 
 help:
@@ -18,10 +20,10 @@ help:
 	@echo "  make format          - Format Elixir code"
 	@echo "  make clean           - Clean build artifacts"
 	@echo ""
-	@echo "Logging commands:"
-	@echo "  make logs            - View last 100 lines of llm_proxy logs"
-	@echo "  make logs-tail       - Tail llm_proxy logs (live updates)"
-	@echo "  make logs-errors     - Show only error lines from logs"
+	@echo "Logging commands (server /var/log/bot_army/llm_proxy.log):"
+	@echo "  make logs            - Last 100 lines with grc colors"
+	@echo "  make logs-tail       - Tail with grc (brew install grc; make -C .. install-grc)"
+	@echo "  make logs-errors     - Recent errors/warnings with grc"
 	@echo ""
 	@echo "Release commands (normally automatic via git hook):"
 	@echo "  make release         - Build OTP release locally (manual, if needed)"
@@ -129,15 +131,14 @@ publish-release: release
 logs:
 	@echo "Last 100 lines of llm_proxy logs:"
 	@echo "=================================="
-	@tail -100 /var/log/bot_army/llm_proxy.log 2>/dev/null || echo "Log file not found at /var/log/bot_army/llm_proxy.log"
+	@tail -100 /var/log/bot_army/llm_proxy.log 2>/dev/null | grc --config=conf.bot_army_elixir cat || echo "Log file not found at /var/log/bot_army/llm_proxy.log (brew install grc; make -C .. install-grc)"
 
 logs-tail:
-	@echo "Tailing llm_proxy logs (Ctrl+C to exit)..."
-	@tail -f /var/log/bot_army/llm_proxy.log 2>/dev/null || echo "Log file not found at /var/log/bot_army/llm_proxy.log"
+	@$(SCRIPTS_DIRECTORY)/tail_bot_log.sh
 
 logs-errors:
 	@echo "Error and warning lines from llm_proxy logs:"
 	@echo "============================================="
-	@grep -E '\[error\]|\[warning\]' /var/log/bot_army/llm_proxy.log 2>/dev/null | tail -50 || echo "No errors found or log file not accessible"
+	@grep -E '\[error\]|\[warning\]' /var/log/bot_army/llm_proxy.log 2>/dev/null | tail -50 | grc --config=conf.bot_army_elixir cat || echo "No errors found or log file not accessible"
 
 # Test pre-push hook workflow - v0.5.6

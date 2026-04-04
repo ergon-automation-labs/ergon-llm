@@ -14,6 +14,8 @@ defmodule BotArmyLlm.Schemas.Completion do
     field :model_used, :string
     field :tokens_input, :integer
     field :tokens_output, :integer
+    field :tenant_id, :binary_id
+    field :user_id, :binary_id
 
     belongs_to :prompt, BotArmyLlm.Schemas.Prompt
 
@@ -23,7 +25,7 @@ defmodule BotArmyLlm.Schemas.Completion do
   @doc false
   def changeset(completion, attrs) do
     completion
-    |> cast(attrs, [:completion_text, :model_used, :tokens_input, :tokens_output, :prompt_id])
+    |> cast(attrs, [:completion_text, :model_used, :tokens_input, :tokens_output, :prompt_id, :tenant_id, :user_id])
     |> validate_required([:completion_text, :model_used, :prompt_id])
     |> validate_number(:tokens_input, greater_than_or_equal_to: 0)
     |> validate_number(:tokens_output, greater_than_or_equal_to: 0)

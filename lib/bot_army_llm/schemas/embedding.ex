@@ -11,6 +11,8 @@ defmodule BotArmyLlm.Schemas.Embedding do
     field :content, :string
     field :embedding, Pgvector.Ecto.Vector
     field :metadata, :map
+    field :tenant_id, :binary_id
+    field :user_id, :binary_id
 
     timestamps(type: :utc_datetime)
   end
@@ -23,7 +25,9 @@ defmodule BotArmyLlm.Schemas.Embedding do
       :source,
       :content,
       :embedding,
-      :metadata
+      :metadata,
+      :tenant_id,
+      :user_id
     ])
     |> Ecto.Changeset.validate_required([
       :document_id,

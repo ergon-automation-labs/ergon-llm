@@ -15,7 +15,7 @@ defmodule BotArmyLlm.Repo.Migrations.CreateTokenUsage do
 
       add :latency_ms, :integer
 
-      inserted_at(:inserted_at, type: :utc_datetime)
+      timestamps(updated_at: false, type: :utc_datetime)
     end
 
     create index(:token_usage, [:inserted_at])

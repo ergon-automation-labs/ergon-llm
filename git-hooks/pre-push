@@ -86,6 +86,11 @@ if [[ $remote_ref == "refs/heads/main" ]]; then
   echo ""
   echo "✅ All checks passed, release built and published!"
   echo "📤 Proceeding with push..."
+
+  echo ""
+  echo "Removing tarball..."
+  rm -f llm_proxy-$VERSION.tar.gz
+  echo "✓ Tarball removed"
 else
   echo "ℹ️  Pushing to feature branch - skipping validation"
 fi

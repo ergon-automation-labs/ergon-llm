@@ -29,16 +29,17 @@ defmodule BotArmyLlm.Handlers.EmbeddingHandler do
   - `llm.error` on failure
   """
   def handle_embed(message) do
+    %{tenant_id: tenant_id, user_id: user_id} = BotArmyCore.Tenant.extract_context(message)
     event_id = message["event_id"]
     payload = message["payload"]
 
     case validate_embed_payload(payload) do
       :ok ->
-        process_embed(payload, event_id)
+        process_embed(payload, event_id, tenant_id, user_id)
 
       {:error, reason} ->
         Logger.warning("Invalid embedding payload: #{inspect(reason)}")
-        publish_error(event_id, reason, "Invalid embedding data")
+        publish_error(event_id, reason, "Invalid embedding data", tenant_id, user_id)
     end
   end
 
@@ -59,7 +60,7 @@ defmodule BotArmyLlm.Handlers.EmbeddingHandler do
     end
   end
 
-  defp process_embed(payload, event_id) do
+  defp process_embed(payload, event_id, tenant_id, user_id) do
     text = payload["text"]
     card_id = payload["card_id"]
     model = Map.get(payload, "model", "nomic-embed-text")
@@ -76,20 +77,24 @@ defmodule BotArmyLlm.Handlers.EmbeddingHandler do
           embedding,
           response.model_used,
           card_id,
-          event_id
+          event_id,
+          tenant_id,
+          user_id
         )
 
       {:error, reason} ->
         Logger.error("Embedding generation failed: #{inspect(reason)}")
-        publish_error(event_id, reason, "Embedding generation failed")
+        publish_error(event_id, reason, "Embedding generation failed", tenant_id, user_id)
     end
   end
 
-  defp publish_embedding(embedding, model_used, card_id, triggered_by_event_id) do
+  defp publish_embedding(embedding, model_used, card_id, triggered_by_event_id, tenant_id, user_id) do
     payload = %{
       "embedding" => embedding,
       "model_used" => model_used,
-      "triggered_by_event_id" => triggered_by_event_id
+      "triggered_by_event_id" => triggered_by_event_id,
+      "tenant_id" => tenant_id,
+      "user_id" => user_id
     }
 
     payload =
@@ -107,7 +112,7 @@ defmodule BotArmyLlm.Handlers.EmbeddingHandler do
     end
   end
 
-  defp publish_error(event_id, reason, message) do
+  defp publish_error(event_id, reason, message, tenant_id, user_id) do
     error_event = %{
       "event" => "llm.error",
       "event_id" => UUID.uuid4(),
@@ -116,6 +121,8 @@ defmodule BotArmyLlm.Handlers.EmbeddingHandler do
       "source_node" => node() |> Atom.to_string(),
       "triggered_by" => "llm.bot",
       "schema_version" => "1.0",
+      "tenant_id" => tenant_id,
+      "user_id" => user_id,
       "payload" => %{
         "error" => message,
         "reason" => inspect(reason),

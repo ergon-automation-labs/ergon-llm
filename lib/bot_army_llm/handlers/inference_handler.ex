@@ -36,16 +36,17 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
   - `llm.error` on failure
   """
   def handle_chain(message) do
+    %{tenant_id: tenant_id, user_id: user_id} = BotArmyCore.Tenant.extract_context(message)
     event_id = message["event_id"]
     payload = message["payload"]
 
     case validate_chain_payload(payload) do
       :ok ->
-        process_chain(payload, event_id, message)
+        process_chain(payload, event_id, message, tenant_id, user_id)
 
       {:error, reason} ->
         Logger.warning("Invalid chain payload: #{inspect(reason)}")
-        publish_error(event_id, reason, "Invalid chain data")
+        publish_error(event_id, reason, "Invalid chain data", tenant_id, user_id)
     end
   end
 
@@ -69,16 +70,17 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
   - `llm.error` on failure
   """
   def handle_converse(message) do
+    %{tenant_id: tenant_id, user_id: user_id} = BotArmyCore.Tenant.extract_context(message)
     event_id = message["event_id"]
     payload = message["payload"]
 
     case validate_converse_payload(payload) do
       :ok ->
-        process_converse(payload, event_id, message)
+        process_converse(payload, event_id, message, tenant_id, user_id)
 
       {:error, reason} ->
         Logger.warning("Invalid converse payload: #{inspect(reason)}")
-        publish_error(event_id, reason, "Invalid converse data")
+        publish_error(event_id, reason, "Invalid converse data", tenant_id, user_id)
     end
   end
 
@@ -118,7 +120,7 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
     end
   end
 
-  defp process_chain(payload, event_id, _original_message) do
+  defp process_chain(payload, event_id, _original_message, tenant_id, user_id) do
     chain_id = Map.get(payload, "chain_id", UUID.uuid4())
     steps = payload["steps"]
     initial_input = payload["initial_input"]
@@ -135,7 +137,7 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
               "name" => Map.get(step, "name", "step_#{length(step_results) + 1}"),
               "output" => output
             }
-            publish_step_completed(chain_id, step, output, event_id)
+            publish_step_completed(chain_id, step, output, event_id, tenant_id, user_id)
             {:cont, {:ok, output, step_results ++ [step_result]}}
 
           {:error, reason} ->
@@ -146,10 +148,10 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
 
     case result do
       {:ok, _final_output, step_results} ->
-        publish_chain_completed(chain_id, step_results, metadata, event_id)
+        publish_chain_completed(chain_id, step_results, metadata, event_id, tenant_id, user_id)
 
       {:error, reason} ->
-        publish_error(event_id, reason, "Chain execution failed")
+        publish_error(event_id, reason, "Chain execution failed", tenant_id, user_id)
     end
   end
 
@@ -177,7 +179,7 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
     end
   end
 
-  defp process_converse(payload, event_id, _original_message) do
+  defp process_converse(payload, event_id, _original_message, tenant_id, user_id) do
     session_id = Map.get(payload, "session_id")
     user_message = payload["message"]
     model_override = Map.get(payload, "model")
@@ -227,27 +229,31 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
               final_session_id,
               response.completion,
               updated_conversation,
-              event_id
+              event_id,
+              tenant_id,
+              user_id
             )
 
           {:error, reason} ->
             Logger.error("Failed to save conversation: #{inspect(reason)}")
-            publish_error(event_id, reason, "Failed to save conversation")
+            publish_error(event_id, reason, "Failed to save conversation", tenant_id, user_id)
         end
 
       {:error, reason} ->
         BotArmyLlm.LocalQueueManager.decrement()
         Logger.error("LLM call failed: #{inspect(reason)}")
-        publish_error(event_id, reason, "LLM inference failed")
+        publish_error(event_id, reason, "LLM inference failed", tenant_id, user_id)
     end
   end
 
-  defp publish_step_completed(chain_id, step, output, triggered_by_event_id) do
+  defp publish_step_completed(chain_id, step, output, triggered_by_event_id, tenant_id, user_id) do
     event_data = EventBuilder.build("llm.chain.step.completed", %{
       "chain_id" => chain_id,
       "step_prompt" => String.slice(step["prompt"], 0, 100),
       "step_output" => output,
-      "triggered_by_event_id" => triggered_by_event_id
+      "triggered_by_event_id" => triggered_by_event_id,
+      "tenant_id" => tenant_id,
+      "user_id" => user_id
     })
 
     case BotArmyLlm.NATS.Publisher.publish(event_data) do
@@ -256,13 +262,15 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
     end
   end
 
-  defp publish_chain_completed(chain_id, step_results, metadata, triggered_by_event_id) do
+  defp publish_chain_completed(chain_id, step_results, metadata, triggered_by_event_id, tenant_id, user_id) do
     event_data = EventBuilder.build("llm.chain.completed", %{
       "chain_id" => chain_id,
       "steps" => step_results,
       "total_steps" => length(step_results),
       "metadata" => metadata,
-      "triggered_by_event_id" => triggered_by_event_id
+      "triggered_by_event_id" => triggered_by_event_id,
+      "tenant_id" => tenant_id,
+      "user_id" => user_id
     })
 
     case BotArmyLlm.NATS.Publisher.publish(event_data) do
@@ -271,13 +279,15 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
     end
   end
 
-  defp publish_converse_replied(session_id, reply, conversation, triggered_by_event_id) do
+  defp publish_converse_replied(session_id, reply, conversation, triggered_by_event_id, tenant_id, user_id) do
     event_data = EventBuilder.build("llm.conversation.replied", %{
       "session_id" => session_id,
       "reply" => reply,
       "message_count" => length(conversation["messages"] || []),
       "model_used" => conversation["model"],
-      "triggered_by_event_id" => triggered_by_event_id
+      "triggered_by_event_id" => triggered_by_event_id,
+      "tenant_id" => tenant_id,
+      "user_id" => user_id
     })
 
     case BotArmyLlm.NATS.Publisher.publish(event_data) do
@@ -286,7 +296,7 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
     end
   end
 
-  defp publish_error(event_id, reason, message) do
+  defp publish_error(event_id, reason, message, tenant_id, user_id) do
     error_event = %{
       "event" => "llm.error",
       "event_id" => UUID.uuid4(),
@@ -295,6 +305,8 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
       "source_node" => node() |> Atom.to_string(),
       "triggered_by" => "llm.bot",
       "schema_version" => "1.0",
+      "tenant_id" => tenant_id,
+      "user_id" => user_id,
       "payload" => %{
         "error" => message,
         "reason" => inspect(reason),

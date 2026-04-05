@@ -33,16 +33,17 @@ defmodule BotArmyLlm.Handlers.VisionHandler do
   - `llm.error` on failure
   """
   def handle_analyze(message) do
+    %{tenant_id: tenant_id, user_id: user_id} = BotArmyCore.Tenant.extract_context(message)
     event_id = message["event_id"]
     payload = message["payload"]
 
     case validate_vision_payload(payload) do
       :ok ->
-        process_vision(payload, event_id, message)
+        process_vision(payload, event_id, message, tenant_id, user_id)
 
       {:error, reason} ->
         Logger.warning("Invalid vision payload: #{inspect(reason)}")
-        publish_error(event_id, reason, "Invalid vision data")
+        publish_error(event_id, reason, "Invalid vision data", tenant_id, user_id)
     end
   end
 
@@ -75,7 +76,7 @@ defmodule BotArmyLlm.Handlers.VisionHandler do
     end
   end
 
-  defp process_vision(payload, event_id, _original_message) do
+  defp process_vision(payload, event_id, _original_message, tenant_id, user_id) do
     image_data = payload["image_data"]
     image_url = payload["image_url"]
     prompt = payload["prompt"]
@@ -116,20 +117,22 @@ defmodule BotArmyLlm.Handlers.VisionHandler do
             nil
           end
 
-        publish_analyzed(raw_analysis, structured_data, response.model_used, event_id)
+        publish_analyzed(raw_analysis, structured_data, response.model_used, event_id, tenant_id, user_id)
 
       {:error, reason} ->
         BotArmyLlm.LocalQueueManager.decrement()
         Logger.error("Vision analysis failed: #{inspect(reason)}")
-        publish_error(event_id, reason, "Vision analysis failed")
+        publish_error(event_id, reason, "Vision analysis failed", tenant_id, user_id)
     end
   end
 
-  defp publish_analyzed(raw_analysis, structured_data, model_used, triggered_by_event_id) do
+  defp publish_analyzed(raw_analysis, structured_data, model_used, triggered_by_event_id, tenant_id, user_id) do
     payload = %{
       "raw_analysis" => raw_analysis,
       "model_used" => model_used,
-      "triggered_by_event_id" => triggered_by_event_id
+      "triggered_by_event_id" => triggered_by_event_id,
+      "tenant_id" => tenant_id,
+      "user_id" => user_id
     }
 
     payload =
@@ -147,7 +150,7 @@ defmodule BotArmyLlm.Handlers.VisionHandler do
     end
   end
 
-  defp publish_error(event_id, reason, message) do
+  defp publish_error(event_id, reason, message, tenant_id, user_id) do
     error_event = %{
       "event" => "llm.error",
       "event_id" => UUID.uuid4(),
@@ -156,6 +159,8 @@ defmodule BotArmyLlm.Handlers.VisionHandler do
       "source_node" => node() |> Atom.to_string(),
       "triggered_by" => "llm.bot",
       "schema_version" => "1.0",
+      "tenant_id" => tenant_id,
+      "user_id" => user_id,
       "payload" => %{
         "error" => message,
         "reason" => inspect(reason),

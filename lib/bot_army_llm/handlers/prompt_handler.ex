@@ -28,6 +28,7 @@ defmodule BotArmyLlm.Handlers.PromptHandler do
   Returns `:ok` if successful, or logs errors on failure.
   """
   def handle_submit(message) do
+    %{tenant_id: tenant_id, user_id: user_id} = BotArmyCore.Tenant.extract_context(message)
     event_id = message["event_id"]
     payload = message["payload"]
     source_metadata = message["source_metadata"] || %{}
@@ -40,16 +41,16 @@ defmodule BotArmyLlm.Handlers.PromptHandler do
         case call_llm(payload) do
           {:ok, response} ->
             Logger.info("LLM completion generated: event_id=#{event_id}")
-            publish_completion(payload, response, event_id, source_metadata, completion_event)
+            publish_completion(payload, response, event_id, source_metadata, completion_event, tenant_id, user_id)
 
           {:error, reason} ->
             Logger.error("LLM call failed: #{inspect(reason)}")
-            publish_error(event_id, reason, "LLM inference failed")
+            publish_error(event_id, reason, "LLM inference failed", tenant_id, user_id)
         end
 
       {:error, reason} ->
         Logger.warning("Invalid prompt payload: #{inspect(reason)}")
-        publish_error(event_id, reason, "Invalid prompt data")
+        publish_error(event_id, reason, "Invalid prompt data", tenant_id, user_id)
     end
   end
 
@@ -108,7 +109,7 @@ defmodule BotArmyLlm.Handlers.PromptHandler do
     end
   end
 
-  defp publish_completion(payload, response, event_id, source_metadata, completion_event) do
+  defp publish_completion(payload, response, event_id, source_metadata, completion_event, tenant_id, user_id) do
     prompt_id = payload["prompt_id"]
 
     # Persist to database
@@ -128,6 +129,8 @@ defmodule BotArmyLlm.Handlers.PromptHandler do
       "source_node" => get_node_name(),
       "triggered_by" => "llm.bot",
       "schema_version" => "1.0",
+      "tenant_id" => tenant_id,
+      "user_id" => user_id,
       "source_metadata" => source_metadata,
       "payload" => %{
         "completion" => response.completion,
@@ -164,7 +167,7 @@ defmodule BotArmyLlm.Handlers.PromptHandler do
     end
   end
 
-  defp publish_error(event_id, reason, message) do
+  defp publish_error(event_id, reason, message, tenant_id, user_id) do
     error_event = %{
       "event" => "llm.error",
       "event_id" => UUID.uuid4(),
@@ -173,6 +176,8 @@ defmodule BotArmyLlm.Handlers.PromptHandler do
       "source_node" => get_node_name(),
       "triggered_by" => "llm.bot",
       "schema_version" => "1.0",
+      "tenant_id" => tenant_id,
+      "user_id" => user_id,
       "payload" => %{
         "error" => message,
         "reason" => inspect(reason),

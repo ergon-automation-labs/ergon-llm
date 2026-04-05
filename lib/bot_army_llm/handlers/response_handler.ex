@@ -30,16 +30,17 @@ defmodule BotArmyLlm.Handlers.ResponseHandler do
   - `llm.error` on failure after max retries
   """
   def handle_parse(message) do
+    %{tenant_id: tenant_id, user_id: user_id} = BotArmyCore.Tenant.extract_context(message)
     event_id = message["event_id"]
     payload = message["payload"]
 
     case validate_parse_payload(payload) do
       :ok ->
-        process_parse(payload, event_id, message)
+        process_parse(payload, event_id, message, tenant_id, user_id)
 
       {:error, reason} ->
         Logger.warning("Invalid parse payload: #{inspect(reason)}")
-        publish_error(event_id, reason, "Invalid parse data")
+        publish_error(event_id, reason, "Invalid parse data", tenant_id, user_id)
     end
   end
 
@@ -58,7 +59,7 @@ defmodule BotArmyLlm.Handlers.ResponseHandler do
     end
   end
 
-  defp process_parse(payload, event_id, _original_message) do
+  defp process_parse(payload, event_id, _original_message, tenant_id, user_id) do
     text = payload["text"]
     output_schema = payload["output_schema"]
     max_retries = Map.get(payload, "max_retries", 3)
@@ -70,11 +71,11 @@ defmodule BotArmyLlm.Handlers.ResponseHandler do
 
     case attempt_parse(text, output_schema, max_retries, 0) do
       {:ok, structured_data} ->
-        publish_parsed(structured_data, context, event_id)
+        publish_parsed(structured_data, context, event_id, tenant_id, user_id)
 
       {:error, reason} ->
         Logger.error("Failed to parse response after #{max_retries} retries: #{inspect(reason)}")
-        publish_error(event_id, reason, "Failed to parse response")
+        publish_error(event_id, reason, "Failed to parse response", tenant_id, user_id)
     end
   end
 
@@ -140,10 +141,12 @@ defmodule BotArmyLlm.Handlers.ResponseHandler do
     end
   end
 
-  defp publish_parsed(structured_data, context, triggered_by_event_id) do
+  defp publish_parsed(structured_data, context, triggered_by_event_id, tenant_id, user_id) do
     event_data = EventBuilder.build("llm.response.parsed", Map.merge(context, %{
       "structured_data" => structured_data,
-      "triggered_by_event_id" => triggered_by_event_id
+      "triggered_by_event_id" => triggered_by_event_id,
+      "tenant_id" => tenant_id,
+      "user_id" => user_id
     }))
 
     case BotArmyLlm.NATS.Publisher.publish(event_data) do
@@ -152,7 +155,7 @@ defmodule BotArmyLlm.Handlers.ResponseHandler do
     end
   end
 
-  defp publish_error(event_id, reason, message) do
+  defp publish_error(event_id, reason, message, tenant_id, user_id) do
     error_event = %{
       "event" => "llm.error",
       "event_id" => UUID.uuid4(),
@@ -161,6 +164,8 @@ defmodule BotArmyLlm.Handlers.ResponseHandler do
       "source_node" => node() |> Atom.to_string(),
       "triggered_by" => "llm.bot",
       "schema_version" => "1.0",
+      "tenant_id" => tenant_id,
+      "user_id" => user_id,
       "payload" => %{
         "error" => message,
         "reason" => inspect(reason),

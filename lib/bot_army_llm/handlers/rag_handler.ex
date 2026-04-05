@@ -35,16 +35,17 @@ defmodule BotArmyLlm.Handlers.RAGHandler do
   - `llm.error` on failure
   """
   def handle_index(message) do
+    %{tenant_id: tenant_id, user_id: user_id} = BotArmyCore.Tenant.extract_context(message)
     event_id = message["event_id"]
     payload = message["payload"]
 
     case validate_index_payload(payload) do
       :ok ->
-        process_index(payload, event_id)
+        process_index(payload, event_id, tenant_id, user_id)
 
       {:error, reason} ->
         Logger.warning("Invalid RAG index payload: #{inspect(reason)}")
-        publish_error(event_id, reason, "Invalid RAG index data")
+        publish_error(event_id, reason, "Invalid RAG index data", tenant_id, user_id)
     end
   end
 
@@ -68,16 +69,17 @@ defmodule BotArmyLlm.Handlers.RAGHandler do
   - `llm.error` on failure
   """
   def handle_search(message) do
+    %{tenant_id: tenant_id, user_id: user_id} = BotArmyCore.Tenant.extract_context(message)
     event_id = message["event_id"]
     payload = message["payload"]
 
     case validate_search_payload(payload) do
       :ok ->
-        process_search(payload, event_id)
+        process_search(payload, event_id, tenant_id, user_id)
 
       {:error, reason} ->
         Logger.warning("Invalid RAG search payload: #{inspect(reason)}")
-        publish_error(event_id, reason, "Invalid RAG search data")
+        publish_error(event_id, reason, "Invalid RAG search data", tenant_id, user_id)
     end
   end
 
@@ -96,16 +98,17 @@ defmodule BotArmyLlm.Handlers.RAGHandler do
   - `llm.error` on failure
   """
   def handle_delete(message) do
+    %{tenant_id: tenant_id, user_id: user_id} = BotArmyCore.Tenant.extract_context(message)
     event_id = message["event_id"]
     payload = message["payload"]
 
     case validate_delete_payload(payload) do
       :ok ->
-        process_delete(payload, event_id)
+        process_delete(payload, event_id, tenant_id, user_id)
 
       {:error, reason} ->
         Logger.warning("Invalid RAG delete payload: #{inspect(reason)}")
-        publish_error(event_id, reason, "Invalid RAG delete data")
+        publish_error(event_id, reason, "Invalid RAG delete data", tenant_id, user_id)
     end
   end
 
@@ -145,7 +148,7 @@ defmodule BotArmyLlm.Handlers.RAGHandler do
     end
   end
 
-  defp process_index(payload, event_id) do
+  defp process_index(payload, event_id, tenant_id, user_id) do
     llm_client = Application.get_env(:bot_army_llm, :llm_client, BotArmyLlm.LlmClient)
     model = Map.get(payload, "model", "nomic-embed-text")
 
@@ -164,20 +167,20 @@ defmodule BotArmyLlm.Handlers.RAGHandler do
 
         case vector_store().index(doc_map) do
           {:ok, id} ->
-            publish_indexed(id, payload["document_id"], event_id)
+            publish_indexed(id, payload["document_id"], event_id, tenant_id, user_id)
 
           {:error, reason} ->
             Logger.error("Failed to index document: #{inspect(reason)}")
-            publish_error(event_id, reason, "Failed to store embedding")
+            publish_error(event_id, reason, "Failed to store embedding", tenant_id, user_id)
         end
 
       {:error, reason} ->
         Logger.error("Embedding generation failed: #{inspect(reason)}")
-        publish_error(event_id, reason, "Failed to generate embedding")
+        publish_error(event_id, reason, "Failed to generate embedding", tenant_id, user_id)
     end
   end
 
-  defp process_search(payload, event_id) do
+  defp process_search(payload, event_id, tenant_id, user_id) do
     llm_client = Application.get_env(:bot_army_llm, :llm_client, BotArmyLlm.LlmClient)
     query = payload["query"]
     model = Map.get(payload, "model", "nomic-embed-text")
@@ -204,39 +207,41 @@ defmodule BotArmyLlm.Handlers.RAGHandler do
 
         case vector_store().search(response.embedding, search_opts) do
           {:ok, results} ->
-            publish_search_result(results, event_id)
+            publish_search_result(results, event_id, tenant_id, user_id)
 
           {:error, reason} ->
             Logger.error("Search failed: #{inspect(reason)}")
-            publish_error(event_id, reason, "Search failed")
+            publish_error(event_id, reason, "Search failed", tenant_id, user_id)
         end
 
       {:error, reason} ->
         Logger.error("Query embedding generation failed: #{inspect(reason)}")
-        publish_error(event_id, reason, "Failed to generate query embedding")
+        publish_error(event_id, reason, "Failed to generate query embedding", tenant_id, user_id)
     end
   end
 
-  defp process_delete(payload, event_id) do
+  defp process_delete(payload, event_id, tenant_id, user_id) do
     document_id = payload["document_id"]
 
     Logger.debug("Deleting document: #{document_id}")
 
     case vector_store().delete_by_document_id(document_id) do
       :ok ->
-        publish_deleted(document_id, event_id)
+        publish_deleted(document_id, event_id, tenant_id, user_id)
 
       {:error, reason} ->
         Logger.error("Delete failed: #{inspect(reason)}")
-        publish_error(event_id, reason, "Failed to delete document")
+        publish_error(event_id, reason, "Failed to delete document", tenant_id, user_id)
     end
   end
 
-  defp publish_indexed(id, document_id, triggered_by_event_id) do
+  defp publish_indexed(id, document_id, triggered_by_event_id, tenant_id, user_id) do
     payload = %{
       "embedding_id" => id,
       "document_id" => document_id,
-      "triggered_by_event_id" => triggered_by_event_id
+      "triggered_by_event_id" => triggered_by_event_id,
+      "tenant_id" => tenant_id,
+      "user_id" => user_id
     }
 
     event_data = EventBuilder.build("llm.rag.indexed", payload)
@@ -247,11 +252,13 @@ defmodule BotArmyLlm.Handlers.RAGHandler do
     end
   end
 
-  defp publish_search_result(results, triggered_by_event_id) do
+  defp publish_search_result(results, triggered_by_event_id, tenant_id, user_id) do
     payload = %{
       "results" => results,
       "count" => length(results),
-      "triggered_by_event_id" => triggered_by_event_id
+      "triggered_by_event_id" => triggered_by_event_id,
+      "tenant_id" => tenant_id,
+      "user_id" => user_id
     }
 
     event_data = EventBuilder.build("llm.rag.search.result", payload)
@@ -262,10 +269,12 @@ defmodule BotArmyLlm.Handlers.RAGHandler do
     end
   end
 
-  defp publish_deleted(document_id, triggered_by_event_id) do
+  defp publish_deleted(document_id, triggered_by_event_id, tenant_id, user_id) do
     payload = %{
       "document_id" => document_id,
-      "triggered_by_event_id" => triggered_by_event_id
+      "triggered_by_event_id" => triggered_by_event_id,
+      "tenant_id" => tenant_id,
+      "user_id" => user_id
     }
 
     event_data = EventBuilder.build("llm.rag.deleted", payload)
@@ -276,7 +285,7 @@ defmodule BotArmyLlm.Handlers.RAGHandler do
     end
   end
 
-  defp publish_error(event_id, reason, message) do
+  defp publish_error(event_id, reason, message, tenant_id, user_id) do
     error_event = %{
       "event" => "llm.error",
       "event_id" => UUID.uuid4(),
@@ -285,6 +294,8 @@ defmodule BotArmyLlm.Handlers.RAGHandler do
       "source_node" => node() |> Atom.to_string(),
       "triggered_by" => "llm.bot",
       "schema_version" => "1.0",
+      "tenant_id" => tenant_id,
+      "user_id" => user_id,
       "payload" => %{
         "error" => message,
         "reason" => inspect(reason),

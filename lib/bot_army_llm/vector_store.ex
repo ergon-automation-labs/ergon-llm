@@ -45,6 +45,10 @@ defmodule BotArmyLlm.VectorStore do
         Logger.info("Indexed document: #{doc_map["document_id"]}")
         {:ok, embedding.id}
 
+      {:error, %Ecto.Changeset{} = changeset} ->
+        Logger.warning("Invalid embedding document: #{inspect(changeset.errors)}")
+        {:error, changeset}
+
       {:error, reason} ->
         Logger.error("Failed to index document: #{inspect(reason)}")
         {:error, reason}
@@ -57,7 +61,7 @@ defmodule BotArmyLlm.VectorStore do
   Search for documents similar to a query vector.
 
   Args:
-    - query_vector: vector (768-dimensional for nomic-embed-text)
+    - query_vector: list of floats (dimension must match your embedding model; default nomic-embed-text is 768)
     - opts: [
         limit: integer (default 5),
         document_type: string (optional),

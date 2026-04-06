@@ -7,7 +7,7 @@ defmodule BotArmyLlm.Handlers.EmbeddingHandler do
   """
 
   require Logger
-  alias BotArmyLlm.EventBuilder
+  alias BotArmyLlm.{EmbeddingConfig, EventBuilder}
 
   @doc """
   Handle embedding requests.
@@ -20,7 +20,7 @@ defmodule BotArmyLlm.Handlers.EmbeddingHandler do
     "text": string (required),
     "card_id": optional string (for tracking),
     "callback_subject": optional string (for callback),
-    "model": optional string (default: "nomic-embed-text")
+    "model": optional string (omit for per-provider defaults; set to force the same id on Ollama and OpenRouter)
   }
   ```
 
@@ -63,7 +63,7 @@ defmodule BotArmyLlm.Handlers.EmbeddingHandler do
   defp process_embed(payload, event_id, tenant_id, user_id) do
     text = payload["text"]
     card_id = payload["card_id"]
-    model = Map.get(payload, "model", "nomic-embed-text")
+    model = EmbeddingConfig.optional_explicit_model(Map.get(payload, "model"))
 
     llm_client = Application.get_env(:bot_army_llm, :llm_client, BotArmyLlm.LlmClient)
 

@@ -9,7 +9,7 @@ defmodule BotArmyLlm.Handlers.RAGHandler do
   """
 
   require Logger
-  alias BotArmyLlm.EventBuilder
+  alias BotArmyLlm.{EmbeddingConfig, EventBuilder}
 
   defp vector_store do
     Application.get_env(:bot_army_llm, :vector_store, BotArmyLlm.VectorStore)
@@ -26,7 +26,7 @@ defmodule BotArmyLlm.Handlers.RAGHandler do
     "source": string (required),
     "content": string (required),
     "metadata": map (optional),
-    "model": string (optional, default: "nomic-embed-text")
+    "model": string (optional; if omitted, Ollama uses `BOT_ARMY_LLM_EMBED_DEFAULT_MODEL` and OpenRouter uses `BOT_ARMY_LLM_OPENROUTER_EMBED_DEFAULT_MODEL`; if set, both providers use this id)
   }
   ```
 
@@ -60,7 +60,7 @@ defmodule BotArmyLlm.Handlers.RAGHandler do
     "document_type": string (optional),
     "source": string (optional),
     "min_similarity": float (optional, default: 0.0),
-    "model": string (optional, default: "nomic-embed-text")
+    "model": string (optional; same semantics as index — per-provider defaults or one explicit id)
   }
   ```
 
@@ -150,7 +150,7 @@ defmodule BotArmyLlm.Handlers.RAGHandler do
 
   defp process_index(payload, event_id, tenant_id, user_id) do
     llm_client = Application.get_env(:bot_army_llm, :llm_client, BotArmyLlm.LlmClient)
-    model = Map.get(payload, "model", "nomic-embed-text")
+    model = EmbeddingConfig.optional_explicit_model(Map.get(payload, "model"))
 
     Logger.debug("Indexing document: #{payload["document_id"]}")
 
@@ -183,7 +183,7 @@ defmodule BotArmyLlm.Handlers.RAGHandler do
   defp process_search(payload, event_id, tenant_id, user_id) do
     llm_client = Application.get_env(:bot_army_llm, :llm_client, BotArmyLlm.LlmClient)
     query = payload["query"]
-    model = Map.get(payload, "model", "nomic-embed-text")
+    model = EmbeddingConfig.optional_explicit_model(Map.get(payload, "model"))
     limit = Map.get(payload, "limit", 5)
     document_type = payload["document_type"]
     source = payload["source"]

@@ -29,7 +29,7 @@ defmodule BotArmyLlm.LlmClient do
 
   require Logger
 
-  alias BotArmyLlm.{ComplexityScorer, OllamaHealthChecker, SafetyClassifier}
+  alias BotArmyLlm.{ComplexityScorer, EmbeddingConfig, OllamaHealthChecker, SafetyClassifier}
 
   # Get health checker module from app config (for testing) or use default
   defp health_checker_module do
@@ -75,12 +75,25 @@ defmodule BotArmyLlm.LlmClient do
   @doc """
   Generate embeddings for a text string using OpenAI-compatible or Ollama API.
 
+  When `model` is `nil`, Ollama uses `EmbeddingConfig.default_model/0` and OpenRouter uses
+  `EmbeddingConfig.openrouter_embed_default_model/0` (can differ). When `model` is a binary, both
+  providers receive that id.
+
   Checks payload for sensitive data (API keys, credentials, PII, etc.)
   and routes to local-only providers if sensitive content detected.
 
   Returns: `{:ok, %{embedding: [float], model_used: str, latency_ms: int}}`
   """
-  def embed(text, model \\ "nomic-embed-text") when is_binary(text) and is_binary(model) do
+  def embed(text, model \\ nil) when is_binary(text) and (is_binary(model) or is_nil(model)) do
+    {ollama_model, openrouter_model} =
+      case model do
+        nil ->
+          {EmbeddingConfig.default_model(), EmbeddingConfig.openrouter_embed_default_model()}
+
+        m when is_binary(m) ->
+          {m, m}
+      end
+
     start_time = System.monotonic_time(:millisecond)
 
     # Check for sensitive data before routing
@@ -94,7 +107,7 @@ defmodule BotArmyLlm.LlmClient do
 
     Logger.debug("Embed routing: providers=#{inspect(providers)}, safety_checked=true")
 
-    case try_embed_providers(providers, text, model) do
+    case try_embed_providers(providers, text, ollama_model, openrouter_model) do
       {:ok, result} ->
         latency = System.monotonic_time(:millisecond) - start_time
         {:ok, Map.put(result, :latency_ms, latency)}
@@ -329,10 +342,6 @@ defmodule BotArmyLlm.LlmClient do
 
   defp ollama_timeout_ms do
     parse_timeout_ms(System.get_env("OLLAMA_TIMEOUT_MS"), 600_000)
-  end
-
-  defp ollama_embed_timeout_ms do
-    parse_timeout_ms(System.get_env("OLLAMA_EMBED_TIMEOUT_MS"), 120_000)
   end
 
   defp parse_timeout_ms(nil, default), do: default
@@ -923,8 +932,8 @@ defmodule BotArmyLlm.LlmClient do
 
   # Embedding providers
 
-  defp try_embed_providers(providers, text, model) do
-    case try_embed_chain(providers, text, model) do
+  defp try_embed_providers(providers, text, ollama_model, openrouter_model) do
+    case try_embed_chain(providers, text, ollama_model, openrouter_model) do
       {:ok, result} ->
         Logger.info("Embedding provider succeeded, model=#{result.model_used}")
         {:ok, result}
@@ -935,18 +944,24 @@ defmodule BotArmyLlm.LlmClient do
     end
   end
 
-  defp try_embed_chain([], _text, _model) do
+  defp try_embed_chain([], _text, _ollama_model, _openrouter_model) do
     {:error, :no_providers_available}
   end
 
-  defp try_embed_chain([provider | rest], text, model) do
-    case call_embed_provider(provider, text, model) do
+  defp try_embed_chain([provider | rest], text, ollama_model, openrouter_model) do
+    model_for_call =
+      case provider do
+        :ollama_embed -> ollama_model
+        :openrouter_embed -> openrouter_model
+      end
+
+    case call_embed_provider(provider, text, model_for_call) do
       {:ok, result} ->
-        {:ok, Map.put(result, :model_used, model)}
+        {:ok, Map.put(result, :model_used, model_for_call)}
 
       {:error, reason} ->
         Logger.warning("Embed provider #{provider} failed: #{inspect(reason)}, trying next")
-        try_embed_chain(rest, text, model)
+        try_embed_chain(rest, text, ollama_model, openrouter_model)
     end
   end
 
@@ -972,7 +987,7 @@ defmodule BotArmyLlm.LlmClient do
   defp ollama_embed_call(url, model, text) do
     endpoint = "#{url}/api/embed"
     headers = [{"Content-Type", "application/json"}]
-    timeout_ms = ollama_embed_timeout_ms()
+    timeout_ms = EmbeddingConfig.ollama_embed_timeout_ms()
 
     payload =
       Jason.encode!(%{
@@ -1000,6 +1015,9 @@ defmodule BotArmyLlm.LlmClient do
   end
 
   defp openrouter_embed_call(api_key, model, text) do
+    url = EmbeddingConfig.openrouter_embeddings_url()
+    timeout_ms = EmbeddingConfig.openrouter_embed_timeout_ms()
+
     headers = [
       {"Content-Type", "application/json"},
       {"Authorization", "Bearer #{api_key}"},
@@ -1013,11 +1031,11 @@ defmodule BotArmyLlm.LlmClient do
       })
 
     case HTTPoison.post(
-           "https://openrouter.ai/api/v1/embeddings",
+           url,
            payload,
            headers,
-           recv_timeout: 30_000,
-           timeout: 30_000
+           recv_timeout: timeout_ms,
+           timeout: timeout_ms
          ) do
       {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
         with {:ok, response} <- Jason.decode(body),

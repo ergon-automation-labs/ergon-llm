@@ -1,7 +1,7 @@
 defmodule BotArmyLlm.RAGHandlerTestLlmClientMock do
   @moduledoc "Mock LLM client for RAG handler tests"
 
-  def embed(text, _model \\ "nomic-embed-text") when is_binary(text) do
+  def embed(text, _model \\ nil) when is_binary(text) do
     # Return the configured response or default
     Process.get({:rag_handler_test, :embed_response}, {:ok, %{
       embedding: List.duplicate(0.1, 768),

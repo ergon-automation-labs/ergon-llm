@@ -28,6 +28,8 @@ defmodule BotArmyLlm.Http.Router do
 
   Usage is recorded in `token_usage` with `event_type` `anthropic.messages.stream` or
   `anthropic.messages.complete` and the chosen `source` for aggregation (`TokenAccounting.query/1`).
+  For default `source` `claude_code`, missing `tenant_id` / `user_id` are filled from
+  `BotArmyLlm.WellKnownIds` (see `TokenAccounting` moduledoc and pillar `llm.claude_code.identity`).
   """
 
   use Plug.Router

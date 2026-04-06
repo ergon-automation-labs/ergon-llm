@@ -31,10 +31,28 @@ defmodule BotArmyLlm.TokenAccounting do
       ]
 
   Overlay order: **file rules**, then **JSON env rules**, then **built-in defaults**.
+
+  ## Tenant / user id on `record/1`
+
+  NATS-backed callers should pass `tenant_id` and `user_id` when known.
+
+  When `tenant_id` is missing or blank:
+
+  - If `source` is `"claude_code"` (HTTP Claude Code proxy default), use `BOT_ARMY_LLM_CLAUDE_CODE_TENANT_ID`
+    or `BotArmyLlm.WellKnownIds.claude_code_default_tenant/0` (`…0002`).
+  - Otherwise use `BOT_ARMY_LLM_DEFAULT_TENANT_ID` or `WellKnownIds.legacy_default_tenant/0` (`…0001`).
+
+  When `user_id` is missing or blank and `source` is `"claude_code"`, use `BOT_ARMY_LLM_CLAUDE_CODE_USER_ID`
+  or `WellKnownIds.claude_code_default_user/0` (`…0003`) — synthetic “Claude Code client” actor in that tenant.
+  Other sources leave `user_id` unset unless you pass it.
+
+  Custom HTTP tools should set header `x-bot-army-source` to something other than `claude_code` if they should
+  not receive the Claude Code identity defaults.
   """
 
   require Logger
   alias BotArmyLlm.Schemas.TokenUsage
+  alias BotArmyLlm.WellKnownIds
   import Ecto.Query
 
   defp repo do
@@ -65,12 +83,16 @@ defmodule BotArmyLlm.TokenAccounting do
         model: string (required),
         tokens_input: integer (optional),
         tokens_output: integer (optional),
-        latency_ms: integer (optional)
+        latency_ms: integer (optional),
+        tenant_id: string UUID (optional — see module doc),
+        user_id: string UUID (optional — see module doc)
       }
 
   Returns: {:ok, token_usage} | {:error, reason}
   """
   def record(attrs) when is_map(attrs) do
+    attrs = apply_identity_defaults(attrs)
+
     cost = estimate_cost(
       attrs["provider"],
       attrs["model"],
@@ -84,7 +106,7 @@ defmodule BotArmyLlm.TokenAccounting do
     try do
       case repo().insert(changeset) do
         {:ok, usage} ->
-          Logger.debug("Recorded token usage: #{attrs["event_type"]}")
+          Logger.debug("Recorded token usage: #{record_attrs["event_type"]}")
           {:ok, usage}
 
         {:error, reason} ->
@@ -103,6 +125,61 @@ defmodule BotArmyLlm.TokenAccounting do
   end
 
   def record(_), do: {:error, :invalid_attributes}
+
+  defp apply_identity_defaults(attrs) do
+    source = source_label(attrs)
+    attrs |> put_default_tenant_id(source) |> put_default_user_id(source)
+  end
+
+  defp source_label(attrs) do
+    case Map.get(attrs, "source") || Map.get(attrs, :source) do
+      s when is_binary(s) -> String.trim(s)
+      _ -> ""
+    end
+  end
+
+  defp put_default_tenant_id(attrs, source) do
+    tid = Map.get(attrs, "tenant_id") || Map.get(attrs, :tenant_id)
+
+    if tid in [nil, ""] do
+      tenant =
+        if source == "claude_code" do
+          case System.get_env("BOT_ARMY_LLM_CLAUDE_CODE_TENANT_ID") do
+            v when is_binary(v) and v != "" -> v
+            _ -> WellKnownIds.claude_code_default_tenant()
+          end
+        else
+          case System.get_env("BOT_ARMY_LLM_DEFAULT_TENANT_ID") do
+            v when is_binary(v) and v != "" -> v
+            _ -> WellKnownIds.legacy_default_tenant()
+          end
+        end
+
+      attrs
+      |> Map.delete(:tenant_id)
+      |> Map.put("tenant_id", tenant)
+    else
+      attrs
+    end
+  end
+
+  defp put_default_user_id(attrs, source) do
+    uid = Map.get(attrs, "user_id") || Map.get(attrs, :user_id)
+
+    if uid in [nil, ""] and source == "claude_code" do
+      user =
+        case System.get_env("BOT_ARMY_LLM_CLAUDE_CODE_USER_ID") do
+          v when is_binary(v) and v != "" -> v
+          _ -> WellKnownIds.claude_code_default_user()
+        end
+
+      attrs
+      |> Map.delete(:user_id)
+      |> Map.put("user_id", user)
+    else
+      attrs
+    end
+  end
 
   @doc """
   Estimate cost for tokens.

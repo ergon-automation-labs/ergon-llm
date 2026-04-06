@@ -75,6 +75,18 @@ defmodule BotArmyLlm.TokenAccountingTest do
       {:ok, _usage} = TokenAccounting.record(attrs)
     end
 
+    test "claude_code source applies well-known tenant and user when omitted" do
+      attrs = %{
+        "event_id" => UUID.uuid4(),
+        "event_type" => "llm.prompt.submit",
+        "source" => "claude_code",
+        "provider" => "anthropic",
+        "model" => "claude-haiku"
+      }
+
+      {:ok, _usage} = TokenAccounting.record(attrs)
+    end
+
     test "rejects non-map input" do
       {:error, :invalid_attributes} = TokenAccounting.record(nil)
     end

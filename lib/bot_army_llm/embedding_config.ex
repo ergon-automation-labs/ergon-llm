@@ -5,13 +5,14 @@ defmodule BotArmyLlm.EmbeddingConfig do
   Configured via environment variables (see `bot_army_infra/salt/bots/llm_bot.sls` and
   `pillar/air-secrets.sls` `llm.embed`):
 
-  | Env | Role |
-  |-----|------|
+  | Setting | Role |
+  |---------|------|
   | `BOT_ARMY_LLM_EMBED_DEFAULT_MODEL` | Ollama `/api/embed` model when the caller omits `model`. |
   | `BOT_ARMY_LLM_OPENROUTER_EMBED_DEFAULT_MODEL` | OpenRouter embeddings model when the caller omits `model`. If unset or empty, falls back to `default_model/0` (same id as Ollama). |
   | `OLLAMA_EMBED_TIMEOUT_MS` | HTTP recv timeout for Ollama `/api/embed`. |
   | `OPENROUTER_EMBEDDINGS_URL` | Full URL for OpenRouter embeddings POST. |
   | `OPENROUTER_EMBED_TIMEOUT_MS` | HTTP timeout for OpenRouter embeddings. |
+  | `llm.embed.openrouter` / `ollama` + `embed_ipm` / `embed_opm` (pillar) | Optional; Salt adds OpenRouter and/or Ollama rows to `llm_pricing.json`. Flat fallbacks: `embed_openrouter_ipm` / `embed_openrouter_opm`, `embed_ollama_ipm` / `embed_ollama_opm` (see `llm_bot.sls`). |
   """
 
   @default_model "nomic-embed-text"

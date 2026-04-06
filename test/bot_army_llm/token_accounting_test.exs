@@ -124,6 +124,33 @@ defmodule BotArmyLlm.TokenAccountingTest do
 
       assert cost1 == cost2
     end
+
+    test "BOT_ARMY_LLM_PRICING_JSON overlay: provider * matches by model_substring" do
+      json =
+        Jason.encode!([
+          %{
+            "provider" => "*",
+            "model_substring" => "minimax",
+            "input_per_million_usd" => 1.0,
+            "output_per_million_usd" => 2.0
+          }
+        ])
+
+      System.put_env("BOT_ARMY_LLM_PRICING_JSON", json)
+
+      on_exit(fn ->
+        System.delete_env("BOT_ARMY_LLM_PRICING_JSON")
+      end)
+
+      # Stored provider may still say anthropic while model id is an OpenRouter/Minimax slug
+      cost = TokenAccounting.estimate_cost("anthropic", "minimax/minimax-m2", 1_000_000, 1_000_000)
+
+      assert Float.round(cost, 2) == 3.0
+    end
+
+    test "OpenRouter defaults to zero without overlay" do
+      assert TokenAccounting.estimate_cost("openrouter", "some/vendor-model", 1_000_000, 1_000_000) == 0.0
+    end
   end
 
   describe "query/1" do

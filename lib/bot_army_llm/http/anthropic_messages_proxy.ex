@@ -22,6 +22,21 @@ defmodule BotArmyLlm.Http.AnthropicMessagesProxy do
 
   @doc false
   def handle(conn, body, source) when is_map(body) do
+    do_handle(conn, body, source)
+  rescue
+    e ->
+      stack = __STACKTRACE__
+
+      if conn.state in [:sent, :chunked] do
+        Logger.error("http_proxy handle crashed after response started: #{Exception.format(:error, e, stack)}")
+        conn
+      else
+        Logger.error("http_proxy handle crashed: #{Exception.format(:error, e, stack)}")
+        send_json_error(conn, 500, "internal_error", Exception.message(e))
+      end
+  end
+
+  defp do_handle(conn, body, source) do
     source = normalize_source(source)
     start_ms = System.monotonic_time(:millisecond)
     event_id = Ecto.UUID.generate()
@@ -67,6 +82,48 @@ defmodule BotArmyLlm.Http.AnthropicMessagesProxy do
             "error" => %{
               "type" => "upstream_error",
               "message" => "LLM proxy error: #{inspect(reason)}"
+            }
+          })
+
+        conn
+        |> Plug.Conn.put_resp_header("content-type", "application/json")
+        |> Plug.Conn.send_resp(502, err)
+
+      {:ok, other} ->
+        latency = System.monotonic_time(:millisecond) - start_ms
+
+        Logger.error("http_proxy passthrough returned non-binary {:ok, ...}",
+          source: source,
+          sample: inspect(other, limit: 200),
+          latency_ms: latency
+        )
+
+        err =
+          Jason.encode!(%{
+            "error" => %{
+              "type" => "upstream_error",
+              "message" => "LLM proxy returned unexpected response shape (expected JSON string)"
+            }
+          })
+
+        conn
+        |> Plug.Conn.put_resp_header("content-type", "application/json")
+        |> Plug.Conn.send_resp(502, err)
+
+      other ->
+        latency = System.monotonic_time(:millisecond) - start_ms
+
+        Logger.error("http_proxy passthrough unexpected result",
+          source: source,
+          result: inspect(other),
+          latency_ms: latency
+        )
+
+        err =
+          Jason.encode!(%{
+            "error" => %{
+              "type" => "upstream_error",
+              "message" => "LLM proxy error: unexpected result #{inspect(other)}"
             }
           })
 
@@ -149,6 +206,10 @@ defmodule BotArmyLlm.Http.AnthropicMessagesProxy do
                   |> Plug.Conn.put_resp_header("content-type", "application/json")
                   |> Plug.Conn.send_resp(502, err)
                 end
+
+              other ->
+                Logger.error("http_proxy Finch.stream_while unexpected result: #{inspect(other)}")
+                send_json_error(conn, 502, "upstream_error", "stream transport returned unexpected result")
             end
 
           {:error, reason} ->

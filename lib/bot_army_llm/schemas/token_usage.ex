@@ -17,7 +17,7 @@ defmodule BotArmyLlm.Schemas.TokenUsage do
     field :tenant_id, :binary_id
     field :user_id, :binary_id
 
-    timestamps(only: [:inserted_at], type: :utc_datetime)
+    timestamps(type: :utc_datetime)
   end
 
   def changeset(attrs) when is_map(attrs) do

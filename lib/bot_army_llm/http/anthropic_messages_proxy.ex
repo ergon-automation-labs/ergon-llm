@@ -21,7 +21,8 @@ defmodule BotArmyLlm.Http.AnthropicMessagesProxy do
   @receive_timeout 120_000
 
   @doc false
-  def handle(conn, body, source) when is_map(body) and is_binary(source) do
+  def handle(conn, body, source) when is_map(body) do
+    source = normalize_source(source)
     start_ms = System.monotonic_time(:millisecond)
     event_id = Ecto.UUID.generate()
     stream? = body["stream"] == true
@@ -268,4 +269,11 @@ defmodule BotArmyLlm.Http.AnthropicMessagesProxy do
     |> Plug.Conn.put_resp_header("content-type", "application/json")
     |> Plug.Conn.send_resp(status, body)
   end
+
+  defp normalize_source(source) when is_binary(source) do
+    trimmed = String.trim(source)
+    if trimmed == "", do: "claude_code", else: trimmed
+  end
+
+  defp normalize_source(_), do: "claude_code"
 end

@@ -21,13 +21,13 @@ defmodule BotArmyLlm.ClaudePassthroughChain do
 
   ## OpenAI-compatible steps
 
-  Blackbox and OpenRouter use `AnthropicMessages.to_simple_chat_messages/1`. Requests that need
-  Anthropic-native **tools** skip these steps (conversion error) and proceed to `anthropic`.
+  Blackbox and OpenRouter use `AnthropicMessagesToOpenaiChat.to_chat_completion_request/1`
+  (text + **tools** / tool_result → OpenAI chat). On conversion errors, the chain tries the next step.
   """
 
   require Logger
 
-  alias BotArmyLlm.{AnthropicMessages, AnthropicOllamaAdapter, ChatCompletionToAnthropic}
+  alias BotArmyLlm.{AnthropicMessagesToOpenaiChat, AnthropicOllamaAdapter, ChatCompletionToAnthropic}
 
   @default_chain "openrouter,anthropic,ollama"
 
@@ -125,12 +125,19 @@ defmodule BotArmyLlm.ClaudePassthroughChain do
   end
 
   defp chat_completions_passthrough(payload, api_key, url, extra_headers, model) do
-    with {:ok, messages} <- AnthropicMessages.to_simple_chat_messages(payload) do
+    with {:ok, %{messages: messages, tools: tools}} <-
+           AnthropicMessagesToOpenaiChat.to_chat_completion_request(payload) do
       body_map = %{
         "model" => model,
         "messages" => messages,
         "stream" => false
       }
+
+      body_map =
+        case tools do
+          [] -> body_map
+          list when is_list(list) -> Map.put(body_map, "tools", list)
+        end
 
       body_map =
         case Map.get(payload, "temperature") do

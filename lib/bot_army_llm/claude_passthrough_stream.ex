@@ -52,7 +52,7 @@ defmodule BotArmyLlm.ClaudePassthroughStream do
         if conn.state in [:chunked, :sent] do
           conn
         else
-          Logger.debug("http_proxy streaming step #{step} failed: #{inspect(reason)}")
+          log_streaming_step_try_next(step, reason)
           run_steps(rest, conn, body, source, event_id, start_ms, reason)
         end
     end
@@ -61,6 +61,23 @@ defmodule BotArmyLlm.ClaudePassthroughStream do
   defp prefer_error_conn({:stream_exception, _ex, conn}, _fallback), do: conn
   defp prefer_error_conn({:stream_exception, _ex}, fallback), do: fallback
   defp prefer_error_conn(_reason, fallback), do: fallback
+
+  # Simple-chat chain steps cannot carry Anthropic tools; skipping is normal, not a request failure.
+  @simple_chat_tool_skip_reasons [
+    :tools_not_supported_in_simple_chat,
+    :tool_blocks_not_supported_in_simple_chat,
+    :tool_messages_not_supported_in_simple_chat
+  ]
+
+  defp log_streaming_step_try_next(step, reason) when reason in @simple_chat_tool_skip_reasons do
+    Logger.debug(
+      "http_proxy streaming skip #{step} (#{inspect(reason)}); trying next chain step (OpenRouter/Blackbox use simple chat only)"
+    )
+  end
+
+  defp log_streaming_step_try_next(step, reason) do
+    Logger.debug("http_proxy streaming step #{step} failed: #{inspect(reason)}")
+  end
 
   defp dispatch(:blackbox, conn, body, source, event_id, start_ms) do
     api_key = System.get_env("BLACKBOX_API_KEY")

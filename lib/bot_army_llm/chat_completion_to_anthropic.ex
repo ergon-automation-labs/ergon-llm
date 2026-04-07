@@ -11,21 +11,19 @@ defmodule BotArmyLlm.ChatCompletionToAnthropic do
             System.get_env("OPENROUTER_MODEL_CLAUDE_CODE", "anthropic/claude-3.5-sonnet")
 
         usage = Map.get(response, "usage") || %{}
+        message = get_in(response, ["choices", Access.at(0), "message"]) || %{}
+        finish = get_in(response, ["choices", Access.at(0), "finish_reason"])
+
+        content = anthropic_content_from_openai_message(message)
+        stop_reason = infer_stop_reason(message, finish)
 
         out = %{
           "id" => response["id"] || "msg-chat-passthrough",
           "type" => "message",
           "role" => "assistant",
-          "content" => [
-            %{
-              "type" => "text",
-              "text" =>
-                get_in(response, ["choices", Access.at(0), "message", "content"]) ||
-                  "No response"
-            }
-          ],
+          "content" => content,
           "model" => model,
-          "stop_reason" => "end_turn",
+          "stop_reason" => stop_reason,
           "usage" => %{
             "input_tokens" => Map.get(usage, "prompt_tokens") || 0,
             "output_tokens" => Map.get(usage, "completion_tokens") || 0
@@ -36,6 +34,74 @@ defmodule BotArmyLlm.ChatCompletionToAnthropic do
 
       {:error, _} ->
         {:error, :invalid_chat_completion_json}
+    end
+  end
+
+  defp anthropic_content_from_openai_message(message) do
+    text_blocks = openai_text_blocks(Map.get(message, "content"))
+    tool_blocks = openai_tool_blocks(Map.get(message, "tool_calls"))
+    blocks = text_blocks ++ tool_blocks
+
+    case blocks do
+      [] ->
+        [%{"type" => "text", "text" => "No response"}]
+
+      _ ->
+        blocks
+    end
+  end
+
+  defp openai_text_blocks(nil), do: []
+  defp openai_text_blocks(""), do: []
+
+  defp openai_text_blocks(s) when is_binary(s) do
+    if String.trim(s) == "", do: [], else: [%{"type" => "text", "text" => s}]
+  end
+
+  defp openai_text_blocks(_), do: []
+
+  defp openai_tool_blocks(nil), do: []
+  defp openai_tool_blocks([]), do: []
+
+  defp openai_tool_blocks(calls) when is_list(calls) do
+    Enum.map(calls, fn c ->
+      id = Map.get(c, "id") || ""
+      fn_map = Map.get(c, "function") || %{}
+      name = Map.get(fn_map, "name") || ""
+      args_str = Map.get(fn_map, "arguments") || "{}"
+
+      input =
+        case Jason.decode(args_str) do
+          {:ok, m} when is_map(m) -> m
+          _ -> %{"_raw_arguments" => args_str}
+        end
+
+      %{"type" => "tool_use", "id" => id, "name" => name, "input" => input}
+    end)
+  end
+
+  defp infer_stop_reason(message, finish) do
+    has_tools =
+      case message do
+        %{"tool_calls" => t} when is_list(t) -> t != []
+        _ -> false
+      end
+
+    cond do
+      has_tools ->
+        "tool_use"
+
+      finish == "tool_calls" ->
+        "tool_use"
+
+      finish in ["stop", nil, ""] ->
+        "end_turn"
+
+      is_binary(finish) ->
+        finish
+
+      true ->
+        "end_turn"
     end
   end
 end

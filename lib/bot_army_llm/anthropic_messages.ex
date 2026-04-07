@@ -3,8 +3,8 @@ defmodule BotArmyLlm.AnthropicMessages do
   Shared conversion from Anthropic Messages API request maps to simple chat-style
   `messages` lists (`role` + string `content`) for OpenAI-compatible APIs and Ollama.
 
-  Tool use / tool_result content is not represented; callers that need tools must
-  use the Anthropic API directly.
+  Tool use / tool_result are not represented here. For OpenAI-compatible passthrough
+  (OpenRouter, Blackbox), see `BotArmyLlm.AnthropicMessagesToOpenaiChat`.
   """
 
   @doc """

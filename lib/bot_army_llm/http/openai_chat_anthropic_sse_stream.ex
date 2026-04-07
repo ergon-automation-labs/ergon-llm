@@ -4,7 +4,7 @@ defmodule BotArmyLlm.Http.OpenaiChatAnthropicSseStream do
 
   require Logger
 
-  alias BotArmyLlm.AnthropicMessages
+  alias BotArmyLlm.AnthropicMessagesToOpenaiChat
 
   @receive_timeout 120_000
 
@@ -19,8 +19,9 @@ defmodule BotArmyLlm.Http.OpenaiChatAnthropicSseStream do
     start_ms = Keyword.fetch!(opts, :start_ms)
     provider = Keyword.fetch!(opts, :provider)
 
-    with {:ok, messages} <- AnthropicMessages.to_simple_chat_messages(anthropic_payload),
-         {:ok, body_map} <- build_stream_request(messages, anthropic_payload, model),
+    with {:ok, %{messages: messages, tools: tools}} <-
+           AnthropicMessagesToOpenaiChat.to_chat_completion_request(anthropic_payload),
+         {:ok, body_map} <- build_stream_request(messages, tools, anthropic_payload, model),
          {:ok, json} <- Jason.encode(body_map) do
       headers = [{"content-type", "application/json"}, {"authorization", "Bearer #{api_key}"} | extra_headers]
       req = Finch.build(:post, url, headers, json)
@@ -36,8 +37,11 @@ defmodule BotArmyLlm.Http.OpenaiChatAnthropicSseStream do
         provider: provider,
         msg_id: msg_id,
         client_started: false,
-        anthropic_started: false,
+        message_started: false,
+        text_block_started: false,
         anthropic_closed: false,
+        tool_merge: %{},
+        finish_reason: nil,
         last_usage: {nil, nil}
       }
 
@@ -99,8 +103,14 @@ defmodule BotArmyLlm.Http.OpenaiChatAnthropicSseStream do
     end
   end
 
-  defp build_stream_request(messages, anthropic_payload, model) do
+  defp build_stream_request(messages, tools, anthropic_payload, model) do
     body = %{"model" => model, "messages" => messages, "stream" => true}
+
+    body =
+      case tools do
+        [] -> body
+        list when is_list(list) -> Map.put(body, "tools", list)
+      end
 
     body =
       case Map.get(anthropic_payload, "temperature") do
@@ -205,20 +215,18 @@ defmodule BotArmyLlm.Http.OpenaiChatAnthropicSseStream do
             delta = Map.get(choice, "delta") || %{}
             content = Map.get(delta, "content")
             finish = Map.get(choice, "finish_reason")
+            acc = merge_tool_deltas(acc, Map.get(delta, "tool_calls"))
 
-            case maybe_emit_content(conn, acc, content) do
-              {:ok, conn, acc} ->
-                acc =
-                  if finish not in [nil, ""] do
-                    %{acc | finish_reason: finish}
-                  else
-                    acc
-                  end
+            acc =
+              if finish not in [nil, ""] do
+                %{acc | finish_reason: finish}
+              else
+                acc
+              end
 
-                {:ok, conn, acc}
-
-              {:error, _} = err ->
-                err
+            case maybe_emit_text_delta(conn, acc, content) do
+              {:ok, conn, acc} -> {:ok, conn, acc}
+              {:error, _} = err -> err
             end
 
           {:error, _} ->
@@ -255,6 +263,28 @@ defmodule BotArmyLlm.Http.OpenaiChatAnthropicSseStream do
     |> String.trim()
   end
 
+  defp merge_tool_deltas(acc, nil), do: acc
+
+  defp merge_tool_deltas(acc, patches) when is_list(patches) do
+    merge =
+      Enum.reduce(patches, acc.tool_merge, fn patch, tm ->
+        idx = Map.get(patch, "index")
+        idx = if is_integer(idx), do: idx, else: 0
+
+        cur = Map.get(tm, idx, %{"id" => nil, "name" => nil, "arguments" => ""})
+        id = Map.get(patch, "id") || cur["id"]
+        fn_p = Map.get(patch, "function") || %{}
+        name = Map.get(fn_p, "name") || cur["name"]
+        frag = Map.get(fn_p, "arguments") || ""
+        args = cur["arguments"] <> frag
+        Map.put(tm, idx, %{"id" => id, "name" => name, "arguments" => args})
+      end)
+
+    %{acc | tool_merge: merge}
+  end
+
+  defp merge_tool_deltas(acc, _), do: acc
+
   defp merge_usage_from_chunk(acc, obj) do
     case Map.get(obj, "usage") do
       %{"prompt_tokens" => pt, "completion_tokens" => ct} ->
@@ -269,15 +299,16 @@ defmodule BotArmyLlm.Http.OpenaiChatAnthropicSseStream do
     end
   end
 
-  defp maybe_emit_content(conn, acc, content) when content in [nil, ""] do
+  defp maybe_emit_text_delta(conn, acc, content) when content in [nil, ""] do
     {:ok, conn, acc}
   end
 
-  defp maybe_emit_content(conn, acc, content) when is_binary(content) do
+  defp maybe_emit_text_delta(conn, acc, content) when is_binary(content) do
     with {:ok, conn, acc} <- ensure_client_stream(conn, acc),
-         {:ok, conn, acc} <- ensure_anthropic_opening(conn, acc),
-         {:ok, conn} <- chunk(conn, sse_delta(content)) do
-      {:ok, conn, acc}
+         {:ok, conn, acc} <- ensure_message_start(conn, acc),
+         {:ok, conn, acc} <- ensure_text_block(conn, acc),
+         {:ok, conn} <- chunk(conn, sse_text_delta(0, content)) do
+      {:ok, conn, %{acc | text_block_started: true}}
     else
       {:error, _} = e -> e
       _ -> {:error, :chunk_failed}
@@ -297,9 +328,9 @@ defmodule BotArmyLlm.Http.OpenaiChatAnthropicSseStream do
     {:ok, conn, %{acc | client_started: true}}
   end
 
-  defp ensure_anthropic_opening(conn, %{anthropic_started: true} = acc), do: {:ok, conn, acc}
+  defp ensure_message_start(conn, %{message_started: true} = acc), do: {:ok, conn, acc}
 
-  defp ensure_anthropic_opening(conn, acc) do
+  defp ensure_message_start(conn, acc) do
     m = acc.msg_id
 
     sse1 =
@@ -316,6 +347,14 @@ defmodule BotArmyLlm.Http.OpenaiChatAnthropicSseStream do
         }
       })
 
+    with {:ok, conn} <- chunk(conn, sse1) do
+      {:ok, conn, %{acc | message_started: true}}
+    end
+  end
+
+  defp ensure_text_block(conn, %{text_block_started: true} = acc), do: {:ok, conn, acc}
+
+  defp ensure_text_block(conn, acc) do
     sse2 =
       sse("content_block_start", %{
         "type" => "content_block_start",
@@ -323,57 +362,152 @@ defmodule BotArmyLlm.Http.OpenaiChatAnthropicSseStream do
         "content_block" => %{"type" => "text", "text" => ""}
       })
 
-    with {:ok, conn} <- chunk(conn, sse1 <> sse2) do
-      {:ok, conn, %{acc | anthropic_started: true}}
+    with {:ok, conn} <- chunk(conn, sse2) do
+      {:ok, conn, %{acc | text_block_started: true}}
     end
   end
 
-  defp sse_delta(text) do
+  defp sse_text_delta(index, text) do
     sse("content_block_delta", %{
       "type" => "content_block_delta",
-      "index" => 0,
+      "index" => index,
       "delta" => %{"type" => "text_delta", "text" => text}
     })
   end
 
   defp close_anthropic_stream_impl(conn, %{anthropic_closed: true} = acc), do: {conn, acc}
 
-  defp close_anthropic_stream_impl(conn, %{anthropic_started: false} = acc) do
-    {conn, acc}
+  defp close_anthropic_stream_impl(conn, %{client_started: false} = acc) do
+    {conn, %{acc | anthropic_closed: true}}
   end
 
   defp close_anthropic_stream_impl(conn, acc) do
-    {tin, tout} = acc.last_usage
+    tools_sorted =
+      acc.tool_merge
+      |> Map.to_list()
+      |> Enum.sort_by(fn {i, _} -> i end)
 
-    sse1 =
-      sse("content_block_stop", %{
-        "type" => "content_block_stop",
-        "index" => 0
-      })
+    has_tools = tools_sorted != []
 
-    sse2 =
-      sse("message_delta", %{
-        "type" => "message_delta",
-        "delta" => %{"stop_reason" => stop_reason(acc), "stop_sequence" => nil},
-        "usage" => %{"input_tokens" => tin || 0, "output_tokens" => tout || 0}
-      })
-
-    sse3 = sse("message_stop", %{"type" => "message_stop"})
-
-    case chunk(conn, sse1 <> sse2 <> sse3) do
-      {:ok, conn} -> {conn, %{acc | anthropic_closed: true}}
+    with {:ok, conn, acc} <- ensure_ready_for_close(conn, acc, has_tools),
+         {:ok, conn, acc} <- close_content_blocks(conn, acc, tools_sorted, has_tools),
+         {:ok, conn} <- emit_message_end(conn, acc, has_tools) do
+      {conn, %{acc | anthropic_closed: true}}
+    else
       {:error, _} -> {conn, %{acc | anthropic_closed: true}}
     end
   end
 
-  defp stop_reason(%{finish_reason: fr}) when is_binary(fr) and fr != "", do: normalize_stop(fr)
-  defp stop_reason(_), do: "end_turn"
+  defp ensure_ready_for_close(conn, acc, has_tools) do
+    cond do
+      has_tools && !acc.message_started ->
+        with {:ok, conn, acc} <- ensure_client_stream(conn, acc),
+             {:ok, conn, acc} <- ensure_message_start(conn, acc) do
+          {:ok, conn, acc}
+        end
 
-  defp normalize_stop("stop"), do: "end_turn"
-  defp normalize_stop(other), do: other
+      acc.message_started || has_tools ->
+        {:ok, conn, acc}
+
+      true ->
+        {:ok, conn, acc}
+    end
+  end
+
+  defp close_content_blocks(conn, acc, tools_sorted, has_tools) do
+    cond do
+      has_tools && acc.text_block_started ->
+        with {:ok, conn} <- chunk(conn, sse_content_block_stop(0)) do
+          emit_tool_blocks(conn, acc, 1, tools_sorted)
+        end
+
+      has_tools ->
+        emit_tool_blocks(conn, acc, 0, tools_sorted)
+
+      acc.text_block_started ->
+        case chunk(conn, sse_content_block_stop(0)) do
+          {:ok, conn} -> {:ok, conn, acc}
+          {:error, _} = e -> e
+        end
+
+      true ->
+        {:ok, conn, acc}
+    end
+  end
+
+  defp emit_tool_blocks(conn, acc, start_idx, sorted_tools) do
+    Enum.reduce_while(Enum.with_index(sorted_tools), {:ok, conn, acc}, fn {{_i, t}, pos},
+                                                                           {:ok, conn, acc} ->
+      anthropic_idx = start_idx + pos
+      id = t["id"] || "call_unknown"
+      name = t["name"] || ""
+      args = t["arguments"] || "{}"
+
+      start_ev =
+        sse("content_block_start", %{
+          "type" => "content_block_start",
+          "index" => anthropic_idx,
+          "content_block" => %{
+            "type" => "tool_use",
+            "id" => id,
+            "name" => name,
+            "input" => %{}
+          }
+        })
+
+      delta_ev =
+        sse("content_block_delta", %{
+          "type" => "content_block_delta",
+          "index" => anthropic_idx,
+          "delta" => %{"type" => "input_json_delta", "partial_json" => args}
+        })
+
+      stop_ev =
+        sse("content_block_stop", %{
+          "type" => "content_block_stop",
+          "index" => anthropic_idx
+        })
+
+      case chunk(conn, start_ev <> delta_ev <> stop_ev) do
+        {:ok, conn} -> {:cont, {:ok, conn, acc}}
+        {:error, _} = e -> {:halt, e}
+      end
+    end)
+  end
+
+  defp sse_content_block_stop(index) do
+    sse("content_block_stop", %{"type" => "content_block_stop", "index" => index})
+  end
+
+  defp emit_message_end(conn, acc, has_tools) do
+    {tin, tout} = acc.last_usage
+
+    stop =
+      cond do
+        has_tools -> "tool_use"
+        true -> stop_reason_from_finish(acc.finish_reason)
+      end
+
+    sse2 =
+      sse("message_delta", %{
+        "type" => "message_delta",
+        "delta" => %{"stop_reason" => stop, "stop_sequence" => nil},
+        "usage" => %{"input_tokens" => tin || 0, "output_tokens" => tout || 0}
+      })
+
+    sse3 = sse("message_stop", %{"type" => "message_stop"})
+    chunk(conn, sse2 <> sse3)
+  end
+
+  defp stop_reason_from_finish(nil), do: "end_turn"
+  defp stop_reason_from_finish(""), do: "end_turn"
+  defp stop_reason_from_finish("stop"), do: "end_turn"
+  defp stop_reason_from_finish("tool_calls"), do: "tool_use"
+  defp stop_reason_from_finish(other) when is_binary(other), do: other
+  defp stop_reason_from_finish(_), do: "end_turn"
 
   defp finalize_upstream(conn, acc) do
-    if acc.anthropic_started && !acc.anthropic_closed do
+    if acc.client_started && !acc.anthropic_closed do
       close_anthropic_stream_impl(conn, acc)
     else
       {conn, acc}

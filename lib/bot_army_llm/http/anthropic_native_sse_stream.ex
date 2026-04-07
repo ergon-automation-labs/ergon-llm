@@ -31,6 +31,7 @@ defmodule BotArmyLlm.Http.AnthropicNativeSseStream do
               start_ms: start_ms,
               model: model,
               phase: :need_status,
+              status: nil,
               buf: <<>>
             }
 

@@ -3,10 +3,11 @@ defmodule BotArmyLlm.Http.AnthropicMessagesProxy do
   Proxies Anthropic Messages API requests with Finch streaming for `stream: true`,
   and delegates to `BotArmyLlm.LlmClient.anthropic_passthrough/1` otherwise.
 
-  Streaming tries Anthropic first; on any **non-200** response status it can switch to local
-  Ollama SSE (Anthropic-shaped events) when the adapter can convert the request.
+  Streaming uses `BotArmyLlm.ClaudePassthroughStream` — the same provider order as
+  **`BOT_ARMY_LLM_CLAUDE_CHAIN`** / `ClaudePassthroughChain` (OpenRouter, Blackbox, Anthropic,
+  Ollama as configured).
 
-  Non-streaming uses `LlmClient.anthropic_passthrough/1` (same chain as `BOT_ARMY_LLM_CLAUDE_CHAIN`).
+  Non-streaming uses `LlmClient.anthropic_passthrough/1` (same chain).
 
   Records usage via `BotArmyLlm.TokenAccounting` with `source` identifying the
   client path (e.g. `claude_code` for `/cc/v1/messages`).
@@ -14,11 +15,7 @@ defmodule BotArmyLlm.Http.AnthropicMessagesProxy do
 
   require Logger
 
-  alias BotArmyLlm.Http.{OllamaAnthropicSseStream, SseUsage}
   alias BotArmyLlm.TokenAccounting
-
-  @anthropic_url "https://api.anthropic.com/v1/messages"
-  @receive_timeout 120_000
 
   @doc false
   def handle(conn, body, source) when is_map(body) do
@@ -134,144 +131,7 @@ defmodule BotArmyLlm.Http.AnthropicMessagesProxy do
   end
 
   defp stream_anthropic(conn, body, source, event_id, start_ms) do
-    case System.get_env("ANTHROPIC_API_KEY") do
-      key when is_binary(key) and key != "" ->
-        model = System.get_env("ANTHROPIC_MODEL_CLAUDE_CODE", "claude-haiku-4-5-20251001")
-
-        payload =
-          body
-          |> Map.put("model", model)
-          |> Map.put("stream", true)
-
-        case Jason.encode(payload) do
-          {:ok, json} ->
-            headers = anthropic_headers(key)
-            req = Finch.build(:post, @anthropic_url, headers, json)
-
-            meta = %{
-              source: source,
-              event_id: event_id,
-              start_ms: start_ms,
-              model: model,
-              phase: :need_status,
-              status: nil,
-              buf: <<>>
-            }
-
-            case Finch.stream_while(
-                   req,
-                   BotArmyLlm.Finch,
-                   {conn, meta},
-                   &stream_chunk/2,
-                   receive_timeout: @receive_timeout,
-                   request_timeout: @receive_timeout
-                 ) do
-              {:ok, {:ollama_fallback, ollama_conn}} ->
-                OllamaAnthropicSseStream.run(ollama_conn, body, source, event_id, start_ms)
-
-              {:ok, {conn, meta}} ->
-                latency = System.monotonic_time(:millisecond) - start_ms
-                {tin, tout} = SseUsage.last_usage_from_sse(meta.buf)
-
-                record_usage(%{
-                  "event_id" => event_id,
-                  "event_type" => "anthropic.messages.stream",
-                  "source" => source,
-                  "provider" => "anthropic",
-                  "model" => model,
-                  "tokens_input" => tin,
-                  "tokens_output" => tout,
-                  "latency_ms" => latency
-                })
-
-                Logger.info("http_proxy messages stream done",
-                  source: source,
-                  model: model,
-                  latency_ms: latency,
-                  tokens_in: tin,
-                  tokens_out: tout
-                )
-
-                conn
-
-              {:error, exception, {conn, _meta}} ->
-                Logger.error("http_proxy stream failed: #{Exception.message(exception)}")
-
-                if conn.state == :chunked do
-                  conn
-                else
-                  err = Jason.encode!(%{"error" => %{"type" => "upstream_error", "message" => "stream failed"}})
-
-                  conn
-                  |> Plug.Conn.put_resp_header("content-type", "application/json")
-                  |> Plug.Conn.send_resp(502, err)
-                end
-
-              other ->
-                Logger.error("http_proxy Finch.stream_while unexpected result: #{inspect(other)}")
-                send_json_error(conn, 502, "upstream_error", "stream transport returned unexpected result")
-            end
-
-          {:error, reason} ->
-            send_json_error(conn, 500, "encode_error", inspect(reason))
-        end
-
-      _ ->
-        send_json_error(conn, 503, "provider_not_configured", "ANTHROPIC_API_KEY required for streaming")
-    end
-  end
-
-  defp stream_chunk({:status, status}, {conn, meta}) when meta.phase == :need_status do
-    if status != 200 do
-      Logger.warning("http_proxy Anthropic streaming returned status #{status}; switching to Ollama SSE fallback")
-      {:halt, {:ollama_fallback, conn}}
-    else
-      {:cont, {conn, %{meta | phase: :need_headers, status: status}}}
-    end
-  end
-
-  defp stream_chunk({:headers, headers}, {conn, meta}) when meta.phase == :need_headers do
-    content_type = header_ci(headers, "content-type") || "text/event-stream"
-
-    conn =
-      conn
-      |> Plug.Conn.put_resp_header("content-type", content_type)
-      |> Plug.Conn.put_resp_header("cache-control", "no-cache, no-store, must-revalidate")
-      |> Plug.Conn.put_resp_header("pragma", "no-cache")
-      |> Plug.Conn.send_chunked(meta.status)
-
-    {:cont, {conn, %{meta | phase: :streaming}}}
-  end
-
-  defp stream_chunk({:data, data}, {conn, meta}) when meta.phase == :streaming do
-    case Plug.Conn.chunk(conn, data) do
-      {:ok, conn} -> {:cont, {conn, %{meta | buf: meta.buf <> data}}}
-      {:error, _} = err -> {:halt, err}
-    end
-  end
-
-  defp stream_chunk({:trailers, _}, acc), do: {:cont, acc}
-
-  defp stream_chunk(other, acc) do
-    Logger.warning("http_proxy unexpected stream chunk: #{inspect(other)}")
-    {:cont, acc}
-  end
-
-  defp anthropic_headers(api_key) do
-    [
-      {"content-type", "application/json"},
-      {"x-api-key", api_key},
-      {"anthropic-version", "2023-06-01"},
-      {"anthropic-beta", "tools-2024-04-04"}
-    ]
-  end
-
-  defp header_ci(headers, want) do
-    w = String.downcase(want)
-
-    Enum.find_value(headers, fn {k, v} ->
-      if String.downcase(k) == w, do: v
-    end)
+    BotArmyLlm.ClaudePassthroughStream.run(conn, body, source, event_id, start_ms)
   end
 
   defp record_from_messages_json(json, source, event_id, event_type, latency) do

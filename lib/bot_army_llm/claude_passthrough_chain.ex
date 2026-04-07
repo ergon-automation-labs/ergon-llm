@@ -1,6 +1,9 @@
 defmodule BotArmyLlm.ClaudePassthroughChain do
   @moduledoc """
-  Configurable provider chain for Claude Code–style **non-streaming** Anthropic Messages requests.
+  Configurable provider chain for Claude Code–style Anthropic Messages requests.
+
+  **Non-streaming** requests use `run/1`. **Streaming** (`stream: true`) uses the same chain order
+  via `stream_chain_steps/0` and `BotArmyLlm.ClaudePassthroughStream`.
 
   ## Configuration
 
@@ -38,6 +41,12 @@ defmodule BotArmyLlm.ClaudePassthroughChain do
   end
 
   defp resolved_chain do
+    stream_chain_steps()
+  end
+
+  @doc false
+  @spec stream_chain_steps() :: {:ok, list(atom())} | {:error, term()}
+  def stream_chain_steps do
     case Application.get_env(:bot_army_llm, :claude_passthrough_chain) do
       list when is_list(list) and list != [] ->
         {:ok, list}

@@ -9,7 +9,8 @@ defmodule BotArmyLlm.Http.OllamaAnthropicSseStream do
 
   @receive_timeout 120_000
 
-  @spec run(Plug.Conn.t(), map(), String.t(), String.t(), integer()) :: Plug.Conn.t()
+  @spec run(Plug.Conn.t(), map(), String.t(), String.t(), integer()) ::
+          {:ok, Plug.Conn.t()} | {:error, term()}
   def run(conn, anthropic_body, source, event_id, start_ms) when is_map(anthropic_body) do
     model =
       System.get_env("OLLAMA_MODEL_CLAUDE_FALLBACK") ||
@@ -24,6 +25,7 @@ defmodule BotArmyLlm.Http.OllamaAnthropicSseStream do
       msg_id = "msg-ollama-" <> (:crypto.strong_rand_bytes(12) |> Base.encode16(case: :lower))
 
       acc0 = %{
+        phase: :need_status,
         buf: "",
         prev_text: "",
         msg_id: msg_id,
@@ -35,13 +37,6 @@ defmodule BotArmyLlm.Http.OllamaAnthropicSseStream do
         last_usage: {nil, nil}
       }
 
-      conn =
-        conn
-        |> Plug.Conn.put_resp_header("content-type", "text/event-stream; charset=utf-8")
-        |> Plug.Conn.put_resp_header("cache-control", "no-cache, no-store, must-revalidate")
-        |> Plug.Conn.put_resp_header("pragma", "no-cache")
-        |> Plug.Conn.send_chunked(200)
-
       case Finch.stream_while(
              req,
              BotArmyLlm.Finch,
@@ -50,8 +45,15 @@ defmodule BotArmyLlm.Http.OllamaAnthropicSseStream do
              receive_timeout: @receive_timeout,
              request_timeout: @receive_timeout
            ) do
+        {:ok, {:upstream_failed, status, _conn}} ->
+          {:error, {:http_error, status}}
+
         {:ok, {:stream_failed, conn}} ->
-          conn
+          if conn.state == :chunked do
+            {:ok, conn}
+          else
+            {:error, :ollama_stream_failed}
+          end
 
         {:ok, {conn, acc}} ->
           {tin, tout} = acc.last_usage
@@ -74,34 +76,21 @@ defmodule BotArmyLlm.Http.OllamaAnthropicSseStream do
             latency_ms: latency
           )
 
-          conn
+          {:ok, conn}
 
         {:error, exception, {conn, _acc}} ->
           Logger.error("Ollama SSE stream failed: #{Exception.message(exception)}")
 
           if conn.state == :chunked do
-            conn
+            {:ok, conn}
           else
-            conn
-            |> Plug.Conn.put_resp_header("content-type", "application/json")
-            |> Plug.Conn.send_resp(502, Jason.encode!(%{"error" => %{"type" => "upstream_error", "message" => "ollama stream failed"}}))
+            {:error, {:stream_exception, exception}}
           end
       end
     else
       {:error, reason} ->
-        Logger.warning("Ollama SSE fallback unavailable: #{inspect(reason)}")
-
-        conn
-        |> Plug.Conn.put_resp_header("content-type", "application/json")
-        |> Plug.Conn.send_resp(
-          503,
-          Jason.encode!(%{
-            "error" => %{
-              "type" => "ollama_fallback_unavailable",
-              "message" => "Anthropic rate-limited; Ollama fallback could not run (#{inspect(reason)})"
-            }
-          })
-        )
+        Logger.debug("Ollama SSE stream unavailable: #{inspect(reason)}")
+        {:error, {:ollama_unavailable, reason}}
     end
   end
 
@@ -126,15 +115,26 @@ defmodule BotArmyLlm.Http.OllamaAnthropicSseStream do
   defp put_opt(%{"options" => o} = m, extra), do: %{m | "options" => Map.merge(o, extra)}
   defp put_opt(m, extra), do: Map.put(m, "options", extra)
 
-  defp stream_o_chunk({:status, 200}, acc), do: {:cont, acc}
-
-  defp stream_o_chunk({:status, status}, {conn, _acc}) when status != 200 do
-    {:halt, {:stream_failed, conn}}
+  defp stream_o_chunk({:status, 200}, {conn, acc}) when acc.phase == :need_status do
+    {:cont, {conn, %{acc | phase: :need_headers}}}
   end
 
-  defp stream_o_chunk({:headers, _}, acc), do: {:cont, acc}
+  defp stream_o_chunk({:status, status}, {conn, acc}) when acc.phase == :need_status do
+    {:halt, {:upstream_failed, status, conn}}
+  end
 
-  defp stream_o_chunk({:data, data}, {conn, acc}) do
+  defp stream_o_chunk({:headers, _}, {conn, acc}) when acc.phase == :need_headers do
+    conn =
+      conn
+      |> Plug.Conn.put_resp_header("content-type", "text/event-stream; charset=utf-8")
+      |> Plug.Conn.put_resp_header("cache-control", "no-cache, no-store, must-revalidate")
+      |> Plug.Conn.put_resp_header("pragma", "no-cache")
+      |> Plug.Conn.send_chunked(200)
+
+    {:cont, {conn, %{acc | phase: :streaming}}}
+  end
+
+  defp stream_o_chunk({:data, data}, {conn, acc}) when acc.phase == :streaming do
     buf = acc.buf <> data
     {lines, rest} = take_complete_lines(buf)
     acc = %{acc | buf: rest}
@@ -145,7 +145,7 @@ defmodule BotArmyLlm.Http.OllamaAnthropicSseStream do
     end
   end
 
-  defp stream_o_chunk({:trailers, _}, acc), do: {:cont, acc}
+  defp stream_o_chunk({:trailers, _}, {conn, acc}), do: {:cont, {conn, acc}}
 
   defp take_complete_lines(buf) do
     ends_nl = String.ends_with?(buf, "\n")

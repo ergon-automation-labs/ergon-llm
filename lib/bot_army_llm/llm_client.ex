@@ -225,16 +225,56 @@ defmodule BotArmyLlm.LlmClient do
 
   # Provider chain selection
 
+  @doc false
+  @spec resolved_provider_chain() :: list(atom())
+  def resolved_provider_chain do
+    case Application.get_env(:bot_army_llm, :provider_chain) do
+      list when is_list(list) ->
+        list
+
+      nil ->
+        case System.get_env("BOT_ARMY_LLM_PROVIDER_CHAIN") do
+          nil -> [:ollama, :blackbox, :openrouter, :anthropic]
+          env_str -> parse_provider_chain_string(env_str)
+        end
+    end
+  end
+
+  defp parse_provider_chain_string(str) when is_binary(str) do
+    str
+    |> String.split(",")
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.map(&String.downcase/1)
+    |> Enum.map(fn
+      "ollama" -> :ollama
+      "blackbox" -> :blackbox
+      "openrouter" -> :openrouter
+      "anthropic" -> :anthropic
+      unknown -> raise ArgumentError, "Unknown provider: #{unknown}"
+    end)
+  end
+
   defp provider_chain(:heavy) do
-    [:blackbox, :openrouter, :anthropic, :ollama]
+    # Check if custom chain is configured, otherwise use default
+    chain = resolved_provider_chain()
+    if :ollama in chain, do: chain ++ [:ollama], else: chain
   end
 
   defp provider_chain(_complexity) do
+    # Check if custom chain is configured
+    chain = resolved_provider_chain()
+
     if health_checker_module().load_acceptable?() do
-      [:ollama, :blackbox, :openrouter, :anthropic]
+      # Ensure ollama is first if in chain, otherwise use configured order
+      if :ollama in chain do
+        [:ollama | List.delete(chain, :ollama)]
+      else
+        chain
+      end
     else
       Logger.info("LLM: Local nodes under load — routing to cloud providers")
-      [:blackbox, :openrouter, :anthropic]
+      chain
     end
   end
 

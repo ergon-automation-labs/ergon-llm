@@ -35,7 +35,6 @@ defmodule BotArmyLlm.NATS.Consumer do
 
   # Callbacks
 
-
   @impl true
   def init(opts) do
     Logger.info("Starting LLM NATS consumer")
@@ -113,14 +112,18 @@ defmodule BotArmyLlm.NATS.Consumer do
 
   @impl true
   def handle_info({:msg, msg}, state) do
-    Logger.debug("Received NATS message on subject: #{msg.topic}, has_reply_to: #{msg.reply_to != nil}")
+    Logger.debug(
+      "Received NATS message on subject: #{msg.topic}, has_reply_to: #{msg.reply_to != nil}"
+    )
 
     # Handle request/reply messages first (they may not have valid envelope structure)
     if msg.reply_to do
       Logger.debug("Processing request/reply on #{msg.topic}, reply_to: #{msg.reply_to}")
+
       case BotArmyCore.NATS.Decoder.decode(msg.body) do
         {:ok, decoded_message} ->
           handle_request_reply(msg.topic, decoded_message, msg.reply_to)
+
         {:error, _reason} ->
           # Request/reply messages may not decode - handle by subject
           handle_request_reply(msg.topic, %{}, msg.reply_to)
@@ -164,6 +167,9 @@ defmodule BotArmyLlm.NATS.Consumer do
       "llm.claude_code.complete" ->
         BotArmyLlm.Handlers.ClaudeCodeHandler.handle_complete(message, reply_to)
 
+      "llm.prompt.submit" ->
+        handle_prompt_request_reply(message, reply_to)
+
       "llm.usage.query" ->
         handle_usage_query(message, reply_to)
 
@@ -197,6 +203,7 @@ defmodule BotArmyLlm.NATS.Consumer do
 
       {:error, reason} ->
         Logger.error("Usage query failed: #{inspect(reason)}")
+
         error_response = %{
           "event" => "llm.error",
           "event_id" => message["event_id"],
@@ -228,6 +235,7 @@ defmodule BotArmyLlm.NATS.Consumer do
 
       {:error, reason} ->
         Logger.error("Metrics query failed: #{inspect(reason)}")
+
         error_response = %{
           "event" => "llm.error",
           "event_id" => message["event_id"],
@@ -240,6 +248,44 @@ defmodule BotArmyLlm.NATS.Consumer do
 
         publish_reply(reply_to, error_response)
     end
+  end
+
+  defp handle_prompt_request_reply(message, reply_to) do
+    spawn(fn ->
+      payload = message["payload"] || message
+      text = payload["text"]
+      model = Map.get(payload, "model", "auto")
+      prompt_id = Map.get(payload, "prompt_id", UUID.uuid4())
+
+      llm_client = Application.get_env(:bot_army_llm, :llm_client, BotArmyLlm.LlmClient)
+
+      result =
+        try do
+          BotArmyLlm.LocalQueueManager.increment()
+          llm_client.complete(text, model: model)
+        after
+          BotArmyLlm.LocalQueueManager.decrement()
+        end
+
+      response =
+        case result do
+          {:ok, resp} ->
+            %{
+              "completion" => resp.completion,
+              "model" => resp.model_used,
+              "tokens" => %{
+                "input" => Map.get(resp, :tokens_input, 0),
+                "output" => Map.get(resp, :tokens_output, 0)
+              },
+              "prompt_id" => prompt_id
+            }
+
+          {:error, reason} ->
+            %{"error" => inspect(reason), "prompt_id" => prompt_id}
+        end
+
+      publish_reply(reply_to, response)
+    end)
   end
 
   defp handle_queue_status(message, reply_to) do

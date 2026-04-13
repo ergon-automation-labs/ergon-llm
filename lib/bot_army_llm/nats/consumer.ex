@@ -120,14 +120,20 @@ defmodule BotArmyLlm.NATS.Consumer do
     if msg.reply_to do
       Logger.debug("Processing request/reply on #{msg.topic}, reply_to: #{msg.reply_to}")
 
-      case BotArmyCore.NATS.Decoder.decode(msg.body) do
-        {:ok, decoded_message} ->
-          handle_request_reply(msg.topic, decoded_message, msg.reply_to)
+      decoded =
+        case BotArmyCore.NATS.Decoder.decode(msg.body) do
+          {:ok, decoded_message} ->
+            decoded_message
 
-        {:error, _reason} ->
-          # Request/reply messages may not decode - handle by subject
-          handle_request_reply(msg.topic, %{}, msg.reply_to)
-      end
+          {:error, _reason} ->
+            # Request/reply messages may not follow envelope format — try plain JSON
+            case Jason.decode(msg.body) do
+              {:ok, plain} -> plain
+              _ -> %{}
+            end
+        end
+
+      handle_request_reply(msg.topic, decoded, msg.reply_to)
     else
       case BotArmyCore.NATS.Decoder.decode(msg.body) do
         {:ok, decoded_message} ->

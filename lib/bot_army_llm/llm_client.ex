@@ -57,10 +57,13 @@ defmodule BotArmyLlm.LlmClient do
         provider_chain(complexity)
       else
         SafetyClassifier.log_decision(:contains_sensitive, "routing to local-only providers")
-        [:ollama]  # Local only
+        # Local only
+        [:ollama]
       end
 
-    Logger.debug("LLM routing: complexity=#{complexity}, chain=#{inspect(providers)}, safety_checked=true")
+    Logger.debug(
+      "LLM routing: complexity=#{complexity}, chain=#{inspect(providers)}, safety_checked=true"
+    )
 
     case try_providers(providers, text, complexity, opts) do
       {:ok, result} ->
@@ -101,8 +104,13 @@ defmodule BotArmyLlm.LlmClient do
       if SafetyClassifier.safe_for_cloud?(text) do
         [:ollama_embed, :openrouter_embed]
       else
-        SafetyClassifier.log_decision(:contains_sensitive, "routing embed to local-only providers")
-        [:ollama_embed]  # Local only
+        SafetyClassifier.log_decision(
+          :contains_sensitive,
+          "routing embed to local-only providers"
+        )
+
+        # Local only
+        [:ollama_embed]
       end
 
     Logger.debug("Embed routing: providers=#{inspect(providers)}, safety_checked=true")
@@ -148,11 +156,18 @@ defmodule BotArmyLlm.LlmClient do
       if SafetyClassifier.safe_for_cloud?(messages_text) do
         provider_chain(complexity)
       else
-        SafetyClassifier.log_decision(:contains_sensitive, "routing to local-only providers (multi-turn)")
-        [:ollama]  # Local only
+        SafetyClassifier.log_decision(
+          :contains_sensitive,
+          "routing to local-only providers (multi-turn)"
+        )
+
+        # Local only
+        [:ollama]
       end
 
-    Logger.debug("LLM routing (messages): complexity=#{complexity}, chain=#{inspect(providers)}, safety_checked=true")
+    Logger.debug(
+      "LLM routing (messages): complexity=#{complexity}, chain=#{inspect(providers)}, safety_checked=true"
+    )
 
     case try_providers_messages(providers, messages, complexity, opts) do
       {:ok, result} ->
@@ -178,8 +193,8 @@ defmodule BotArmyLlm.LlmClient do
   """
   def complete_vision(image_data_base64, image_url, prompt_text, opts \\ [])
       when (is_binary(image_data_base64) or is_nil(image_data_base64)) and
-           (is_binary(image_url) or is_nil(image_url)) and
-           is_binary(prompt_text) do
+             (is_binary(image_url) or is_nil(image_url)) and
+             is_binary(prompt_text) do
     if is_nil(image_data_base64) and is_nil(image_url) do
       {:error, :no_image_provided}
     else
@@ -190,8 +205,13 @@ defmodule BotArmyLlm.LlmClient do
         if SafetyClassifier.safe_for_cloud?(prompt_text) do
           [:ollama_vision, :anthropic_vision, :openrouter_vision]
         else
-          SafetyClassifier.log_decision(:contains_sensitive, "routing vision to local-only providers")
-          [:ollama_vision]  # Local only
+          SafetyClassifier.log_decision(
+            :contains_sensitive,
+            "routing vision to local-only providers"
+          )
+
+          # Local only
+          [:ollama_vision]
         end
 
       Logger.debug("LLM vision routing: chain=#{inspect(providers)}, safety_checked=true")
@@ -325,7 +345,10 @@ defmodule BotArmyLlm.LlmClient do
 
   defp call_provider(:openrouter, text, complexity, opts) do
     api_key = System.get_env("OPENROUTER_API_KEY")
-    base_url = System.get_env("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1/chat/completions")
+
+    base_url =
+      System.get_env("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1/chat/completions")
+
     model = cloud_model(:openrouter, complexity)
 
     # OpenRouter requires HTTP-Referer header
@@ -381,7 +404,7 @@ defmodule BotArmyLlm.LlmClient do
   # HTTP implementations
 
   defp ollama_timeout_ms do
-    parse_timeout_ms(System.get_env("OLLAMA_TIMEOUT_MS"), 600_000)
+    parse_timeout_ms(System.get_env("OLLAMA_TIMEOUT_MS"), 15_000)
   end
 
   defp parse_timeout_ms(nil, default), do: default
@@ -571,7 +594,10 @@ defmodule BotArmyLlm.LlmClient do
 
   defp call_provider_messages(:openrouter, messages, complexity, opts) do
     api_key = System.get_env("OPENROUTER_API_KEY")
-    base_url = System.get_env("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1/chat/completions")
+
+    base_url =
+      System.get_env("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1/chat/completions")
+
     model = cloud_model(:openrouter, complexity)
     extra_headers = [{"HTTP-Referer", "https://github.com/ergon-automation-labs"}]
 
@@ -751,6 +777,7 @@ defmodule BotArmyLlm.LlmClient do
     case health_checker_module().best_ollama_node(:heavy) do
       {:ok, {url, _}} ->
         model = System.get_env("OLLAMA_VISION_MODEL", "llava:latest")
+
         case ollama_vision_call(url, model, image_data, prompt) do
           {:ok, analysis} -> {:ok, %{completion: analysis, model_used: model}}
           {:error, reason} -> {:error, reason}
@@ -912,7 +939,10 @@ defmodule BotArmyLlm.LlmClient do
       case {is_binary(image_data), is_binary(image_url)} do
         {true, _} ->
           [
-            %{"type" => "image_url", "image_url" => %{"url" => "data:image/png;base64,#{image_data}"}},
+            %{
+              "type" => "image_url",
+              "image_url" => %{"url" => "data:image/png;base64,#{image_data}"}
+            },
             %{"type" => "text", "text" => prompt}
           ]
 

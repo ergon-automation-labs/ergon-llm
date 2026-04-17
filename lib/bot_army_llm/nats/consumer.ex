@@ -116,37 +116,39 @@ defmodule BotArmyLlm.NATS.Consumer do
 
   @impl true
   def handle_info({:msg, msg}, state) do
-    Logger.debug(
-      "Received NATS message on subject: #{msg.topic}, has_reply_to: #{msg.reply_to != nil}"
-    )
+    BotArmyRuntime.Tracing.with_consumer_span(msg.topic, msg.headers, fn ->
+      Logger.debug(
+        "Received NATS message on subject: #{msg.topic}, has_reply_to: #{msg.reply_to != nil}"
+      )
 
-    # Handle request/reply messages first (they may not have valid envelope structure)
-    if msg.reply_to do
-      Logger.debug("Processing request/reply on #{msg.topic}, reply_to: #{msg.reply_to}")
+      # Handle request/reply messages first (they may not have valid envelope structure)
+      if msg.reply_to do
+        Logger.debug("Processing request/reply on #{msg.topic}, reply_to: #{msg.reply_to}")
 
-      decoded =
+        decoded =
+          case BotArmyCore.NATS.Decoder.decode(msg.body) do
+            {:ok, decoded_message} ->
+              decoded_message
+
+            {:error, _reason} ->
+              # Request/reply messages may not follow envelope format — try plain JSON
+              case Jason.decode(msg.body) do
+                {:ok, plain} -> plain
+                _ -> %{}
+              end
+          end
+
+        handle_request_reply(msg.topic, decoded, msg.reply_to)
+      else
         case BotArmyCore.NATS.Decoder.decode(msg.body) do
           {:ok, decoded_message} ->
-            decoded_message
+            route_message(decoded_message)
 
-          {:error, _reason} ->
-            # Request/reply messages may not follow envelope format — try plain JSON
-            case Jason.decode(msg.body) do
-              {:ok, plain} -> plain
-              _ -> %{}
-            end
+          {:error, reason} ->
+            Logger.warning("Failed to decode message from #{msg.topic}: #{inspect(reason)}")
         end
-
-      handle_request_reply(msg.topic, decoded, msg.reply_to)
-    else
-      case BotArmyCore.NATS.Decoder.decode(msg.body) do
-        {:ok, decoded_message} ->
-          route_message(decoded_message)
-
-        {:error, reason} ->
-          Logger.warning("Failed to decode message from #{msg.topic}: #{inspect(reason)}")
       end
-    end
+    end)
 
     {:noreply, state}
   end

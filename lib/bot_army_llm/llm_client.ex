@@ -305,13 +305,27 @@ defmodule BotArmyLlm.LlmClient do
   end
 
   defp try_providers([provider | rest], text, complexity, opts) do
-    case call_provider(provider, text, complexity, opts) do
-      {:ok, result} ->
-        Logger.info("LLM provider #{provider} succeeded, model=#{result.model_used}")
-        {:ok, Map.put(result, :provider, provider)}
+    case BotArmyLlm.CircuitBreaker.allow?(provider) do
+      :ok ->
+        case call_provider(provider, text, complexity, opts) do
+          {:ok, result} ->
+            BotArmyLlm.CircuitBreaker.record_success(provider)
+            Logger.info("LLM provider #{provider} succeeded, model=#{result.model_used}")
+            {:ok, Map.put(result, :provider, provider)}
 
-      {:error, reason} ->
-        Logger.warning("Provider #{provider} failed: #{inspect(reason)}, trying next")
+          {:error, :rate_limited} ->
+            BotArmyLlm.CircuitBreaker.record_failure(provider, :rate_limited)
+            Logger.warning("Provider #{provider} rate limited, trying next")
+            try_providers(rest, text, complexity, opts)
+
+          {:error, reason} ->
+            BotArmyLlm.CircuitBreaker.record_failure(provider, reason)
+            Logger.warning("Provider #{provider} failed: #{inspect(reason)}, trying next")
+            try_providers(rest, text, complexity, opts)
+        end
+
+      {:open, retry_after} ->
+        Logger.warning("Circuit open for #{provider}, retry after #{retry_after}ms")
         try_providers(rest, text, complexity, opts)
     end
   end
@@ -556,13 +570,35 @@ defmodule BotArmyLlm.LlmClient do
   end
 
   defp try_providers_messages([provider | rest], messages, complexity, opts) do
-    case call_provider_messages(provider, messages, complexity, opts) do
-      {:ok, result} ->
-        Logger.info("LLM provider #{provider} succeeded (messages), model=#{result.model_used}")
-        {:ok, Map.put(result, :provider, provider)}
+    case BotArmyLlm.CircuitBreaker.allow?(provider) do
+      :ok ->
+        case call_provider_messages(provider, messages, complexity, opts) do
+          {:ok, result} ->
+            BotArmyLlm.CircuitBreaker.record_success(provider)
 
-      {:error, reason} ->
-        Logger.warning("Provider #{provider} failed (messages): #{inspect(reason)}, trying next")
+            Logger.info(
+              "LLM provider #{provider} succeeded (messages), model=#{result.model_used}"
+            )
+
+            {:ok, Map.put(result, :provider, provider)}
+
+          {:error, :rate_limited} ->
+            BotArmyLlm.CircuitBreaker.record_failure(provider, :rate_limited)
+            Logger.warning("Provider #{provider} rate limited (messages), trying next")
+            try_providers_messages(rest, messages, complexity, opts)
+
+          {:error, reason} ->
+            BotArmyLlm.CircuitBreaker.record_failure(provider, reason)
+
+            Logger.warning(
+              "Provider #{provider} failed (messages): #{inspect(reason)}, trying next"
+            )
+
+            try_providers_messages(rest, messages, complexity, opts)
+        end
+
+      {:open, retry_after} ->
+        Logger.warning("Circuit open for #{provider} (messages), retry after #{retry_after}ms")
         try_providers_messages(rest, messages, complexity, opts)
     end
   end

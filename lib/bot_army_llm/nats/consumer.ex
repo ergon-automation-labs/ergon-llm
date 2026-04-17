@@ -51,8 +51,12 @@ defmodule BotArmyLlm.NATS.Consumer do
   @impl true
   def handle_continue(:connect, state) do
     case GenServer.call(BotArmyRuntime.NATS.Connection, :get_connection, 5000) do
-      {:ok, conn} -> subscribe_to_topics(conn, state)
-      {:error, _reason} -> handle_connection_unavailable(state)
+      {:ok, conn} ->
+        BotArmyRuntime.NATS.Connection.subscribe_to_status()
+        subscribe_to_topics(conn, state)
+
+      {:error, _reason} ->
+        handle_connection_unavailable(state)
     end
   end
 
@@ -157,13 +161,13 @@ defmodule BotArmyLlm.NATS.Consumer do
   def handle_info({:nats, :disconnected}, state) do
     Logger.warning("Disconnected from NATS, will reconnect")
     Process.send_after(self(), :reconnect, @reconnect_delay_ms)
-    {:noreply, %{state | connection: nil}}
+    {:noreply, %{state | subscriptions: [], connection: nil}}
   end
 
   @impl true
   def handle_info({:nats, :connected}, state) do
-    Logger.info("Reconnected to NATS")
-    {:noreply, state}
+    Logger.info("Reconnected to NATS, re-subscribing")
+    {:noreply, state, {:continue, :connect}}
   end
 
   # Private functions

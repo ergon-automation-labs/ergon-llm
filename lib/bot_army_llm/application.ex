@@ -19,6 +19,15 @@ defmodule BotArmyLlm.Application do
         # Database connection (optional in test when :start_repo is false — see config/test.exs)
         BotArmyLlm.Repo,
 
+        # Circuit breaker registry for per-provider failure tracking
+        {Registry, keys: :unique, name: BotArmyLlm.CircuitBreakerRegistry},
+
+        # Circuit breakers for each LLM provider
+        {BotArmyLlm.CircuitBreaker, :ollama},
+        {BotArmyLlm.CircuitBreaker, :blackbox},
+        {BotArmyLlm.CircuitBreaker, :openrouter},
+        {BotArmyLlm.CircuitBreaker, :anthropic},
+
         # Note: BotArmyRuntime.NATS.Connection is started by BotArmyRuntime.Application supervisor.
         # Do not start it here - it's already managed by the runtime library.
 
@@ -96,11 +105,7 @@ defmodule BotArmyLlm.Application do
          }}
 
       bandit =
-        {Bandit,
-         plug: BotArmyLlm.Http.Router,
-         scheme: :http,
-         port: port,
-         ip: ip}
+        {Bandit, plug: BotArmyLlm.Http.Router, scheme: :http, port: port, ip: ip}
 
       children ++ [finch, bandit]
     else

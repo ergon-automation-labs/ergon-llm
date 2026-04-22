@@ -26,7 +26,7 @@ config :bot_army_llm, BotArmyLlm.Repo,
     System.get_env("BOT_ARMY_LLM_DB_USER") || System.get_env("DATABASE_USER", "postgres"),
   password:
     System.get_env("BOT_ARMY_LLM_DB_PASSWORD") || System.get_env("DATABASE_PASSWORD", "postgres"),
-  pool_size: 10
+  pool_size: 3
 
 # Test sets :http_proxy below; do not override here.
 if config_env() != :test do

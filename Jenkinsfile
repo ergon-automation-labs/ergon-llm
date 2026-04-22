@@ -125,6 +125,46 @@ pipeline {
       }
     }
 
+    stage('Publish Deploy Event') {
+      steps {
+        sh '''
+          echo "==============================================="
+          echo "Publishing deployment event to NATS"
+          echo "==============================================="
+
+          # Get the release binary path
+          RELEASE_BIN="${RELEASE_DIR}/current/llm_proxy/bin/llm_proxy"
+
+          if [ ! -f "$RELEASE_BIN" ]; then
+            echo "⚠️  Release binary not found at $RELEASE_BIN"
+            echo "Skipping deploy event (deployment incomplete)"
+            exit 0
+          fi
+
+          # Publish deploy started event
+          START_PAYLOAD='{"bot":"llm_proxy","node":"air","event":"deploy_started"}'
+          /opt/bot_army/scripts/nats_publish.sh ops.deploy.llm_proxy "$START_PAYLOAD" || echo "⚠️  Deploy start event failed (non-blocking)"
+
+          # Run migrations using the release
+          echo "Running: $RELEASE_BIN eval 'LlmProxy.Release.migrate()'"
+
+          $RELEASE_BIN eval 'LlmProxy.Release.migrate()' || {
+            echo "⚠️  Migration failed or Release module not found"
+            # Publish deploy failed event for migration failure
+            FAIL_PAYLOAD='{"bot":"llm_proxy","node":"air","event":"deploy_failed","reason":"migration"}'
+            /opt/bot_army/scripts/nats_publish.sh ops.deploy.llm_proxy "$FAIL_PAYLOAD" || echo "⚠️  Deploy fail event failed (non-blocking)"
+            exit 1
+          }
+
+          # Publish deploy complete event
+          END_PAYLOAD='{"bot":"llm_proxy","node":"air","event":"deploy_complete"}'
+          /opt/bot_army/scripts/nats_publish.sh ops.deploy.llm_proxy "$END_PAYLOAD" || echo "⚠️  Deploy complete event failed (non-blocking)"
+
+          echo "✓ Deploy events published"
+        '''
+      }
+    }
+
     stage('Run Migrations') {
       steps {
         sh '''

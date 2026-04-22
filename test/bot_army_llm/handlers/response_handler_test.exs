@@ -1,5 +1,6 @@
 defmodule BotArmyLlm.Handlers.ResponseHandlerTest do
   use ExUnit.Case, async: false
+  @moduletag :handlers
 
   setup do
     Application.put_env(:bot_army_llm, :llm_client, TestResponseLlmClientMock)
@@ -79,13 +80,17 @@ defmodule BotArmyLlm.Handlers.ResponseHandlerTest do
       }
 
       # First attempt fails, correction returns valid JSON
-      Process.put({:response_llm_mock, :response}, {:ok, %{
-        completion: ~s({"extracted": true}),
-        model_used: "test",
-        tokens_input: 10,
-        tokens_output: 5,
-        latency_ms: 150
-      }})
+      Process.put(
+        {:response_llm_mock, :response},
+        {:ok,
+         %{
+           completion: ~s({"extracted": true}),
+           model_used: "test",
+           tokens_input: 10,
+           tokens_output: 5,
+           latency_ms: 150
+         }}
+      )
 
       assert :ok = BotArmyLlm.Handlers.ResponseHandler.handle_parse(message)
     end
@@ -160,13 +165,17 @@ defmodule BotArmyLlm.Handlers.ResponseHandlerTest do
       }
 
       # Correction returns object instead of array
-      Process.put({:response_llm_mock, :response}, {:ok, %{
-        completion: ~s({"items": [1, 2, 3]}),
-        model_used: "test",
-        tokens_input: 10,
-        tokens_output: 15,
-        latency_ms: 120
-      }})
+      Process.put(
+        {:response_llm_mock, :response},
+        {:ok,
+         %{
+           completion: ~s({"items": [1, 2, 3]}),
+           model_used: "test",
+           tokens_input: 10,
+           tokens_output: 15,
+           latency_ms: 120
+         }}
+      )
 
       assert :ok = BotArmyLlm.Handlers.ResponseHandler.handle_parse(message)
     end
@@ -177,13 +186,17 @@ end
 
 defmodule TestResponseLlmClientMock do
   def complete(text, _opts \\ []) when is_binary(text) do
-    Process.get({:response_llm_mock, :response}, {:ok, %{
-      completion: "Mock response",
-      model_used: "test-model",
-      tokens_input: 5,
-      tokens_output: 10,
-      latency_ms: 100
-    }})
+    Process.get(
+      {:response_llm_mock, :response},
+      {:ok,
+       %{
+         completion: "Mock response",
+         model_used: "test-model",
+         tokens_input: 5,
+         tokens_output: 10,
+         latency_ms: 100
+       }}
+    )
   end
 
   def complete_messages(messages, _opts \\ []) when is_list(messages) do

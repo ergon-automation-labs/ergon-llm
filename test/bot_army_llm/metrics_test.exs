@@ -1,19 +1,22 @@
 defmodule BotArmyLlm.MetricsTest do
   use ExUnit.Case, async: false
+  @moduletag :core
 
   alias BotArmyLlm.Metrics
 
   setup do
     # Reset metrics before each test
     Metrics.reset()
-    Process.sleep(50)  # Allow reset to complete
+    # Allow reset to complete
+    Process.sleep(50)
     :ok
   end
 
   describe "record_request/1" do
     test "increments request counter" do
       Metrics.record_request("llm.prompt.submit")
-      Process.sleep(100)  # Allow async operation to complete
+      # Allow async operation to complete
+      Process.sleep(100)
 
       summary = Metrics.get_summary()
 
@@ -49,6 +52,7 @@ defmodule BotArmyLlm.MetricsTest do
       Enum.each(1..100, fn i ->
         Metrics.record_provider_call("anthropic", i * 10)
       end)
+
       Process.sleep(100)
 
       summary = Metrics.get_summary()
@@ -66,6 +70,7 @@ defmodule BotArmyLlm.MetricsTest do
       Enum.each(1..1100, fn i ->
         Metrics.record_provider_call("anthropic", i * 10)
       end)
+
       Process.sleep(200)
 
       summary = Metrics.get_summary()

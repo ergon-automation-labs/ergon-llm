@@ -5,12 +5,13 @@ defmodule BotArmyLlm.VectorStoreTestRepoMock do
     case changeset.valid? do
       true ->
         # Return a successful insert with a generated ID
-        {:ok, %{
-          changeset.data
-          | id: UUID.uuid4(),
-            inserted_at: DateTime.utc_now(),
-            updated_at: DateTime.utc_now()
-        }}
+        {:ok,
+         %{
+           changeset.data
+           | id: UUID.uuid4(),
+             inserted_at: DateTime.utc_now(),
+             updated_at: DateTime.utc_now()
+         }}
 
       false ->
         {:error, changeset}
@@ -31,6 +32,7 @@ end
 
 defmodule BotArmyLlm.VectorStoreTest do
   use ExUnit.Case, async: false
+  @moduletag :stores
 
   alias BotArmyLlm.VectorStore
 

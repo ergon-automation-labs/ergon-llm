@@ -116,7 +116,7 @@ defmodule BotArmyLlm.NATS.Consumer do
 
   @impl true
   def handle_info({:msg, msg}, state) do
-    BotArmyRuntime.Tracing.with_consumer_span(msg.topic, msg.headers, fn ->
+    BotArmyRuntime.Tracing.with_consumer_span(msg.topic, Map.get(msg, :headers, []), fn ->
       Logger.debug(
         "Received NATS message on subject: #{msg.topic}, has_reply_to: #{msg.reply_to != nil}"
       )

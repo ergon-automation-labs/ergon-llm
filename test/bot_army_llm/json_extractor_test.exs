@@ -1,5 +1,6 @@
 defmodule BotArmyLlm.JsonExtractorTest do
   use ExUnit.Case, async: true
+  @moduletag :core
 
   alias BotArmyLlm.JsonExtractor
 
@@ -43,6 +44,7 @@ defmodule BotArmyLlm.JsonExtractorTest do
       }
 
       """
+
       assert {:ok, %{"name" => "test", "active" => true}} = JsonExtractor.extract(json_text)
     end
 
@@ -66,7 +68,9 @@ defmodule BotArmyLlm.JsonExtractorTest do
     test "validates array type" do
       schema = %{"type" => "array"}
       assert :ok = JsonExtractor.validate_schema([1, 2, 3], schema)
-      assert {:error, :schema_mismatch} = JsonExtractor.validate_schema(%{"key" => "value"}, schema)
+
+      assert {:error, :schema_mismatch} =
+               JsonExtractor.validate_schema(%{"key" => "value"}, schema)
     end
 
     test "validates required properties" do

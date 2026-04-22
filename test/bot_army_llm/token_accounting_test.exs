@@ -4,11 +4,12 @@ defmodule BotArmyLlm.TokenAccountingTestRepoMock do
   def insert(changeset) do
     case changeset.valid? do
       true ->
-        {:ok, %{
-          changeset.data
-          | id: UUID.uuid4(),
-            inserted_at: DateTime.utc_now()
-        }}
+        {:ok,
+         %{
+           changeset.data
+           | id: UUID.uuid4(),
+             inserted_at: DateTime.utc_now()
+         }}
 
       false ->
         {:error, changeset}
@@ -22,6 +23,7 @@ end
 
 defmodule BotArmyLlm.TokenAccountingTest do
   use ExUnit.Case, async: false
+  @moduletag :core
 
   alias BotArmyLlm.TokenAccounting
 
@@ -155,13 +157,19 @@ defmodule BotArmyLlm.TokenAccountingTest do
       end)
 
       # Stored provider may still say anthropic while model id is an OpenRouter/Minimax slug
-      cost = TokenAccounting.estimate_cost("anthropic", "minimax/minimax-m2", 1_000_000, 1_000_000)
+      cost =
+        TokenAccounting.estimate_cost("anthropic", "minimax/minimax-m2", 1_000_000, 1_000_000)
 
       assert Float.round(cost, 2) == 3.0
     end
 
     test "OpenRouter defaults to zero without overlay" do
-      assert TokenAccounting.estimate_cost("openrouter", "some/vendor-model", 1_000_000, 1_000_000) == 0.0
+      assert TokenAccounting.estimate_cost(
+               "openrouter",
+               "some/vendor-model",
+               1_000_000,
+               1_000_000
+             ) == 0.0
     end
   end
 

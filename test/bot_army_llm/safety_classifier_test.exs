@@ -1,5 +1,6 @@
 defmodule BotArmyLlm.SafetyClassifierTest do
   use ExUnit.Case
+  @moduletag :core
 
   alias BotArmyLlm.SafetyClassifier
 
@@ -47,17 +48,23 @@ defmodule BotArmyLlm.SafetyClassifierTest do
     end
 
     test "detects RSA private key format" do
-      text = "-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\n-----END RSA PRIVATE KEY-----"
+      text =
+        "-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\n-----END RSA PRIVATE KEY-----"
+
       assert SafetyClassifier.classify(text) == :contains_sensitive
     end
 
     test "detects OpenSSH private key format" do
-      text = "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXk\n-----END OPENSSH PRIVATE KEY-----"
+      text =
+        "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXk\n-----END OPENSSH PRIVATE KEY-----"
+
       assert SafetyClassifier.classify(text) == :contains_sensitive
     end
 
     test "detects PGP private key format" do
-      text = "-----BEGIN PGP PRIVATE KEY BLOCK-----\nVersion: GnuPG\n-----END PGP PRIVATE KEY BLOCK-----"
+      text =
+        "-----BEGIN PGP PRIVATE KEY BLOCK-----\nVersion: GnuPG\n-----END PGP PRIVATE KEY BLOCK-----"
+
       assert SafetyClassifier.classify(text) == :contains_sensitive
     end
 
@@ -74,7 +81,9 @@ defmodule BotArmyLlm.SafetyClassifierTest do
     end
 
     test "detects token assignment" do
-      text = "token = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c'"
+      text =
+        "token = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c'"
+
       assert SafetyClassifier.classify(text) == :contains_sensitive
     end
 
@@ -229,6 +238,7 @@ defmodule BotArmyLlm.SafetyClassifierTest do
         "Hello, " <> name
       end
       """
+
       assert SafetyClassifier.classify(text) == :safe
     end
 
@@ -254,7 +264,8 @@ defmodule BotArmyLlm.SafetyClassifierTest do
     end
 
     test "returns false for sensitive content" do
-      assert SafetyClassifier.safe_for_cloud?("My API key is sk-proj-abcdefghijklmnopqrst") == false
+      assert SafetyClassifier.safe_for_cloud?("My API key is sk-proj-abcdefghijklmnopqrst") ==
+               false
     end
 
     test "returns false for unknown content" do

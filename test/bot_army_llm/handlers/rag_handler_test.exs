@@ -3,13 +3,17 @@ defmodule BotArmyLlm.RAGHandlerTestLlmClientMock do
 
   def embed(text, _model \\ nil) when is_binary(text) do
     # Return the configured response or default
-    Process.get({:rag_handler_test, :embed_response}, {:ok, %{
-      embedding: List.duplicate(0.1, 768),
-      model_used: "nomic-embed-text",
-      tokens_input: 10,
-      tokens_output: 0,
-      latency_ms: 50
-    }})
+    Process.get(
+      {:rag_handler_test, :embed_response},
+      {:ok,
+       %{
+         embedding: List.duplicate(0.1, 768),
+         model_used: "nomic-embed-text",
+         tokens_input: 10,
+         tokens_output: 0,
+         latency_ms: 50
+       }}
+    )
   end
 end
 
@@ -21,15 +25,16 @@ defmodule BotArmyLlm.RAGHandlerTestVectorStoreMock do
   end
 
   def search(_query_vector, _opts \\ []) do
-    {:ok, [
-      %{
-        document_id: "doc-1",
-        document_type: "job_description",
-        source: "bot_army_job",
-        content: "Senior Elixir engineer",
-        similarity: 0.95
-      }
-    ]}
+    {:ok,
+     [
+       %{
+         document_id: "doc-1",
+         document_type: "job_description",
+         source: "bot_army_job",
+         content: "Senior Elixir engineer",
+         similarity: 0.95
+       }
+     ]}
   end
 
   def delete_by_document_id(_document_id) do
@@ -43,6 +48,7 @@ end
 
 defmodule BotArmyLlm.Handlers.RAGHandlerTest do
   use ExUnit.Case, async: false
+  @moduletag :handlers
 
   alias BotArmyLlm.Handlers.RAGHandler
 
@@ -65,13 +71,17 @@ defmodule BotArmyLlm.Handlers.RAGHandlerTest do
       message = valid_index_message()
 
       # Configure mock to return an embedding
-      Process.put({:rag_handler_test, :embed_response}, {:ok, %{
-        embedding: List.duplicate(0.1, 768),
-        model_used: "nomic-embed-text",
-        tokens_input: 10,
-        tokens_output: 0,
-        latency_ms: 50
-      }})
+      Process.put(
+        {:rag_handler_test, :embed_response},
+        {:ok,
+         %{
+           embedding: List.duplicate(0.1, 768),
+           model_used: "nomic-embed-text",
+           tokens_input: 10,
+           tokens_output: 0,
+           latency_ms: 50
+         }}
+      )
 
       assert :ok = RAGHandler.handle_index(message)
     end
@@ -79,13 +89,17 @@ defmodule BotArmyLlm.Handlers.RAGHandlerTest do
     test "validates required document_id field" do
       message = valid_index_message() |> put_in(["payload", "document_id"], nil)
 
-      Process.put({:rag_handler_test, :embed_response}, {:ok, %{
-        embedding: List.duplicate(0.1, 768),
-        model_used: "nomic-embed-text",
-        tokens_input: 10,
-        tokens_output: 0,
-        latency_ms: 50
-      }})
+      Process.put(
+        {:rag_handler_test, :embed_response},
+        {:ok,
+         %{
+           embedding: List.duplicate(0.1, 768),
+           model_used: "nomic-embed-text",
+           tokens_input: 10,
+           tokens_output: 0,
+           latency_ms: 50
+         }}
+      )
 
       assert :ok = RAGHandler.handle_index(message)
     end
@@ -93,13 +107,17 @@ defmodule BotArmyLlm.Handlers.RAGHandlerTest do
     test "validates required document_type field" do
       message = valid_index_message() |> put_in(["payload", "document_type"], nil)
 
-      Process.put({:rag_handler_test, :embed_response}, {:ok, %{
-        embedding: List.duplicate(0.1, 768),
-        model_used: "nomic-embed-text",
-        tokens_input: 10,
-        tokens_output: 0,
-        latency_ms: 50
-      }})
+      Process.put(
+        {:rag_handler_test, :embed_response},
+        {:ok,
+         %{
+           embedding: List.duplicate(0.1, 768),
+           model_used: "nomic-embed-text",
+           tokens_input: 10,
+           tokens_output: 0,
+           latency_ms: 50
+         }}
+      )
 
       assert :ok = RAGHandler.handle_index(message)
     end
@@ -107,13 +125,17 @@ defmodule BotArmyLlm.Handlers.RAGHandlerTest do
     test "validates required content field" do
       message = valid_index_message() |> put_in(["payload", "content"], nil)
 
-      Process.put({:rag_handler_test, :embed_response}, {:ok, %{
-        embedding: List.duplicate(0.1, 768),
-        model_used: "nomic-embed-text",
-        tokens_input: 10,
-        tokens_output: 0,
-        latency_ms: 50
-      }})
+      Process.put(
+        {:rag_handler_test, :embed_response},
+        {:ok,
+         %{
+           embedding: List.duplicate(0.1, 768),
+           model_used: "nomic-embed-text",
+           tokens_input: 10,
+           tokens_output: 0,
+           latency_ms: 50
+         }}
+      )
 
       assert :ok = RAGHandler.handle_index(message)
     end
@@ -130,13 +152,17 @@ defmodule BotArmyLlm.Handlers.RAGHandlerTest do
     test "uses custom model if provided" do
       message = valid_index_message() |> put_in(["payload", "model"], "custom-embed")
 
-      Process.put({:rag_handler_test, :embed_response}, {:ok, %{
-        embedding: List.duplicate(0.1, 768),
-        model_used: "custom-embed",
-        tokens_input: 10,
-        tokens_output: 0,
-        latency_ms: 50
-      }})
+      Process.put(
+        {:rag_handler_test, :embed_response},
+        {:ok,
+         %{
+           embedding: List.duplicate(0.1, 768),
+           model_used: "custom-embed",
+           tokens_input: 10,
+           tokens_output: 0,
+           latency_ms: 50
+         }}
+      )
 
       assert :ok = RAGHandler.handle_index(message)
     end
@@ -146,13 +172,17 @@ defmodule BotArmyLlm.Handlers.RAGHandlerTest do
     test "successfully searches for similar documents" do
       message = valid_search_message()
 
-      Process.put({:rag_handler_test, :embed_response}, {:ok, %{
-        embedding: List.duplicate(0.1, 768),
-        model_used: "nomic-embed-text",
-        tokens_input: 10,
-        tokens_output: 0,
-        latency_ms: 50
-      }})
+      Process.put(
+        {:rag_handler_test, :embed_response},
+        {:ok,
+         %{
+           embedding: List.duplicate(0.1, 768),
+           model_used: "nomic-embed-text",
+           tokens_input: 10,
+           tokens_output: 0,
+           latency_ms: 50
+         }}
+      )
 
       assert :ok = RAGHandler.handle_search(message)
     end
@@ -160,13 +190,17 @@ defmodule BotArmyLlm.Handlers.RAGHandlerTest do
     test "validates required query field" do
       message = valid_search_message() |> put_in(["payload", "query"], nil)
 
-      Process.put({:rag_handler_test, :embed_response}, {:ok, %{
-        embedding: List.duplicate(0.1, 768),
-        model_used: "nomic-embed-text",
-        tokens_input: 10,
-        tokens_output: 0,
-        latency_ms: 50
-      }})
+      Process.put(
+        {:rag_handler_test, :embed_response},
+        {:ok,
+         %{
+           embedding: List.duplicate(0.1, 768),
+           model_used: "nomic-embed-text",
+           tokens_input: 10,
+           tokens_output: 0,
+           latency_ms: 50
+         }}
+      )
 
       assert :ok = RAGHandler.handle_search(message)
     end
@@ -182,13 +216,17 @@ defmodule BotArmyLlm.Handlers.RAGHandlerTest do
     test "accepts optional limit parameter" do
       message = valid_search_message() |> put_in(["payload", "limit"], 10)
 
-      Process.put({:rag_handler_test, :embed_response}, {:ok, %{
-        embedding: List.duplicate(0.1, 768),
-        model_used: "nomic-embed-text",
-        tokens_input: 10,
-        tokens_output: 0,
-        latency_ms: 50
-      }})
+      Process.put(
+        {:rag_handler_test, :embed_response},
+        {:ok,
+         %{
+           embedding: List.duplicate(0.1, 768),
+           model_used: "nomic-embed-text",
+           tokens_input: 10,
+           tokens_output: 0,
+           latency_ms: 50
+         }}
+      )
 
       assert :ok = RAGHandler.handle_search(message)
     end
@@ -196,13 +234,17 @@ defmodule BotArmyLlm.Handlers.RAGHandlerTest do
     test "accepts optional document_type filter" do
       message = valid_search_message() |> put_in(["payload", "document_type"], "job_description")
 
-      Process.put({:rag_handler_test, :embed_response}, {:ok, %{
-        embedding: List.duplicate(0.1, 768),
-        model_used: "nomic-embed-text",
-        tokens_input: 10,
-        tokens_output: 0,
-        latency_ms: 50
-      }})
+      Process.put(
+        {:rag_handler_test, :embed_response},
+        {:ok,
+         %{
+           embedding: List.duplicate(0.1, 768),
+           model_used: "nomic-embed-text",
+           tokens_input: 10,
+           tokens_output: 0,
+           latency_ms: 50
+         }}
+      )
 
       assert :ok = RAGHandler.handle_search(message)
     end
@@ -210,13 +252,17 @@ defmodule BotArmyLlm.Handlers.RAGHandlerTest do
     test "accepts optional source filter" do
       message = valid_search_message() |> put_in(["payload", "source"], "bot_army_job")
 
-      Process.put({:rag_handler_test, :embed_response}, {:ok, %{
-        embedding: List.duplicate(0.1, 768),
-        model_used: "nomic-embed-text",
-        tokens_input: 10,
-        tokens_output: 0,
-        latency_ms: 50
-      }})
+      Process.put(
+        {:rag_handler_test, :embed_response},
+        {:ok,
+         %{
+           embedding: List.duplicate(0.1, 768),
+           model_used: "nomic-embed-text",
+           tokens_input: 10,
+           tokens_output: 0,
+           latency_ms: 50
+         }}
+      )
 
       assert :ok = RAGHandler.handle_search(message)
     end

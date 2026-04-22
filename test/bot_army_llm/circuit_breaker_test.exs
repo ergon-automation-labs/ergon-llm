@@ -1,5 +1,6 @@
 defmodule BotArmyLlm.CircuitBreakerTest do
   use ExUnit.Case, async: false
+  @moduletag :core
 
   alias BotArmyLlm.CircuitBreaker
 

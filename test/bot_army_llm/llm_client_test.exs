@@ -1,5 +1,6 @@
 defmodule BotArmyLlm.LlmClientTest do
   use ExUnit.Case
+  @moduletag :client
   import ExUnit.CaptureLog
 
   alias BotArmyLlm.{ComplexityScorer, LlmClient, SafetyClassifier}
@@ -69,6 +70,7 @@ defmodule BotArmyLlm.LlmClientTest do
   end
 
   describe "SafetyClassifier integration in complete/2" do
+    @describetag :integration
     test "safe text routes through normal provider chain" do
       safe_text = "What is the capital of France?"
 
@@ -92,9 +94,10 @@ defmodule BotArmyLlm.LlmClientTest do
       # The prompt should be blocked from cloud providers
       # We can verify this by checking that only :ollama is attempted
       # In practice, Ollama will fail, but the safety check prevents cloud attempts
-      log = capture_log(fn ->
-        _result = LlmClient.complete(sensitive_text)
-      end)
+      log =
+        capture_log(fn ->
+          _result = LlmClient.complete(sensitive_text)
+        end)
 
       # Should log that routing is to local-only
       assert String.contains?(log, "local-only")
@@ -114,9 +117,10 @@ defmodule BotArmyLlm.LlmClientTest do
 
         assert SafetyClassifier.safe_for_cloud?(sensitive_text) == false
 
-        log = capture_log(fn ->
-          _result = LlmClient.complete(sensitive_text)
-        end)
+        log =
+          capture_log(fn ->
+            _result = LlmClient.complete(sensitive_text)
+          end)
 
         assert String.contains?(log, "local-only")
       after
@@ -134,13 +138,15 @@ defmodule BotArmyLlm.LlmClientTest do
       Application.put_env(:bot_army_llm, :ollama_health_checker, MockHealthCheckerSensitiveKey)
 
       try do
-        sensitive_text = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQE\n-----END PRIVATE KEY-----"
+        sensitive_text =
+          "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQE\n-----END PRIVATE KEY-----"
 
         assert SafetyClassifier.safe_for_cloud?(sensitive_text) == false
 
-        log = capture_log(fn ->
-          _result = LlmClient.complete(sensitive_text)
-        end)
+        log =
+          capture_log(fn ->
+            _result = LlmClient.complete(sensitive_text)
+          end)
 
         assert String.contains?(log, "local-only")
       after
@@ -150,6 +156,7 @@ defmodule BotArmyLlm.LlmClientTest do
   end
 
   describe "SafetyClassifier integration in complete_messages/2" do
+    @describetag :integration
     test "messages with safe content route normally" do
       messages = [
         %{"role" => "user", "content" => "What is the weather?"}
@@ -175,9 +182,10 @@ defmodule BotArmyLlm.LlmClientTest do
           %{"role" => "user", "content" => "Analyze my credentials: password=super_secret_123"}
         ]
 
-        log = capture_log(fn ->
-          _result = LlmClient.complete_messages(messages)
-        end)
+        log =
+          capture_log(fn ->
+            _result = LlmClient.complete_messages(messages)
+          end)
 
         assert String.contains?(log, "local-only")
         assert String.contains?(log, "multi-turn")
@@ -201,9 +209,10 @@ defmodule BotArmyLlm.LlmClientTest do
           %{"role" => "user", "content" => "secret_key = sk-ant-abc123"}
         ]
 
-        log = capture_log(fn ->
-          _result = LlmClient.complete_messages(messages)
-        end)
+        log =
+          capture_log(fn ->
+            _result = LlmClient.complete_messages(messages)
+          end)
 
         assert String.contains?(log, "local-only")
       after
@@ -213,34 +222,51 @@ defmodule BotArmyLlm.LlmClientTest do
   end
 
   describe "SafetyClassifier integration in complete_vision/2" do
+    @describetag :integration
     test "vision with safe prompt routes normally" do
-      log = capture_log(fn ->
-        _result = LlmClient.complete_vision(nil, "https://example.com/image.png", "Describe this image")
-      end)
+      log =
+        capture_log(fn ->
+          _result =
+            LlmClient.complete_vision(nil, "https://example.com/image.png", "Describe this image")
+        end)
 
       # Should not log local-only for safe prompt
       assert !String.contains?(log, "local-only") || String.contains?(log, "no_image_provided")
     end
 
     test "vision with sensitive prompt blocks cloud routing" do
-      log = capture_log(fn ->
-        _result = LlmClient.complete_vision(nil, "https://example.com/image.png", "Analyze password=secret123 from this image")
-      end)
+      log =
+        capture_log(fn ->
+          _result =
+            LlmClient.complete_vision(
+              nil,
+              "https://example.com/image.png",
+              "Analyze password=secret123 from this image"
+            )
+        end)
 
       assert String.contains?(log, "local-only")
       assert String.contains?(log, "vision")
     end
 
     test "vision with API key in prompt blocks cloud" do
-      log = capture_log(fn ->
-        _result = LlmClient.complete_vision(nil, "https://example.com/image.png", "My token is sk-proj-1234567890123456789")
-      end)
+      log =
+        capture_log(fn ->
+          _result =
+            LlmClient.complete_vision(
+              nil,
+              "https://example.com/image.png",
+              "My token is sk-proj-1234567890123456789"
+            )
+        end)
 
       assert String.contains?(log, "local-only")
     end
   end
 
   describe "SafetyClassifier integration in embed/2" do
+    @describetag :integration
+    @tag :integration
     test "safe text can route to both ollama and openrouter" do
       safe_text = "The quick brown fox jumps over the lazy dog"
 
@@ -257,9 +283,10 @@ defmodule BotArmyLlm.LlmClientTest do
 
       assert SafetyClassifier.safe_for_cloud?(sensitive_text) == false
 
-      log = capture_log(fn ->
-        _result = LlmClient.embed(sensitive_text)
-      end)
+      log =
+        capture_log(fn ->
+          _result = LlmClient.embed(sensitive_text)
+        end)
 
       assert String.contains?(log, "local-only")
       assert String.contains?(log, "embed")
@@ -270,9 +297,10 @@ defmodule BotArmyLlm.LlmClientTest do
 
       assert SafetyClassifier.safe_for_cloud?(sensitive_text) == false
 
-      log = capture_log(fn ->
-        _result = LlmClient.embed(sensitive_text)
-      end)
+      log =
+        capture_log(fn ->
+          _result = LlmClient.embed(sensitive_text)
+        end)
 
       assert String.contains?(log, "local-only")
     end
@@ -282,9 +310,10 @@ defmodule BotArmyLlm.LlmClientTest do
 
       assert SafetyClassifier.safe_for_cloud?(sensitive_text) == false
 
-      log = capture_log(fn ->
-        _result = LlmClient.embed(sensitive_text)
-      end)
+      log =
+        capture_log(fn ->
+          _result = LlmClient.embed(sensitive_text)
+        end)
 
       assert String.contains?(log, "local-only")
     end
@@ -307,9 +336,10 @@ defmodule BotArmyLlm.LlmClientTest do
       try do
         light_prompt = "What is 2+2?"
 
-        log = capture_log(fn ->
-          _result = LlmClient.complete(light_prompt)
-        end)
+        log =
+          capture_log(fn ->
+            _result = LlmClient.complete(light_prompt)
+          end)
 
         # Should not log "under load" message when load is acceptable
         refute String.contains?(log, "under load")
@@ -330,9 +360,10 @@ defmodule BotArmyLlm.LlmClientTest do
       try do
         light_prompt = "What is the weather?"
 
-        log = capture_log(fn ->
-          _result = LlmClient.complete(light_prompt)
-        end)
+        log =
+          capture_log(fn ->
+            _result = LlmClient.complete(light_prompt)
+          end)
 
         # Should log "under load" message indicating Ollama was skipped
         assert String.contains?(log, "under load")
@@ -349,15 +380,20 @@ defmodule BotArmyLlm.LlmClientTest do
         def node_status, do: []
       end
 
-      Application.put_env(:bot_army_llm, :ollama_health_checker, MockHealthCheckerHighLoadSensitive)
+      Application.put_env(
+        :bot_army_llm,
+        :ollama_health_checker,
+        MockHealthCheckerHighLoadSensitive
+      )
 
       try do
         # Sensitive prompt with API key
         sensitive_prompt = "My API key is sk-proj-abc123def456ghi789jkl012mnopqr"
 
-        log = capture_log(fn ->
-          _result = LlmClient.complete(sensitive_prompt)
-        end)
+        log =
+          capture_log(fn ->
+            _result = LlmClient.complete(sensitive_prompt)
+          end)
 
         # Should log local-only routing (safety overrides load)
         assert String.contains?(log, "local-only")

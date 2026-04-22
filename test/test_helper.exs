@@ -1,3 +1,4 @@
+ExUnit.configure(exclude: [:integration, :load, :nats_live])
 ExUnit.start()
 
 # Set alternative metrics port for tests to avoid port conflicts

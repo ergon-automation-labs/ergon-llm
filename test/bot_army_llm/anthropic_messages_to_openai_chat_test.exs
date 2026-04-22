@@ -1,5 +1,6 @@
 defmodule BotArmyLlm.AnthropicMessagesToOpenaiChatTest do
   use ExUnit.Case, async: true
+  @moduletag :core
 
   alias BotArmyLlm.AnthropicMessagesToOpenaiChat
 
@@ -11,7 +12,8 @@ defmodule BotArmyLlm.AnthropicMessagesToOpenaiChatTest do
       ]
     }
 
-    assert {:ok, %{messages: msgs, tools: []}} = AnthropicMessagesToOpenaiChat.to_chat_completion_request(payload)
+    assert {:ok, %{messages: msgs, tools: []}} =
+             AnthropicMessagesToOpenaiChat.to_chat_completion_request(payload)
 
     assert msgs == [
              %{"role" => "user", "content" => "hi"},
@@ -26,7 +28,10 @@ defmodule BotArmyLlm.AnthropicMessagesToOpenaiChatTest do
         %{
           "name" => "get_weather",
           "description" => "Weather",
-          "input_schema" => %{"type" => "object", "properties" => %{"city" => %{"type" => "string"}}}
+          "input_schema" => %{
+            "type" => "object",
+            "properties" => %{"city" => %{"type" => "string"}}
+          }
         }
       ]
     }
@@ -46,13 +51,20 @@ defmodule BotArmyLlm.AnthropicMessagesToOpenaiChatTest do
           "role" => "assistant",
           "content" => [
             %{"type" => "text", "text" => "I'll check."},
-            %{"type" => "tool_use", "id" => "toolu_1", "name" => "get_weather", "input" => %{"city" => "Paris"}}
+            %{
+              "type" => "tool_use",
+              "id" => "toolu_1",
+              "name" => "get_weather",
+              "input" => %{"city" => "Paris"}
+            }
           ]
         }
       ]
     }
 
-    assert {:ok, %{messages: [m], tools: []}} = AnthropicMessagesToOpenaiChat.to_chat_completion_request(payload)
+    assert {:ok, %{messages: [m], tools: []}} =
+             AnthropicMessagesToOpenaiChat.to_chat_completion_request(payload)
+
     assert m["role"] == "assistant"
     assert m["content"] == "I'll check."
     [tc] = m["tool_calls"]
@@ -73,7 +85,9 @@ defmodule BotArmyLlm.AnthropicMessagesToOpenaiChatTest do
       ]
     }
 
-    assert {:ok, %{messages: [t], tools: []}} = AnthropicMessagesToOpenaiChat.to_chat_completion_request(payload)
+    assert {:ok, %{messages: [t], tools: []}} =
+             AnthropicMessagesToOpenaiChat.to_chat_completion_request(payload)
+
     assert t["role"] == "tool"
     assert t["tool_call_id"] == "toolu_1"
     assert t["content"] == "sunny"

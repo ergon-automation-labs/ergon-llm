@@ -1,5 +1,6 @@
 defmodule BotArmyLlm.Handlers.InferenceHandlerTest do
   use ExUnit.Case, async: false
+  @moduletag :handlers
 
   describe "handle_chain/1" do
     setup do
@@ -12,27 +13,33 @@ defmodule BotArmyLlm.Handlers.InferenceHandlerTest do
       message = valid_chain_message()
 
       # Configure mock to return step outputs
-      Process.put({:llm_client_mock, :response}, {:ok, %{
-        completion: "output step 1",
-        model_used: "test-model",
-        tokens_input: 5,
-        tokens_output: 10,
-        latency_ms: 100
-      }})
+      Process.put(
+        {:llm_client_mock, :response},
+        {:ok,
+         %{
+           completion: "output step 1",
+           model_used: "test-model",
+           tokens_input: 5,
+           tokens_output: 10,
+           latency_ms: 100
+         }}
+      )
 
       assert :ok = BotArmyLlm.Handlers.InferenceHandler.handle_chain(message)
     end
 
     test "validates required steps field" do
-      message = valid_chain_message()
-               |> put_in(["payload", "steps"], nil)
+      message =
+        valid_chain_message()
+        |> put_in(["payload", "steps"], nil)
 
       assert :ok = BotArmyLlm.Handlers.InferenceHandler.handle_chain(message)
     end
 
     test "validates required initial_input field" do
-      message = valid_chain_message()
-               |> put_in(["payload", "initial_input"], nil)
+      message =
+        valid_chain_message()
+        |> put_in(["payload", "initial_input"], nil)
 
       assert :ok = BotArmyLlm.Handlers.InferenceHandler.handle_chain(message)
     end
@@ -67,13 +74,17 @@ defmodule BotArmyLlm.Handlers.InferenceHandlerTest do
         }
       }
 
-      Process.put({:llm_client_mock, :response}, {:ok, %{
-        completion: "processed",
-        model_used: "test",
-        tokens_input: 5,
-        tokens_output: 10,
-        latency_ms: 100
-      }})
+      Process.put(
+        {:llm_client_mock, :response},
+        {:ok,
+         %{
+           completion: "processed",
+           model_used: "test",
+           tokens_input: 5,
+           tokens_output: 10,
+           latency_ms: 100
+         }}
+      )
 
       assert :ok = BotArmyLlm.Handlers.InferenceHandler.handle_chain(message)
     end
@@ -96,36 +107,49 @@ defmodule BotArmyLlm.Handlers.InferenceHandlerTest do
       message = valid_converse_message()
 
       # Mock LLM response
-      Process.put({:llm_client_mock, :response}, {:ok, %{
-        completion: "Hello! How can I help?",
-        model_used: "test-model",
-        tokens_input: 5,
-        tokens_output: 12,
-        latency_ms: 100
-      }})
+      Process.put(
+        {:llm_client_mock, :response},
+        {:ok,
+         %{
+           completion: "Hello! How can I help?",
+           model_used: "test-model",
+           tokens_input: 5,
+           tokens_output: 12,
+           latency_ms: 100
+         }}
+      )
 
       # Mock conversation creation
-      Process.put({:conversation_store_mock, :create_response}, {:ok, UUID.uuid4(), %{
-        "session_id" => UUID.uuid4(),
-        "messages" => [],
-        "model" => "auto"
-      }})
+      Process.put(
+        {:conversation_store_mock, :create_response},
+        {:ok, UUID.uuid4(),
+         %{
+           "session_id" => UUID.uuid4(),
+           "messages" => [],
+           "model" => "auto"
+         }}
+      )
 
       # Mock message append
-      Process.put({:conversation_store_mock, :append_response}, {:ok, %{
-        "session_id" => UUID.uuid4(),
-        "messages" => [
-          %{"role" => "user", "content" => "Hi there"},
-          %{"role" => "assistant", "content" => "Hello! How can I help?"}
-        ]
-      }})
+      Process.put(
+        {:conversation_store_mock, :append_response},
+        {:ok,
+         %{
+           "session_id" => UUID.uuid4(),
+           "messages" => [
+             %{"role" => "user", "content" => "Hi there"},
+             %{"role" => "assistant", "content" => "Hello! How can I help?"}
+           ]
+         }}
+      )
 
       assert :ok = BotArmyLlm.Handlers.InferenceHandler.handle_converse(message)
     end
 
     test "validates required message field" do
-      message = valid_converse_message()
-               |> put_in(["payload", "message"], nil)
+      message =
+        valid_converse_message()
+        |> put_in(["payload", "message"], nil)
 
       assert :ok = BotArmyLlm.Handlers.InferenceHandler.handle_converse(message)
     end
@@ -141,23 +165,35 @@ defmodule BotArmyLlm.Handlers.InferenceHandlerTest do
     test "creates new conversation when no session_id provided" do
       message = valid_converse_message() |> Map.update!("payload", &Map.delete(&1, "session_id"))
 
-      Process.put({:llm_client_mock, :response}, {:ok, %{
-        completion: "Reply",
-        model_used: "test",
-        tokens_input: 5,
-        tokens_output: 10,
-        latency_ms: 100
-      }})
+      Process.put(
+        {:llm_client_mock, :response},
+        {:ok,
+         %{
+           completion: "Reply",
+           model_used: "test",
+           tokens_input: 5,
+           tokens_output: 10,
+           latency_ms: 100
+         }}
+      )
 
-      Process.put({:conversation_store_mock, :create_response}, {:ok, UUID.uuid4(), %{
-        "messages" => []
-      }})
+      Process.put(
+        {:conversation_store_mock, :create_response},
+        {:ok, UUID.uuid4(),
+         %{
+           "messages" => []
+         }}
+      )
 
-      Process.put({:conversation_store_mock, :append_response}, {:ok, %{
-        "messages" => [
-          %{"role" => "user", "content" => "test"}
-        ]
-      }})
+      Process.put(
+        {:conversation_store_mock, :append_response},
+        {:ok,
+         %{
+           "messages" => [
+             %{"role" => "user", "content" => "test"}
+           ]
+         }}
+      )
 
       assert :ok = BotArmyLlm.Handlers.InferenceHandler.handle_converse(message)
     end

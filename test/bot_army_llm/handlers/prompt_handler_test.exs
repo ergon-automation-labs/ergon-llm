@@ -1,13 +1,14 @@
 defmodule BotArmyLlm.LlmClientMock do
   @moduledoc "Mock LLM client for testing"
 
-  @default_response {:ok, %{
-    completion: "Test response",
-    model_used: "test-model",
-    tokens_input: 5,
-    tokens_output: 12,
-    latency_ms: 100
-  }}
+  @default_response {:ok,
+                     %{
+                       completion: "Test response",
+                       model_used: "test-model",
+                       tokens_input: 5,
+                       tokens_output: 12,
+                       latency_ms: 100
+                     }}
 
   def complete(text, _opts \\ []) when is_binary(text) do
     # Return the configured response or default
@@ -20,19 +21,21 @@ defmodule BotArmyLlm.PromptHandlerTestRepoMock do
 
   def insert(struct_or_changeset) do
     # Handle both raw structs and changesets
-    changeset = case struct_or_changeset do
-      %Ecto.Changeset{} = cs -> cs
-      struct -> Ecto.Changeset.change(struct)
-    end
+    changeset =
+      case struct_or_changeset do
+        %Ecto.Changeset{} = cs -> cs
+        struct -> Ecto.Changeset.change(struct)
+      end
 
     case changeset.valid? do
       true ->
-        {:ok, %{
-          changeset.data
-          | id: UUID.uuid4(),
-            inserted_at: DateTime.utc_now(),
-            updated_at: DateTime.utc_now()
-        }}
+        {:ok,
+         %{
+           changeset.data
+           | id: UUID.uuid4(),
+             inserted_at: DateTime.utc_now(),
+             updated_at: DateTime.utc_now()
+         }}
 
       false ->
         {:error, changeset}
@@ -42,6 +45,7 @@ end
 
 defmodule BotArmyLlm.Handlers.PromptHandlerTest do
   use ExUnit.Case, async: false
+  @moduletag :handlers
 
   setup do
     # Set the mock LLM client in Application config
@@ -101,9 +105,12 @@ defmodule BotArmyLlm.Handlers.PromptHandlerTest do
 
       for prompt_text <- ["What is Elixir?", "How are you?", "Hello world"] do
         prompt_id = create_test_prompt()
-        message = valid_submit_message()
+
+        message =
+          valid_submit_message()
           |> put_in(["payload", "text"], prompt_text)
           |> put_in(["payload", "prompt_id"], prompt_id)
+
         assert :ok = BotArmyLlm.Handlers.PromptHandler.handle_submit(message)
       end
     end
@@ -148,13 +155,17 @@ defmodule BotArmyLlm.Handlers.PromptHandlerTest do
   end
 
   defp stub_llm_success do
-    Process.put({:llm_client_mock, :response}, {:ok, %{
-      completion: "Elixir is a functional programming language.",
-      model_used: "test-model",
-      tokens_input: 5,
-      tokens_output: 12,
-      latency_ms: 100
-    }})
+    Process.put(
+      {:llm_client_mock, :response},
+      {:ok,
+       %{
+         completion: "Elixir is a functional programming language.",
+         model_used: "test-model",
+         tokens_input: 5,
+         tokens_output: 12,
+         latency_ms: 100
+       }}
+    )
   end
 
   defp stub_llm_failure do

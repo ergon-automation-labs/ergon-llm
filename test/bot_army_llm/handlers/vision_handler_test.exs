@@ -1,5 +1,6 @@
 defmodule BotArmyLlm.Handlers.VisionHandlerTest do
   use ExUnit.Case, async: false
+  @moduletag :handlers
 
   setup do
     Application.put_env(:bot_army_llm, :llm_client, TestVisionLlmClientMock)
@@ -24,13 +25,17 @@ defmodule BotArmyLlm.Handlers.VisionHandlerTest do
         }
       }
 
-      Process.put({:vision_llm_mock, :response}, {:ok, %{
-        completion: "I see a dog in the image",
-        model_used: "vision-model",
-        tokens_input: 5,
-        tokens_output: 10,
-        latency_ms: 500
-      }})
+      Process.put(
+        {:vision_llm_mock, :response},
+        {:ok,
+         %{
+           completion: "I see a dog in the image",
+           model_used: "vision-model",
+           tokens_input: 5,
+           tokens_output: 10,
+           latency_ms: 500
+         }}
+      )
 
       assert :ok = BotArmyLlm.Handlers.VisionHandler.handle_analyze(message)
     end
@@ -51,13 +56,17 @@ defmodule BotArmyLlm.Handlers.VisionHandlerTest do
         }
       }
 
-      Process.put({:vision_llm_mock, :response}, {:ok, %{
-        completion: ~s({"x": 100, "y": 200, "detected": true}),
-        model_used: "vision-model",
-        tokens_input: 8,
-        tokens_output: 15,
-        latency_ms: 600
-      }})
+      Process.put(
+        {:vision_llm_mock, :response},
+        {:ok,
+         %{
+           completion: ~s({"x": 100, "y": 200, "detected": true}),
+           model_used: "vision-model",
+           tokens_input: 8,
+           tokens_output: 15,
+           latency_ms: 600
+         }}
+      )
 
       assert :ok = BotArmyLlm.Handlers.VisionHandler.handle_analyze(message)
     end
@@ -79,13 +88,17 @@ defmodule BotArmyLlm.Handlers.VisionHandlerTest do
       }
 
       # Returns plain text, not JSON - should still return raw analysis
-      Process.put({:vision_llm_mock, :response}, {:ok, %{
-        completion: "A beautiful sunset over the ocean",
-        model_used: "vision-model",
-        tokens_input: 5,
-        tokens_output: 12,
-        latency_ms: 400
-      }})
+      Process.put(
+        {:vision_llm_mock, :response},
+        {:ok,
+         %{
+           completion: "A beautiful sunset over the ocean",
+           model_used: "vision-model",
+           tokens_input: 5,
+           tokens_output: 12,
+           latency_ms: 400
+         }}
+      )
 
       assert :ok = BotArmyLlm.Handlers.VisionHandler.handle_analyze(message)
     end
@@ -142,13 +155,17 @@ defmodule BotArmyLlm.Handlers.VisionHandlerTest do
         }
       }
 
-      Process.put({:vision_llm_mock, :response}, {:ok, %{
-        completion: "This is a photo of a building",
-        model_used: "vision-model",
-        tokens_input: 5,
-        tokens_output: 8,
-        latency_ms: 350
-      }})
+      Process.put(
+        {:vision_llm_mock, :response},
+        {:ok,
+         %{
+           completion: "This is a photo of a building",
+           model_used: "vision-model",
+           tokens_input: 5,
+           tokens_output: 8,
+           latency_ms: 350
+         }}
+      )
 
       assert :ok = BotArmyLlm.Handlers.VisionHandler.handle_analyze(message)
     end
@@ -168,13 +185,17 @@ defmodule BotArmyLlm.Handlers.VisionHandlerTest do
         }
       }
 
-      Process.put({:vision_llm_mock, :response}, {:ok, %{
-        completion: "Objects detected: dog, ball, tree",
-        model_used: "vision-model",
-        tokens_input: 3,
-        tokens_output: 8,
-        latency_ms: 450
-      }})
+      Process.put(
+        {:vision_llm_mock, :response},
+        {:ok,
+         %{
+           completion: "Objects detected: dog, ball, tree",
+           model_used: "vision-model",
+           tokens_input: 3,
+           tokens_output: 8,
+           latency_ms: 450
+         }}
+      )
 
       assert :ok = BotArmyLlm.Handlers.VisionHandler.handle_analyze(message)
     end

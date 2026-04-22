@@ -1,5 +1,6 @@
 defmodule BotArmyLlm.AnthropicOllamaAdapterTest do
   use ExUnit.Case, async: true
+  @moduletag :core
 
   alias BotArmyLlm.AnthropicOllamaAdapter
 
@@ -30,7 +31,8 @@ defmodule BotArmyLlm.AnthropicOllamaAdapterTest do
   end
 
   test "anthropic_json_from_ollama_chat/2 wraps Ollama response" do
-    ollama = ~s({"model":"m","message":{"role":"assistant","content":"yo"},"eval_count":3,"prompt_eval_count":2})
+    ollama =
+      ~s({"model":"m","message":{"role":"assistant","content":"yo"},"eval_count":3,"prompt_eval_count":2})
 
     assert {:ok, json} = AnthropicOllamaAdapter.anthropic_json_from_ollama_chat(ollama, "m")
 

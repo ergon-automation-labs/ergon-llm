@@ -1,5 +1,6 @@
 defmodule BotArmyLlm.Http.SseUsageTest do
   use ExUnit.Case, async: true
+  @moduletag :http
 
   alias BotArmyLlm.Http.SseUsage
 

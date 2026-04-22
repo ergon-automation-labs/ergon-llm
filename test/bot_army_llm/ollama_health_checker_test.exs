@@ -1,5 +1,6 @@
 defmodule BotArmyLlm.OllamaHealthCheckerTest do
   use ExUnit.Case
+  @moduletag :integration
 
   alias BotArmyLlm.OllamaHealthChecker
 
@@ -418,7 +419,8 @@ defmodule BotArmyLlm.OllamaHealthCheckerTest do
       }
 
       with_state(state, fn ->
-        {:ok, {"http://localhost:11434", "ministral-3:8b"}} = OllamaHealthChecker.best_ollama_node(:heavy)
+        {:ok, {"http://localhost:11434", "ministral-3:8b"}} =
+          OllamaHealthChecker.best_ollama_node(:heavy)
       end)
     end
   end

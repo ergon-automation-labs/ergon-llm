@@ -1,5 +1,6 @@
 defmodule BotArmyLlm.ClaudePassthroughChainTest do
   use ExUnit.Case, async: true
+  @moduletag :core
 
   alias BotArmyLlm.ClaudePassthroughChain
 

@@ -1,5 +1,6 @@
 defmodule BotArmyLlm.ChatCompletionToAnthropicTest do
   use ExUnit.Case, async: true
+  @moduletag :core
 
   alias BotArmyLlm.ChatCompletionToAnthropic
 

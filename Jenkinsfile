@@ -24,7 +24,16 @@ pipeline {
 
     stage('Checkout') {
       steps {
-        checkout scm
+        sh '''
+          echo "==============================================="
+          echo "Checking out repository via SSH"
+          echo "==============================================="
+
+          # Use SSH-based checkout helper script
+          /opt/bot_army/scripts/jenkins_checkout.sh ${GITHUB_REPO} ${WORKSPACE}
+
+          echo "Current commit: $(git rev-parse HEAD)"
+        '''
       }
     }
 

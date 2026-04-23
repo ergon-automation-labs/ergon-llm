@@ -36,7 +36,7 @@ if [[ $remote_ref == "refs/heads/main" ]]; then
   # Quick linting check (non-blocking)
   echo ""
   echo "📝 Running linter..."
-  $MIX_BIN credo --strict || {
+  $MIX_BIN credo || {
     echo "⚠️  Linting issues found (non-blocking, will fail in CI)"
   }
 

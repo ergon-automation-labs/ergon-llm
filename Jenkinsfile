@@ -30,8 +30,11 @@ pipeline {
           echo "Checking out repository via SSH"
           echo "==============================================="
 
-          # Use SSH-based checkout helper script
-          /opt/bot_army/scripts/jenkins_checkout.sh ${GITHUB_REPO} ${WORKSPACE}
+          # Fix workspace ownership so abby can access it
+          sudo chown -R abby:wheel ${WORKSPACE}
+
+          # Run checkout as abby user who has SSH keys configured
+          sudo -u abby -H /opt/bot_army/scripts/jenkins_checkout.sh ${GITHUB_REPO} ${WORKSPACE}
 
           echo "Current commit: $(git rev-parse HEAD)"
         '''

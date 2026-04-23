@@ -70,11 +70,11 @@ if [[ $remote_ref == "refs/heads/main" ]]; then
   }
   echo "✓ Tarball created: llm_proxy-$VERSION.tar.gz"
 
-  # Create GitHub release
+  # Create GitHub release (use --replace if already exists)
   if gh release create v$VERSION llm_proxy-$VERSION.tar.gz \
     --title "Release v$VERSION" \
     --notes "LLM Bot Elixir release v$VERSION. Automatically deployed by Jenkins." \
-    --draft=false 2>&1; then
+    --draft=false --replace 2>&1; then
     echo "✓ Release published to GitHub"
   else
     release_error=$?

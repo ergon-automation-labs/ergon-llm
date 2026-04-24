@@ -30,11 +30,11 @@ pipeline {
           echo "Checking out repository via SSH"
           echo "==============================================="
 
-          # Fix workspace ownership so abby can access it
-          sudo chown -R abby:wheel ${WORKSPACE}
+          # Set up SSH environment for bot_army user's deploy key
+          export HOME=/var/lib/bot_army
+          export GIT_SSH_COMMAND="ssh -i /var/lib/bot_army/.ssh/ergon_deploy -F /var/lib/bot_army/.ssh/config -o StrictHostKeyChecking=no -o IdentitiesOnly=yes"
 
-          # Run checkout as abby user who has SSH keys configured
-          sudo -u abby -H /opt/bot_army/scripts/jenkins_checkout.sh ${GITHUB_REPO} ${WORKSPACE}
+          /opt/bot_army/scripts/jenkins_checkout.sh ${GITHUB_REPO} ${WORKSPACE}
 
           echo "Current commit: $(git rev-parse HEAD)"
         '''

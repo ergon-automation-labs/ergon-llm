@@ -4,78 +4,80 @@ defmodule BotArmyLlm.Repo.Migrations.AddTenantAndUserId do
   def up do
     default_tenant_id = "00000000-0000-0000-0000-000000000001"
 
-    if not Ecto.Migration.column_exists?(:prompts, :tenant_id) do
-      alter table(:prompts) do
-        add(:tenant_id, :uuid, null: true)
-        add(:user_id, :uuid, null: true)
-      end
+    # Add columns to prompts table (use IF NOT EXISTS for idempotence)
+    execute("""
+      ALTER TABLE prompts
+      ADD COLUMN IF NOT EXISTS tenant_id UUID,
+      ADD COLUMN IF NOT EXISTS user_id UUID
+    """)
 
-      create(index(:prompts, [:tenant_id]))
-      create(index(:prompts, [:user_id]))
+    # Create indexes if they don't exist
+    execute("""
+      CREATE INDEX IF NOT EXISTS prompts_tenant_id_index ON prompts (tenant_id)
+    """)
 
-      execute(
-        "UPDATE prompts SET tenant_id = '#{default_tenant_id}'::uuid WHERE tenant_id IS NULL"
-      )
-    end
+    execute("""
+      CREATE INDEX IF NOT EXISTS prompts_user_id_index ON prompts (user_id)
+    """)
 
-    if not Ecto.Migration.column_exists?(:completions, :tenant_id) do
-      alter table(:completions) do
-        add(:tenant_id, :uuid, null: true)
-        add(:user_id, :uuid, null: true)
-      end
+    # Set default tenant_id for existing rows
+    execute("""
+      UPDATE prompts SET tenant_id = '#{default_tenant_id}'::uuid WHERE tenant_id IS NULL
+    """)
 
-      create(index(:completions, [:tenant_id]))
-      create(index(:completions, [:user_id]))
+    # Add columns to completions table
+    execute("""
+      ALTER TABLE completions
+      ADD COLUMN IF NOT EXISTS tenant_id UUID,
+      ADD COLUMN IF NOT EXISTS user_id UUID
+    """)
 
-      execute(
-        "UPDATE completions SET tenant_id = '#{default_tenant_id}'::uuid WHERE tenant_id IS NULL"
-      )
-    end
+    execute("""
+      CREATE INDEX IF NOT EXISTS completions_tenant_id_index ON completions (tenant_id)
+    """)
 
-    if not Ecto.Migration.column_exists?(:conversations, :tenant_id) do
-      alter table(:conversations) do
-        add(:tenant_id, :uuid, null: true)
-        add(:user_id, :uuid, null: true)
-      end
+    execute("""
+      CREATE INDEX IF NOT EXISTS completions_user_id_index ON completions (user_id)
+    """)
 
-      create(index(:conversations, [:tenant_id]))
-      create(index(:conversations, [:user_id]))
+    execute("""
+      UPDATE completions SET tenant_id = '#{default_tenant_id}'::uuid WHERE tenant_id IS NULL
+    """)
 
-      execute(
-        "UPDATE conversations SET tenant_id = '#{default_tenant_id}'::uuid WHERE tenant_id IS NULL"
-      )
-    end
+    # Add columns to conversations table
+    execute("""
+      ALTER TABLE conversations
+      ADD COLUMN IF NOT EXISTS tenant_id UUID,
+      ADD COLUMN IF NOT EXISTS user_id UUID
+    """)
+
+    execute("""
+      CREATE INDEX IF NOT EXISTS conversations_tenant_id_index ON conversations (tenant_id)
+    """)
+
+    execute("""
+      CREATE INDEX IF NOT EXISTS conversations_user_id_index ON conversations (user_id)
+    """)
+
+    execute("""
+      UPDATE conversations SET tenant_id = '#{default_tenant_id}'::uuid WHERE tenant_id IS NULL
+    """)
   end
 
   def down do
-    if Ecto.Migration.column_exists?(:prompts, :tenant_id) do
-      drop_if_exists(index(:prompts, [:tenant_id]))
-      drop_if_exists(index(:prompts, [:user_id]))
+    execute("DROP INDEX IF EXISTS prompts_tenant_id_index")
+    execute("DROP INDEX IF EXISTS prompts_user_id_index")
+    execute("ALTER TABLE prompts DROP COLUMN IF EXISTS tenant_id")
+    execute("ALTER TABLE prompts DROP COLUMN IF EXISTS user_id")
 
-      alter table(:prompts) do
-        remove(:tenant_id)
-        remove(:user_id)
-      end
-    end
+    execute("DROP INDEX IF EXISTS completions_tenant_id_index")
+    execute("DROP INDEX IF EXISTS completions_user_id_index")
+    execute("ALTER TABLE completions DROP COLUMN IF EXISTS tenant_id")
+    execute("ALTER TABLE completions DROP COLUMN IF EXISTS user_id")
 
-    if Ecto.Migration.column_exists?(:completions, :tenant_id) do
-      drop_if_exists(index(:completions, [:tenant_id]))
-      drop_if_exists(index(:completions, [:user_id]))
-
-      alter table(:completions) do
-        remove(:tenant_id)
-        remove(:user_id)
-      end
-    end
-
-    if Ecto.Migration.column_exists?(:conversations, :tenant_id) do
-      drop_if_exists(index(:conversations, [:tenant_id]))
-      drop_if_exists(index(:conversations, [:user_id]))
-
-      alter table(:conversations) do
-        remove(:tenant_id)
-        remove(:user_id)
-      end
-    end
+    execute("DROP INDEX IF EXISTS conversations_tenant_id_index")
+    execute("DROP INDEX IF EXISTS conversations_user_id_index")
+    execute("ALTER TABLE conversations DROP COLUMN IF EXISTS tenant_id")
+    execute("ALTER TABLE conversations DROP COLUMN IF EXISTS user_id")
   end
 end

@@ -110,7 +110,9 @@ defmodule BotArmyLlm.ConversationStore do
           "session_id" => session_id,
           "messages" => [],
           "model" => Map.get(payload, "model", "auto"),
-          "status" => "active"
+          "status" => "active",
+          "tenant_id" => Map.get(payload, "tenant_id"),
+          "user_id" => Map.get(payload, "user_id")
         }
       )
 

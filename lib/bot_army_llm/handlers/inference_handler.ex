@@ -98,7 +98,7 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
 
   defp validate_steps([_ | _] = steps) do
     if Enum.all?(steps, &is_map/1) and
-       Enum.all?(steps, &Map.has_key?(&1, "prompt")) do
+         Enum.all?(steps, &Map.has_key?(&1, "prompt")) do
       :ok
     else
       {:error, :invalid_steps}
@@ -137,6 +137,7 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
               "name" => Map.get(step, "name", "step_#{length(step_results) + 1}"),
               "output" => output
             }
+
             publish_step_completed(chain_id, step, output, event_id, tenant_id, user_id)
             {:cont, {:ok, output, step_results ++ [step_result]}}
 
@@ -184,11 +185,12 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
     user_message = payload["message"]
     model_override = Map.get(payload, "model")
 
-    conversation_store = Application.get_env(
-      :bot_army_llm,
-      :conversation_store,
-      BotArmyLlm.ConversationStore
-    )
+    conversation_store =
+      Application.get_env(
+        :bot_army_llm,
+        :conversation_store,
+        BotArmyLlm.ConversationStore
+      )
 
     llm_client = Application.get_env(:bot_army_llm, :llm_client, BotArmyLlm.LlmClient)
 
@@ -197,9 +199,16 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
       case session_id do
         nil ->
           # Create new conversation
-          case conversation_store.create(%{"model" => model_override || "auto"}) do
-            {:ok, sid, conv} -> {sid, conv}
-            {:error, _reason} -> {UUID.uuid4(), %{"messages" => [], "model" => model_override || "auto"}}
+          case conversation_store.create(%{
+                 "model" => model_override || "auto",
+                 "tenant_id" => tenant_id,
+                 "user_id" => user_id
+               }) do
+            {:ok, sid, conv} ->
+              {sid, conv}
+
+            {:error, _reason} ->
+              {UUID.uuid4(), %{"messages" => [], "model" => model_override || "auto"}}
           end
 
         sid ->
@@ -216,7 +225,9 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
     # Call LLM with conversation history
     BotArmyLlm.LocalQueueManager.increment()
 
-    case llm_client.complete_messages(messages, model: model_override || conversation["model"] || "auto") do
+    case llm_client.complete_messages(messages,
+           model: model_override || conversation["model"] || "auto"
+         ) do
       {:ok, response} ->
         BotArmyLlm.LocalQueueManager.decrement()
 
@@ -247,14 +258,15 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
   end
 
   defp publish_step_completed(chain_id, step, output, triggered_by_event_id, tenant_id, user_id) do
-    event_data = EventBuilder.build("llm.chain.step.completed", %{
-      "chain_id" => chain_id,
-      "step_prompt" => String.slice(step["prompt"], 0, 100),
-      "step_output" => output,
-      "triggered_by_event_id" => triggered_by_event_id,
-      "tenant_id" => tenant_id,
-      "user_id" => user_id
-    })
+    event_data =
+      EventBuilder.build("llm.chain.step.completed", %{
+        "chain_id" => chain_id,
+        "step_prompt" => String.slice(step["prompt"], 0, 100),
+        "step_output" => output,
+        "triggered_by_event_id" => triggered_by_event_id,
+        "tenant_id" => tenant_id,
+        "user_id" => user_id
+      })
 
     case BotArmyLlm.NATS.Publisher.publish(event_data) do
       :ok -> Logger.debug("Published chain step completed event")
@@ -262,16 +274,24 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
     end
   end
 
-  defp publish_chain_completed(chain_id, step_results, metadata, triggered_by_event_id, tenant_id, user_id) do
-    event_data = EventBuilder.build("llm.chain.completed", %{
-      "chain_id" => chain_id,
-      "steps" => step_results,
-      "total_steps" => length(step_results),
-      "metadata" => metadata,
-      "triggered_by_event_id" => triggered_by_event_id,
-      "tenant_id" => tenant_id,
-      "user_id" => user_id
-    })
+  defp publish_chain_completed(
+         chain_id,
+         step_results,
+         metadata,
+         triggered_by_event_id,
+         tenant_id,
+         user_id
+       ) do
+    event_data =
+      EventBuilder.build("llm.chain.completed", %{
+        "chain_id" => chain_id,
+        "steps" => step_results,
+        "total_steps" => length(step_results),
+        "metadata" => metadata,
+        "triggered_by_event_id" => triggered_by_event_id,
+        "tenant_id" => tenant_id,
+        "user_id" => user_id
+      })
 
     case BotArmyLlm.NATS.Publisher.publish(event_data) do
       :ok -> Logger.debug("Published chain completed event")
@@ -279,16 +299,24 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
     end
   end
 
-  defp publish_converse_replied(session_id, reply, conversation, triggered_by_event_id, tenant_id, user_id) do
-    event_data = EventBuilder.build("llm.conversation.replied", %{
-      "session_id" => session_id,
-      "reply" => reply,
-      "message_count" => length(conversation["messages"] || []),
-      "model_used" => conversation["model"],
-      "triggered_by_event_id" => triggered_by_event_id,
-      "tenant_id" => tenant_id,
-      "user_id" => user_id
-    })
+  defp publish_converse_replied(
+         session_id,
+         reply,
+         conversation,
+         triggered_by_event_id,
+         tenant_id,
+         user_id
+       ) do
+    event_data =
+      EventBuilder.build("llm.conversation.replied", %{
+        "session_id" => session_id,
+        "reply" => reply,
+        "message_count" => length(conversation["messages"] || []),
+        "model_used" => conversation["model"],
+        "triggered_by_event_id" => triggered_by_event_id,
+        "tenant_id" => tenant_id,
+        "user_id" => user_id
+      })
 
     case BotArmyLlm.NATS.Publisher.publish(event_data) do
       :ok -> Logger.debug("Published conversation replied event")

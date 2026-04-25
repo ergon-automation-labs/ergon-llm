@@ -1,4 +1,4 @@
-defmodule BotArmyLLM.PulsePublisher do
+defmodule BotArmyLlm.PulsePublisher do
   @moduledoc """
   Publishes periodic health pulses from LLM bot to Synapse.
 

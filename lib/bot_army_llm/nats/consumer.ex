@@ -27,6 +27,26 @@ defmodule BotArmyLlm.NATS.Consumer do
 
   @reconnect_delay_ms 5000
 
+  @subjects [
+    %{subject: "llm.prompt.submit", type: :request_reply, description: "Submit prompt"},
+    %{subject: "llm.inference.chain", type: :subscribe, description: "Execute chain"},
+    %{subject: "llm.inference.converse", type: :subscribe, description: "Converse"},
+    %{subject: "llm.response.parse", type: :subscribe, description: "Parse response"},
+    %{subject: "llm.vision.analyze", type: :subscribe, description: "Analyze image"},
+    %{subject: "llm.embed.request", type: :subscribe, description: "Generate embedding"},
+    %{subject: "llm.rag.index", type: :subscribe, description: "Index document"},
+    %{subject: "llm.rag.search", type: :subscribe, description: "Search documents"},
+    %{subject: "llm.rag.delete", type: :subscribe, description: "Delete document"},
+    %{
+      subject: "llm.claude_code.complete",
+      type: :request_reply,
+      description: "Claude Code completion"
+    },
+    %{subject: "llm.usage.query", type: :request_reply, description: "Query token usage"},
+    %{subject: "llm.metrics.get", type: :request_reply, description: "Get metrics"},
+    %{subject: "llm.queue.status", type: :request_reply, description: "Get queue status"}
+  ]
+
   # API
 
   def start_link(opts) do
@@ -94,6 +114,7 @@ defmodule BotArmyLlm.NATS.Consumer do
 
     case subs do
       subs when length(subs) == length(subjects) ->
+        BotArmyRuntime.Health.Responder.register_subjects(@subjects)
         {:noreply, %{state | subscriptions: subs}}
 
       _ ->

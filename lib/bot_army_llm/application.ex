@@ -43,6 +43,9 @@ defmodule BotArmyLlm.Application do
         # Metrics collection (in-memory counters and percentiles)
         {BotArmyLlm.Metrics, []},
 
+        # Pulse publisher (reports inference health to Synapse every 5 min)
+        {BotArmyLlm.PulsePublisher, []},
+
         # Ollama health checker (probes nodes every 60s, drives routing decisions)
         {BotArmyLlm.OllamaHealthChecker, []},
 
@@ -55,6 +58,7 @@ defmodule BotArmyLlm.Application do
       ]
       |> maybe_exclude_repo()
       |> maybe_exclude_consumer()
+      |> maybe_exclude_pulse_publisher()
       |> maybe_http_proxy_children()
 
     opts = [strategy: :one_for_one, name: BotArmyLlm.Supervisor]
@@ -82,6 +86,18 @@ defmodule BotArmyLlm.Application do
     if @env == :test do
       Enum.reject(children, fn
         {BotArmyLlm.NATS.Consumer, []} -> true
+        _ -> false
+      end)
+    else
+      children
+    end
+  end
+
+  # Exclude PulsePublisher in tests to avoid connecting to real NATS
+  defp maybe_exclude_pulse_publisher(children) do
+    if @env == :test do
+      Enum.reject(children, fn
+        {BotArmyLlm.PulsePublisher, []} -> true
         _ -> false
       end)
     else

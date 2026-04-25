@@ -32,7 +32,7 @@ defmodule BotArmyLLM.PulsePublisher do
   require Logger
 
   # 5 minutes
-  @publish_interval_ms 5 * 60 * 1000
+  @publish_interval_ms 30 * 60 * 1000
   @server __MODULE__
 
   def start_link(opts) do

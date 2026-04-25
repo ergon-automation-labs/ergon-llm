@@ -80,16 +80,22 @@ defmodule BotArmyLlm.ConversationStore do
     Logger.info("ConversationStore started")
     # Load all conversations from database into GenServer state
     # Gracefully handle database unavailability (e.g., in tests)
-    state = try do
-      conversations = BotArmyLlm.Repo.all(BotArmyLlm.Schemas.Conversation)
-      Enum.reduce(conversations, %{}, fn conv, acc ->
-        Map.put(acc, conv.session_id |> to_string(), schema_to_map(conv))
-      end)
-    rescue
-      _ ->
-        Logger.warning("Could not load conversations from database (database unavailable). Starting with empty state.")
-        %{}
-    end
+    state =
+      try do
+        conversations = BotArmyLlm.Repo.all(BotArmyLlm.Schemas.Conversation)
+
+        Enum.reduce(conversations, %{}, fn conv, acc ->
+          Map.put(acc, conv.session_id |> to_string(), schema_to_map(conv))
+        end)
+      rescue
+        _ ->
+          Logger.warning(
+            "Could not load conversations from database (database unavailable). Starting with empty state."
+          )
+
+          %{}
+      end
+
     {:ok, state}
   end
 
@@ -97,26 +103,44 @@ defmodule BotArmyLlm.ConversationStore do
   def handle_call({:create, payload}, _from, state) do
     session_id = Ecto.UUID.generate()
 
-    changeset = BotArmyLlm.Schemas.Conversation.changeset(
-      %BotArmyLlm.Schemas.Conversation{session_id: session_id},
-      %{
-        "session_id" => session_id,
-        "messages" => [],
-        "model" => Map.get(payload, "model", "auto"),
-        "status" => "active"
-      }
-    )
+    changeset =
+      BotArmyLlm.Schemas.Conversation.changeset(
+        %BotArmyLlm.Schemas.Conversation{session_id: session_id},
+        %{
+          "session_id" => session_id,
+          "messages" => [],
+          "model" => Map.get(payload, "model", "auto"),
+          "status" => "active"
+        }
+      )
 
-    case BotArmyLlm.Repo.insert(changeset) do
+    result =
+      try do
+        BotArmyLlm.Repo.insert(changeset)
+      rescue
+        error ->
+          Logger.error("Database error during conversation creation: #{inspect(error)}")
+          {:error, :database_error}
+      catch
+        :exit, reason ->
+          Logger.error("Database connection error: #{inspect(reason)}")
+          {:error, :database_unavailable}
+      end
+
+    case result do
       {:ok, db_conversation} ->
         conversation = schema_to_map(db_conversation)
         new_state = Map.put(state, session_id |> to_string(), conversation)
         Logger.info("Created conversation in database: #{session_id}")
         {:reply, {:ok, session_id |> to_string(), conversation}, new_state}
 
-      {:error, changeset} ->
+      {:error, changeset} when is_map(changeset) ->
         Logger.error("Failed to create conversation: #{inspect(changeset.errors)}")
         {:reply, {:error, :database_error}, state}
+
+      {:error, reason} ->
+        Logger.error("Failed to create conversation: #{inspect(reason)}")
+        {:reply, {:error, reason}, state}
     end
   end
 
@@ -135,31 +159,51 @@ defmodule BotArmyLlm.ConversationStore do
         {:reply, {:error, :not_found}, state}
 
       _conversation ->
-        session_uuid = Ecto.UUID.cast!(session_id)
-        db_conversation = BotArmyLlm.Repo.get_by(BotArmyLlm.Schemas.Conversation, session_id: session_uuid)
+        result =
+          try do
+            session_uuid = Ecto.UUID.cast!(session_id)
 
-        if db_conversation do
-          # Append message to messages list
-          updated_messages = db_conversation.messages ++ [message]
+            db_conversation =
+              BotArmyLlm.Repo.get_by(BotArmyLlm.Schemas.Conversation, session_id: session_uuid)
 
-          changeset = BotArmyLlm.Schemas.Conversation.changeset(
-            db_conversation,
-            %{"messages" => updated_messages}
-          )
+            if db_conversation do
+              # Append message to messages list
+              updated_messages = db_conversation.messages ++ [message]
 
-          case BotArmyLlm.Repo.update(changeset) do
-            {:ok, updated_db_conversation} ->
-              updated_conversation = schema_to_map(updated_db_conversation)
-              new_state = Map.put(state, session_id, updated_conversation)
-              Logger.info("Appended message to conversation: #{session_id}")
-              {:reply, {:ok, updated_conversation}, new_state}
+              changeset =
+                BotArmyLlm.Schemas.Conversation.changeset(
+                  db_conversation,
+                  %{"messages" => updated_messages}
+                )
 
-            {:error, changeset} ->
-              Logger.error("Failed to append message: #{inspect(changeset.errors)}")
-              {:reply, {:error, :database_error}, state}
+              BotArmyLlm.Repo.update(changeset)
+            else
+              {:error, :not_found}
+            end
+          rescue
+            error ->
+              Logger.error("Database error appending message: #{inspect(error)}")
+              {:error, :database_error}
+          catch
+            :exit, reason ->
+              Logger.error("Database connection error appending message: #{inspect(reason)}")
+              {:error, :database_unavailable}
           end
-        else
-          {:reply, {:error, :not_found}, state}
+
+        case result do
+          {:ok, updated_db_conversation} ->
+            updated_conversation = schema_to_map(updated_db_conversation)
+            new_state = Map.put(state, session_id, updated_conversation)
+            Logger.info("Appended message to conversation: #{session_id}")
+            {:reply, {:ok, updated_conversation}, new_state}
+
+          {:error, changeset} when is_map(changeset) ->
+            Logger.error("Failed to append message: #{inspect(changeset.errors)}")
+            {:reply, {:error, :database_error}, state}
+
+          {:error, reason} ->
+            Logger.error("Failed to append message: #{inspect(reason)}")
+            {:reply, {:error, reason}, state}
         end
     end
   end
@@ -171,28 +215,48 @@ defmodule BotArmyLlm.ConversationStore do
         {:reply, {:error, :not_found}, state}
 
       _conversation ->
-        session_uuid = Ecto.UUID.cast!(session_id)
-        db_conversation = BotArmyLlm.Repo.get_by(BotArmyLlm.Schemas.Conversation, session_id: session_uuid)
+        result =
+          try do
+            session_uuid = Ecto.UUID.cast!(session_id)
 
-        if db_conversation do
-          changeset = BotArmyLlm.Schemas.Conversation.changeset(
-            db_conversation,
-            %{"status" => "archived"}
-          )
+            db_conversation =
+              BotArmyLlm.Repo.get_by(BotArmyLlm.Schemas.Conversation, session_id: session_uuid)
 
-          case BotArmyLlm.Repo.update(changeset) do
-            {:ok, archived_db_conversation} ->
-              archived_conversation = schema_to_map(archived_db_conversation)
-              new_state = Map.put(state, session_id, archived_conversation)
-              Logger.info("Archived conversation: #{session_id}")
-              {:reply, {:ok, archived_conversation}, new_state}
+            if db_conversation do
+              changeset =
+                BotArmyLlm.Schemas.Conversation.changeset(
+                  db_conversation,
+                  %{"status" => "archived"}
+                )
 
-            {:error, changeset} ->
-              Logger.error("Failed to archive conversation: #{inspect(changeset.errors)}")
-              {:reply, {:error, :database_error}, state}
+              BotArmyLlm.Repo.update(changeset)
+            else
+              {:error, :not_found}
+            end
+          rescue
+            error ->
+              Logger.error("Database error archiving conversation: #{inspect(error)}")
+              {:error, :database_error}
+          catch
+            :exit, reason ->
+              Logger.error("Database connection error archiving: #{inspect(reason)}")
+              {:error, :database_unavailable}
           end
-        else
-          {:reply, {:error, :not_found}, state}
+
+        case result do
+          {:ok, archived_db_conversation} ->
+            archived_conversation = schema_to_map(archived_db_conversation)
+            new_state = Map.put(state, session_id, archived_conversation)
+            Logger.info("Archived conversation: #{session_id}")
+            {:reply, {:ok, archived_conversation}, new_state}
+
+          {:error, changeset} when is_map(changeset) ->
+            Logger.error("Failed to archive conversation: #{inspect(changeset.errors)}")
+            {:reply, {:error, :database_error}, state}
+
+          {:error, reason} ->
+            Logger.error("Failed to archive conversation: #{inspect(reason)}")
+            {:reply, {:error, reason}, state}
         end
     end
   end

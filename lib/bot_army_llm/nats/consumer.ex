@@ -26,6 +26,7 @@ defmodule BotArmyLlm.NATS.Consumer do
   require Logger
 
   @reconnect_delay_ms 5000
+  @version Mix.Project.config()[:version]
 
   @subjects [
     %{subject: "llm.prompt.submit", type: :request_reply, description: "Submit prompt"},
@@ -44,7 +45,26 @@ defmodule BotArmyLlm.NATS.Consumer do
     },
     %{subject: "llm.usage.query", type: :request_reply, description: "Query token usage"},
     %{subject: "llm.metrics.get", type: :request_reply, description: "Get metrics"},
-    %{subject: "llm.queue.status", type: :request_reply, description: "Get queue status"}
+    %{subject: "llm.queue.status", type: :request_reply, description: "Get queue status"},
+    # Cross-bot conversation protocol
+    %{
+      subject: "conv.request.llm.*",
+      type: :subscribe,
+      description: "Cross-bot conversation requests",
+      capabilities: ["llm.summarize", "llm.classify", "llm.ask"],
+      conversation_support: %{supported: true, message_types: ["query", "gossip"], max_turns: 2}
+    },
+    %{
+      subject: "conv.mailbox.llm",
+      type: :subscribe,
+      description: "Cross-bot mailbox messages",
+      capabilities: ["gossip.check_in"]
+    },
+    %{
+      subject: "conv.followup.*",
+      type: :subscribe,
+      description: "Multi-turn conversation followups"
+    }
   ]
 
   # API
@@ -96,7 +116,10 @@ defmodule BotArmyLlm.NATS.Consumer do
       "llm.claude_code.complete",
       "llm.usage.query",
       "llm.metrics.get",
-      "llm.queue.status"
+      "llm.queue.status",
+      "conv.request.llm.>",
+      "conv.mailbox.llm",
+      "conv.followup.>"
     ]
 
     subs =
@@ -114,7 +137,7 @@ defmodule BotArmyLlm.NATS.Consumer do
 
     case subs do
       subs when length(subs) == length(subjects) ->
-        BotArmyRuntime.Health.Responder.register_subjects(@subjects)
+        BotArmyRuntime.Registry.register("llm", @subjects, @version)
         {:noreply, %{state | subscriptions: subs}}
 
       _ ->
@@ -382,36 +405,45 @@ defmodule BotArmyLlm.NATS.Consumer do
   def route_message(message) do
     event = message["event"]
 
-    case event do
-      "llm.prompt.submit" ->
-        BotArmyLlm.Handlers.PromptHandler.handle_submit(message)
+    cond do
+      is_binary(event) and String.starts_with?(event, "conv.request.llm.") ->
+        BotArmyLlm.Handlers.ConversationHandler.handle_request(message)
 
-      "llm.inference.chain" ->
-        BotArmyLlm.Handlers.InferenceHandler.handle_chain(message)
+      is_binary(event) and String.starts_with?(event, "conv.followup.") ->
+        BotArmyLlm.Handlers.ConversationHandler.handle_request(message)
 
-      "llm.inference.converse" ->
-        BotArmyLlm.Handlers.InferenceHandler.handle_converse(message)
+      true ->
+        case event do
+          "llm.prompt.submit" ->
+            BotArmyLlm.Handlers.PromptHandler.handle_submit(message)
 
-      "llm.response.parse" ->
-        BotArmyLlm.Handlers.ResponseHandler.handle_parse(message)
+          "llm.inference.chain" ->
+            BotArmyLlm.Handlers.InferenceHandler.handle_chain(message)
 
-      "llm.vision.analyze" ->
-        BotArmyLlm.Handlers.VisionHandler.handle_analyze(message)
+          "llm.inference.converse" ->
+            BotArmyLlm.Handlers.InferenceHandler.handle_converse(message)
 
-      "llm.embed.request" ->
-        BotArmyLlm.Handlers.EmbeddingHandler.handle_embed(message)
+          "llm.response.parse" ->
+            BotArmyLlm.Handlers.ResponseHandler.handle_parse(message)
 
-      "llm.rag.index" ->
-        BotArmyLlm.Handlers.RAGHandler.handle_index(message)
+          "llm.vision.analyze" ->
+            BotArmyLlm.Handlers.VisionHandler.handle_analyze(message)
 
-      "llm.rag.search" ->
-        BotArmyLlm.Handlers.RAGHandler.handle_search(message)
+          "llm.embed.request" ->
+            BotArmyLlm.Handlers.EmbeddingHandler.handle_embed(message)
 
-      "llm.rag.delete" ->
-        BotArmyLlm.Handlers.RAGHandler.handle_delete(message)
+          "llm.rag.index" ->
+            BotArmyLlm.Handlers.RAGHandler.handle_index(message)
 
-      _ ->
-        Logger.debug("Unknown LLM event type: #{event}")
+          "llm.rag.search" ->
+            BotArmyLlm.Handlers.RAGHandler.handle_search(message)
+
+          "llm.rag.delete" ->
+            BotArmyLlm.Handlers.RAGHandler.handle_delete(message)
+
+          _ ->
+            Logger.debug("Unknown LLM event type: #{event}")
+        end
     end
   end
 end

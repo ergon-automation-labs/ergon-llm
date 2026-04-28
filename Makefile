@@ -1,6 +1,6 @@
 SCRIPTS_DIRECTORY ?= $(abspath $(CURDIR)/../scripts)
 
-.PHONY: test-handlers test-stores test-nats test-integration test-full setup help deps test credo dialyzer coverage check format clean release publish-release setup-hooks setup-db reset-db logs logs-tail logs-errors
+.PHONY: test-handlers test-stores test-nats test-integration test-full setup help deps run test credo dialyzer coverage check format clean release publish-release setup-hooks setup-db reset-db logs logs-tail logs-errors
 
 help:
 	@echo "BotArmyLlm - LLM Bot"
@@ -12,6 +12,7 @@ help:
 	@echo "  make reset-db        - Drop and recreate test database (useful for troubleshooting)"
 	@echo ""
 	@echo "Development commands:"
+	@echo "  make run             - Start LLM service (NATS consumer)"
 	@echo "  make test            - Run all tests"
 	@echo "  make credo           - Run linter"
 	@echo "  make dialyzer        - Run static analysis"
@@ -64,6 +65,9 @@ init:
 
 deps:
 	mix deps.get
+
+run:
+	mix run --no-halt
 
 test:
 	mix test

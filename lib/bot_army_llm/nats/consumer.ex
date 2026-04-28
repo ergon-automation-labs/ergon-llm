@@ -29,6 +29,7 @@ defmodule BotArmyLlm.NATS.Consumer do
   @version Mix.Project.config()[:version]
 
   @subjects [
+    %{subject: "llm.request.chat", type: :request_reply, description: "Chat request/reply"},
     %{subject: "llm.prompt.submit", type: :request_reply, description: "Submit prompt"},
     %{subject: "llm.inference.chain", type: :subscribe, description: "Execute chain"},
     %{subject: "llm.inference.converse", type: :subscribe, description: "Converse"},
@@ -104,6 +105,7 @@ defmodule BotArmyLlm.NATS.Consumer do
     Logger.info("Connected to NATS, subscribing to LLM topics")
 
     subjects = [
+      "llm.request.chat",
       "llm.prompt.submit",
       "llm.inference.chain",
       "llm.inference.converse",
@@ -225,6 +227,9 @@ defmodule BotArmyLlm.NATS.Consumer do
 
       "llm.prompt.submit" ->
         handle_prompt_request_reply(message, reply_to)
+
+      "llm.request.chat" ->
+        handle_chat_request_reply(message, reply_to)
 
       "llm.usage.query" ->
         handle_usage_query(message, reply_to)
@@ -361,6 +366,56 @@ defmodule BotArmyLlm.NATS.Consumer do
 
     Logger.debug("Publishing queue status response")
     publish_reply(reply_to, response)
+  end
+
+  defp handle_chat_request_reply(message, reply_to) do
+    spawn(fn ->
+      request_id = Map.get(message, "request_id", UUID.uuid4())
+      request_type = Map.get(message, "request_type", "chat")
+      prompt_context = Map.get(message, "prompt_context", %{})
+      prompt = Map.get(prompt_context, "prompt", "")
+      model_preference = Map.get(message, "model_preference", "auto")
+
+      llm_client = Application.get_env(:bot_army_llm, :llm_client, BotArmyLlm.LlmClient)
+
+      started_at = System.monotonic_time(:millisecond)
+
+      result =
+        try do
+          BotArmyLlm.LocalQueueManager.increment()
+          llm_client.complete(prompt, model: model_preference)
+        after
+          BotArmyLlm.LocalQueueManager.decrement()
+        end
+
+      response =
+        case result do
+          {:ok, resp} ->
+            %{
+              "request_id" => request_id,
+              "response_type" => request_type,
+              "model_used" => Map.get(resp, :model_used, model_preference),
+              "content" => Map.get(resp, :completion, ""),
+              "cache_hit" => false,
+              "latency_ms" => System.monotonic_time(:millisecond) - started_at,
+              "tokens" => %{
+                "input" => Map.get(resp, :tokens_input, 0),
+                "output" => Map.get(resp, :tokens_output, 0)
+              }
+            }
+
+          {:error, reason} ->
+            %{
+              "request_id" => request_id,
+              "response_type" => request_type,
+              "error" => inspect(reason),
+              "cache_hit" => false,
+              "latency_ms" => System.monotonic_time(:millisecond) - started_at
+            }
+        end
+
+      publish_reply(reply_to, response)
+    end)
   end
 
   defp publish_reply(reply_to, response) do

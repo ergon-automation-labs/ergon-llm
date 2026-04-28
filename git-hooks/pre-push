@@ -76,6 +76,13 @@ if [[ $remote_ref == "refs/heads/main" ]]; then
     --notes "LLM Bot Elixir release v$VERSION. Automatically deployed by Jenkins." \
     --draft=false 2>&1; then
     echo "✓ Release published to GitHub"
+
+  # Cleanup build artifacts created by this hook
+  echo ""
+  echo "🧹 Cleaning up local release artifacts..."
+  rm -f ./*.tar.gz
+  rm -rf ./_build
+  echo "✓ Cleanup complete"
   else
     release_error=$?
     echo "❌ Failed to publish release to GitHub (exit code: $release_error)"

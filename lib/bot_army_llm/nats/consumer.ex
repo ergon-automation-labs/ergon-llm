@@ -30,6 +30,11 @@ defmodule BotArmyLlm.NATS.Consumer do
 
   @subjects [
     %{subject: "llm.request.chat", type: :request_reply, description: "Chat request/reply"},
+    %{
+      subject: "pi-go.llm.request.chat",
+      type: :request_reply,
+      description: "Pi-go dedicated chat request/reply"
+    },
     %{subject: "llm.prompt.submit", type: :request_reply, description: "Submit prompt"},
     %{subject: "llm.inference.chain", type: :subscribe, description: "Execute chain"},
     %{subject: "llm.inference.converse", type: :subscribe, description: "Converse"},
@@ -106,6 +111,7 @@ defmodule BotArmyLlm.NATS.Consumer do
 
     subjects = [
       "llm.request.chat",
+      "pi-go.llm.request.chat",
       "llm.prompt.submit",
       "llm.inference.chain",
       "llm.inference.converse",
@@ -229,6 +235,9 @@ defmodule BotArmyLlm.NATS.Consumer do
         handle_prompt_request_reply(message, reply_to)
 
       "llm.request.chat" ->
+        handle_chat_request_reply(message, reply_to)
+
+      "pi-go.llm.request.chat" ->
         handle_chat_request_reply(message, reply_to)
 
       "llm.usage.query" ->

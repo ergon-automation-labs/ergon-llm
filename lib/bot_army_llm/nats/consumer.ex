@@ -27,6 +27,7 @@ defmodule BotArmyLlm.NATS.Consumer do
 
   @reconnect_delay_ms 5000
   @version Mix.Project.config()[:version]
+  @registry_heartbeat_ms 20_000
 
   @subjects [
     %{subject: "llm.request.chat", type: :request_reply, description: "Chat request/reply"},
@@ -146,6 +147,7 @@ defmodule BotArmyLlm.NATS.Consumer do
     case subs do
       subs when length(subs) == length(subjects) ->
         BotArmyRuntime.Registry.register("llm", @subjects, @version)
+        Process.send_after(self(), :registry_heartbeat, @registry_heartbeat_ms)
         {:noreply, %{state | subscriptions: subs}}
 
       _ ->
@@ -222,6 +224,16 @@ defmodule BotArmyLlm.NATS.Consumer do
   def handle_info({:nats, :connected}, state) do
     Logger.info("Reconnected to NATS, re-subscribing")
     {:noreply, state, {:continue, :connect}}
+  end
+
+  @impl true
+  def handle_info(:registry_heartbeat, state) do
+    if length(state.subscriptions) > 0 do
+      BotArmyRuntime.Registry.register("llm", @subjects, @version)
+      Process.send_after(self(), :registry_heartbeat, @registry_heartbeat_ms)
+    end
+
+    {:noreply, state}
   end
 
   # Private functions

@@ -1104,7 +1104,7 @@ defmodule BotArmyLlm.LlmClient do
     case HTTPoison.post(endpoint, payload, headers, recv_timeout: timeout_ms, timeout: timeout_ms) do
       {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
         with {:ok, response} <- Jason.decode(body),
-             embedding when is_list(embedding) <- response["embedding"] do
+             {:ok, embedding} <- extract_ollama_embedding(response) do
           {:ok, %{embedding: embedding}}
         else
           _ -> {:error, :invalid_response_format}
@@ -1119,6 +1119,17 @@ defmodule BotArmyLlm.LlmClient do
   rescue
     _ -> {:error, :request_failed}
   end
+
+  # Ollama has returned both of these shapes across versions/endpoints:
+  #   %{ "embedding" => [float, ...] }
+  #   %{ "embeddings" => [[float, ...], ...] }
+  defp extract_ollama_embedding(%{"embedding" => embedding}) when is_list(embedding),
+    do: {:ok, embedding}
+
+  defp extract_ollama_embedding(%{"embeddings" => [embedding | _]}) when is_list(embedding),
+    do: {:ok, embedding}
+
+  defp extract_ollama_embedding(_), do: {:error, :invalid_response_format}
 
   defp openrouter_embed_call(api_key, model, text) do
     url = EmbeddingConfig.openrouter_embeddings_url()

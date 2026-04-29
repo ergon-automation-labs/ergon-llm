@@ -9,6 +9,11 @@ set -e
 # Use absolute path to mix since git hooks have limited environment
 MIX_BIN="/Users/abby/.local/share/mise/shims/mix"
 
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+export HEX_HOME="$REPO_ROOT/.cache/hex"
+export MIX_HOME="$REPO_ROOT/.cache/mix"
+mkdir -p "$HEX_HOME" "$MIX_HOME"
+
 echo "🔍 Running pre-push checks..."
 echo ""
 

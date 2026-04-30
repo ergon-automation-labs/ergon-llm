@@ -8,6 +8,8 @@ defmodule BotArmyLlm.Handlers.SkillExecuteHandler do
   require Logger
 
   @skills_subject_prefix "bot.army.skills.command."
+  @default_timeout_ms 75_000
+  @min_timeout_ms 60_000
 
   @spec handle_execute(map(), String.t()) :: :ok
   def handle_execute(message, reply_to) do
@@ -60,7 +62,7 @@ defmodule BotArmyLlm.Handlers.SkillExecuteHandler do
            subject,
            envelope,
            timeout_ms: timeout_ms,
-           max_retries: 1,
+           max_retries: 0,
            retry_base_ms: 150,
            circuit_breaker_key: "llm.skill.execute"
          ) do
@@ -92,24 +94,34 @@ defmodule BotArmyLlm.Handlers.SkillExecuteHandler do
          }}
 
       {:error, reason} ->
+        Logger.warning("[SkillExecuteHandler] Skills request failed",
+          slug: slug,
+          subject: subject,
+          timeout_ms: timeout_ms,
+          reason: inspect(reason)
+        )
+
         {:error, {:skills_request_failed, reason}}
     end
   end
 
   defp parse_timeout_ms(request) do
-    case request["timeout_ms"] do
-      ms when is_integer(ms) and ms > 0 ->
-        ms
+    requested_timeout_ms =
+      case request["timeout_ms"] do
+        ms when is_integer(ms) and ms > 0 ->
+          ms
 
-      ms when is_binary(ms) ->
-        case Integer.parse(ms) do
-          {parsed, ""} when parsed > 0 -> parsed
-          _ -> 30_000
-        end
+        ms when is_binary(ms) ->
+          case Integer.parse(ms) do
+            {parsed, ""} when parsed > 0 -> parsed
+            _ -> @default_timeout_ms
+          end
 
-      _ ->
-        30_000
-    end
+        _ ->
+          @default_timeout_ms
+      end
+
+    max(requested_timeout_ms, @min_timeout_ms)
   end
 
   defp error_response(reason) do

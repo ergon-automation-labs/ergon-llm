@@ -50,6 +50,12 @@ defmodule BotArmyLlm.NATS.Consumer do
       type: :request_reply,
       description: "Claude Code completion"
     },
+    %{
+      subject: "llm.skill.execute",
+      type: :request_reply,
+      description: "Execute skill through skills bot",
+      capabilities: ["skills.execute"]
+    },
     %{subject: "llm.usage.query", type: :request_reply, description: "Query token usage"},
     %{subject: "llm.metrics.get", type: :request_reply, description: "Get metrics"},
     %{subject: "llm.queue.status", type: :request_reply, description: "Get queue status"},
@@ -123,6 +129,7 @@ defmodule BotArmyLlm.NATS.Consumer do
       "llm.rag.search",
       "llm.rag.delete",
       "llm.claude_code.complete",
+      "llm.skill.execute",
       "llm.usage.query",
       "llm.metrics.get",
       "llm.queue.status",
@@ -242,6 +249,9 @@ defmodule BotArmyLlm.NATS.Consumer do
     case subject do
       "llm.claude_code.complete" ->
         BotArmyLlm.Handlers.ClaudeCodeHandler.handle_complete(message, reply_to)
+
+      "llm.skill.execute" ->
+        BotArmyLlm.Handlers.SkillExecuteHandler.handle_execute(message, reply_to)
 
       "llm.prompt.submit" ->
         handle_prompt_request_reply(message, reply_to)

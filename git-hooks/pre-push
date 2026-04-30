@@ -66,7 +66,6 @@ if [[ $remote_ref == "refs/heads/main" ]]; then
   echo "🚀 Publishing release to GitHub..."
   VERSION=$(cat _build/prod/rel/llm_proxy/releases/start_erl.data | awk '{print $2}')
   echo "Version: $VERSION"
-  echo "DEBUG: Publishing v$VERSION at $(date)" >> /tmp/pre-push-hook.log
 
   # Create tarball
   tar -czf llm_proxy-$VERSION.tar.gz -C _build/prod/rel llm_proxy/ || {
@@ -75,12 +74,21 @@ if [[ $remote_ref == "refs/heads/main" ]]; then
   }
   echo "✓ Tarball created: llm_proxy-$VERSION.tar.gz"
 
-  # Create GitHub release
-  if gh release create v$VERSION llm_proxy-$VERSION.tar.gz \
+  if gh release view "v$VERSION" >/dev/null 2>&1; then
+    echo "❌ GitHub release v$VERSION already exists."
+    echo "   A prior run may have published the tarball while git push did not complete."
+    echo "   Bump :version in mix.exs, commit, and push again (do not replace published assets)."
+    exit 1
+  fi
+
+  gh release create "v$VERSION" llm_proxy-$VERSION.tar.gz \
     --title "Release v$VERSION" \
     --notes "LLM Bot Elixir release v$VERSION. Automatically deployed by Jenkins." \
-    --draft=false 2>&1; then
-    echo "✓ Release published to GitHub"
+    --draft=false || {
+    echo "❌ Failed to create GitHub release"
+    exit 1
+  }
+  echo "✓ Release published to GitHub"
 
   # Cleanup build artifacts created by this hook
   echo ""
@@ -88,21 +96,10 @@ if [[ $remote_ref == "refs/heads/main" ]]; then
   rm -f ./*.tar.gz
   rm -rf ./_build
   echo "✓ Cleanup complete"
-  else
-    release_error=$?
-    echo "❌ Failed to publish release to GitHub (exit code: $release_error)"
-    echo "   Check: GitHub API token, network connectivity, or if release already exists"
-    exit 1
-  fi
 
   echo ""
   echo "✅ All checks passed, release built and published!"
   echo "📤 Proceeding with push..."
-
-  echo ""
-  echo "Removing tarball..."
-  rm -f llm_proxy-$VERSION.tar.gz
-  echo "✓ Tarball removed"
 else
   echo "ℹ️  Pushing to feature branch - skipping validation"
 fi

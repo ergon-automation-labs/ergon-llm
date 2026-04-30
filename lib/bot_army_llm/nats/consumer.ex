@@ -87,6 +87,11 @@ defmodule BotArmyLlm.NATS.Consumer do
       subject: "conv.followup.*",
       type: :subscribe,
       description: "Multi-turn conversation followups"
+    },
+    %{
+      subject: "gossip.poll.broadcast",
+      type: :subscribe,
+      description: "Army general poll broadcasts"
     }
   ]
 
@@ -147,7 +152,8 @@ defmodule BotArmyLlm.NATS.Consumer do
       "llm.queue.status",
       "conv.request.llm.>",
       "conv.mailbox.llm",
-      "conv.followup.>"
+      "conv.followup.>",
+      "gossip.poll.broadcast"
     ]
 
     subs =
@@ -195,33 +201,40 @@ defmodule BotArmyLlm.NATS.Consumer do
       )
 
       # Handle request/reply messages first (they may not have valid envelope structure)
-      if msg.reply_to do
-        Logger.debug("Processing request/reply on #{msg.topic}, reply_to: #{msg.reply_to}")
+      if msg.topic == "gossip.poll.broadcast" do
+        case Jason.decode(msg.body) do
+          {:ok, decoded} -> BotArmyLlm.GossipPollVoter.handle_poll_broadcast(decoded)
+          {:error, reason} -> Logger.warning("Failed to decode gossip poll: #{inspect(reason)}")
+        end
+      else
+        if msg.reply_to do
+          Logger.debug("Processing request/reply on #{msg.topic}, reply_to: #{msg.reply_to}")
 
-        decoded =
+          decoded =
+            case BotArmyCore.NATS.Decoder.decode(msg.body) do
+              {:ok, decoded_message} ->
+                decoded_message
+
+              {:error, _reason} ->
+                # Request/reply messages may not follow envelope format — try plain JSON
+                case Jason.decode(msg.body) do
+                  {:ok, plain} -> plain
+                  _ -> %{}
+                end
+            end
+
+          # Keep the consumer mailbox responsive under load by handling request/reply
+          # work asynchronously. This prevents long-running subjects like llm.skill.execute
+          # from blocking llm.skill.prompt.submit handling in the same GenServer loop.
+          spawn(fn -> handle_request_reply(msg.topic, decoded, msg.reply_to) end)
+        else
           case BotArmyCore.NATS.Decoder.decode(msg.body) do
             {:ok, decoded_message} ->
-              decoded_message
+              route_message(decoded_message)
 
-            {:error, _reason} ->
-              # Request/reply messages may not follow envelope format — try plain JSON
-              case Jason.decode(msg.body) do
-                {:ok, plain} -> plain
-                _ -> %{}
-              end
+            {:error, reason} ->
+              Logger.warning("Failed to decode message from #{msg.topic}: #{inspect(reason)}")
           end
-
-        # Keep the consumer mailbox responsive under load by handling request/reply
-        # work asynchronously. This prevents long-running subjects like llm.skill.execute
-        # from blocking llm.skill.prompt.submit handling in the same GenServer loop.
-        spawn(fn -> handle_request_reply(msg.topic, decoded, msg.reply_to) end)
-      else
-        case BotArmyCore.NATS.Decoder.decode(msg.body) do
-          {:ok, decoded_message} ->
-            route_message(decoded_message)
-
-          {:error, reason} ->
-            Logger.warning("Failed to decode message from #{msg.topic}: #{inspect(reason)}")
         end
       end
     end)
@@ -252,6 +265,7 @@ defmodule BotArmyLlm.NATS.Consumer do
   def handle_info(:registry_heartbeat, state) do
     if length(state.subscriptions) > 0 do
       BotArmyRuntime.Registry.register("llm", @subjects, @version)
+      BotArmyLlm.GossipPollVoter.maybe_vote_on_heartbeat()
       Process.send_after(self(), :registry_heartbeat, @registry_heartbeat_ms)
     end
 

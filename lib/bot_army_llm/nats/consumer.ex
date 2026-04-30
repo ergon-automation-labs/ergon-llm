@@ -269,10 +269,10 @@ defmodule BotArmyLlm.NATS.Consumer do
         BotArmyLlm.Handlers.SkillExecuteHandler.handle_execute(message, reply_to)
 
       "llm.prompt.submit" ->
-        handle_prompt_request_reply(message, reply_to)
+        handle_prompt_request_reply(message, reply_to, false)
 
       "llm.skill.prompt.submit" ->
-        handle_prompt_request_reply(message, reply_to)
+        handle_prompt_request_reply(message, reply_to, true)
 
       "llm.request.chat" ->
         handle_chat_request_reply(message, reply_to)
@@ -360,7 +360,7 @@ defmodule BotArmyLlm.NATS.Consumer do
     end
   end
 
-  defp handle_prompt_request_reply(message, reply_to) do
+  defp handle_prompt_request_reply(message, reply_to, allow_cloud_when_sensitive) do
     spawn(fn ->
       payload = message["payload"] || message
       text = payload["text"]
@@ -372,7 +372,11 @@ defmodule BotArmyLlm.NATS.Consumer do
       result =
         try do
           BotArmyLlm.LocalQueueManager.increment()
-          llm_client.complete(text, model: model)
+
+          llm_client.complete(text,
+            model: model,
+            allow_cloud_when_sensitive: allow_cloud_when_sensitive
+          )
         after
           BotArmyLlm.LocalQueueManager.decrement()
         end

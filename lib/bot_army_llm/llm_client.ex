@@ -50,10 +50,11 @@ defmodule BotArmyLlm.LlmClient do
   def complete(text, opts \\ []) when is_binary(text) do
     start_time = System.monotonic_time(:millisecond)
     complexity = ComplexityScorer.score(text)
+    allow_cloud_when_sensitive = Keyword.get(opts, :allow_cloud_when_sensitive, false)
 
     # Check for sensitive data before routing
     providers =
-      if SafetyClassifier.safe_for_cloud?(text) do
+      if SafetyClassifier.safe_for_cloud?(text) or allow_cloud_when_sensitive do
         provider_chain(complexity)
       else
         SafetyClassifier.log_decision(:contains_sensitive, "routing to local-only providers")

@@ -37,11 +37,21 @@ defmodule BotArmyLlm.NATS.Consumer do
       description: "Pi-go dedicated chat request/reply"
     },
     %{subject: "llm.prompt.submit", type: :request_reply, description: "Submit prompt"},
+    %{
+      subject: "llm.skill.prompt.submit",
+      type: :request_reply,
+      description: "Dedicated prompt submit for skills execution"
+    },
     %{subject: "llm.inference.chain", type: :subscribe, description: "Execute chain"},
     %{subject: "llm.inference.converse", type: :subscribe, description: "Converse"},
     %{subject: "llm.response.parse", type: :subscribe, description: "Parse response"},
     %{subject: "llm.vision.analyze", type: :subscribe, description: "Analyze image"},
     %{subject: "llm.embed.request", type: :subscribe, description: "Generate embedding"},
+    %{
+      subject: "llm.embed.request.bulk",
+      type: :subscribe,
+      description: "Generate embedding (bulk/background traffic)"
+    },
     %{subject: "llm.rag.index", type: :subscribe, description: "Index document"},
     %{subject: "llm.rag.search", type: :subscribe, description: "Search documents"},
     %{subject: "llm.rag.delete", type: :subscribe, description: "Delete document"},
@@ -120,11 +130,13 @@ defmodule BotArmyLlm.NATS.Consumer do
       "llm.request.chat",
       "pi-go.llm.request.chat",
       "llm.prompt.submit",
+      "llm.skill.prompt.submit",
       "llm.inference.chain",
       "llm.inference.converse",
       "llm.response.parse",
       "llm.vision.analyze",
       "llm.embed.request",
+      "llm.embed.request.bulk",
       "llm.rag.index",
       "llm.rag.search",
       "llm.rag.delete",
@@ -254,6 +266,9 @@ defmodule BotArmyLlm.NATS.Consumer do
         BotArmyLlm.Handlers.SkillExecuteHandler.handle_execute(message, reply_to)
 
       "llm.prompt.submit" ->
+        handle_prompt_request_reply(message, reply_to)
+
+      "llm.skill.prompt.submit" ->
         handle_prompt_request_reply(message, reply_to)
 
       "llm.request.chat" ->
@@ -503,6 +518,9 @@ defmodule BotArmyLlm.NATS.Consumer do
           "llm.prompt.submit" ->
             BotArmyLlm.Handlers.PromptHandler.handle_submit(message)
 
+          "llm.skill.prompt.submit" ->
+            BotArmyLlm.Handlers.PromptHandler.handle_submit(message)
+
           "llm.inference.chain" ->
             BotArmyLlm.Handlers.InferenceHandler.handle_chain(message)
 
@@ -516,7 +534,10 @@ defmodule BotArmyLlm.NATS.Consumer do
             BotArmyLlm.Handlers.VisionHandler.handle_analyze(message)
 
           "llm.embed.request" ->
-            BotArmyLlm.Handlers.EmbeddingHandler.handle_embed(message)
+            spawn_embedding_handler(message)
+
+          "llm.embed.request.bulk" ->
+            spawn_embedding_handler(message)
 
           "llm.rag.index" ->
             BotArmyLlm.Handlers.RAGHandler.handle_index(message)
@@ -531,5 +552,9 @@ defmodule BotArmyLlm.NATS.Consumer do
             Logger.debug("Unknown LLM event type: #{event}")
         end
     end
+  end
+
+  defp spawn_embedding_handler(message) do
+    spawn(fn -> BotArmyLlm.Handlers.EmbeddingHandler.handle_embed(message) end)
   end
 end

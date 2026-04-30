@@ -63,6 +63,7 @@ defmodule BotArmyLlm.Handlers.EmbeddingHandler do
   defp process_embed(payload, event_id, tenant_id, user_id) do
     text = payload["text"]
     card_id = payload["card_id"]
+    reference_id = payload["reference_id"]
     model = EmbeddingConfig.optional_explicit_model(Map.get(payload, "model"))
 
     llm_client = Application.get_env(:bot_army_llm, :llm_client, BotArmyLlm.LlmClient)
@@ -77,6 +78,7 @@ defmodule BotArmyLlm.Handlers.EmbeddingHandler do
           embedding,
           response.model_used,
           card_id,
+          reference_id,
           event_id,
           tenant_id,
           user_id
@@ -88,7 +90,15 @@ defmodule BotArmyLlm.Handlers.EmbeddingHandler do
     end
   end
 
-  defp publish_embedding(embedding, model_used, card_id, triggered_by_event_id, tenant_id, user_id) do
+  defp publish_embedding(
+         embedding,
+         model_used,
+         card_id,
+         reference_id,
+         triggered_by_event_id,
+         tenant_id,
+         user_id
+       ) do
     payload = %{
       "embedding" => embedding,
       "model_used" => model_used,
@@ -100,6 +110,13 @@ defmodule BotArmyLlm.Handlers.EmbeddingHandler do
     payload =
       if card_id do
         Map.put(payload, "card_id", card_id)
+      else
+        payload
+      end
+
+    payload =
+      if is_binary(reference_id) and reference_id != "" do
+        Map.put(payload, "reference_id", reference_id)
       else
         payload
       end

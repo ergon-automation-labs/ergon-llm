@@ -8,8 +8,8 @@ defmodule BotArmyLlm.Handlers.SkillExecuteHandler do
   require Logger
 
   @skills_subject_prefix "bot.army.skills.command."
-  @default_timeout_ms 75_000
-  @min_timeout_ms 60_000
+  @default_timeout_ms 90_000
+  @min_timeout_ms 90_000
 
   @spec handle_execute(map(), String.t()) :: :ok
   def handle_execute(message, reply_to) do

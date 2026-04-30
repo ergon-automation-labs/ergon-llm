@@ -8,6 +8,7 @@ defmodule BotArmyLlm.GossipPollVoter do
     payload = Map.get(message, "payload", %{})
     poll_id = Map.get(payload, "poll_id")
     topic = Map.get(payload, "topic", "general")
+    options = Map.get(payload, "options", [])
     ttl_seconds = Map.get(payload, "ttl_seconds", 60)
 
     if is_binary(poll_id) and poll_id != "" do
@@ -15,7 +16,8 @@ defmodule BotArmyLlm.GossipPollVoter do
 
       :ets.insert(
         @table,
-        {:active_poll, %{poll_id: poll_id, topic: topic, expires_at: expires_at}}
+        {:active_poll,
+         %{poll_id: poll_id, topic: topic, options: options, expires_at: expires_at}}
       )
     end
   end
@@ -24,7 +26,10 @@ defmodule BotArmyLlm.GossipPollVoter do
     ensure_table!()
 
     case :ets.lookup(@table, :active_poll) do
-      [{:active_poll, %{poll_id: poll_id, topic: topic, expires_at: expires_at}}] ->
+      [
+        {:active_poll,
+         %{poll_id: poll_id, topic: topic, options: options, expires_at: expires_at}}
+      ] ->
         now = System.system_time(:second)
         voted_key = {:voted, poll_id}
 
@@ -37,7 +42,7 @@ defmodule BotArmyLlm.GossipPollVoter do
             :ok
 
           true ->
-            publish_poll_vote(poll_id, topic)
+            publish_poll_vote(poll_id, topic, options)
             :ets.insert(@table, {voted_key, true})
         end
 
@@ -46,7 +51,9 @@ defmodule BotArmyLlm.GossipPollVoter do
     end
   end
 
-  defp publish_poll_vote(poll_id, topic) do
+  defp publish_poll_vote(poll_id, topic, options) do
+    vote = suggest_vote(topic, options)
+
     message = %{
       "event_id" => UUID.uuid4(),
       "event" => "gossip.poll.vote",
@@ -59,7 +66,7 @@ defmodule BotArmyLlm.GossipPollVoter do
         "poll_id" => poll_id,
         "topic" => topic,
         "voter" => "llm_bot",
-        "vote" => "upvote",
+        "vote" => vote,
         "reason" => "voted_on_heartbeat_wakeup"
       }
     }
@@ -71,6 +78,23 @@ defmodule BotArmyLlm.GossipPollVoter do
     case :ets.whereis(@table) do
       :undefined -> :ets.new(@table, [:named_table, :set, :public, read_concurrency: true])
       _ -> :ok
+    end
+  end
+
+  defp suggest_vote(topic, options) do
+    preferred =
+      case topic do
+        "focus" -> "deep_work"
+        "risk" -> "quality"
+        "coordination" -> "dependencies"
+        "priorities" -> "protect_focus"
+        _ -> nil
+      end
+
+    cond do
+      is_binary(preferred) and preferred in options -> preferred
+      is_list(options) and options != [] -> List.first(options)
+      true -> "upvote"
     end
   end
 end

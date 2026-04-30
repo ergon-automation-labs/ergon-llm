@@ -211,7 +211,10 @@ defmodule BotArmyLlm.NATS.Consumer do
               end
           end
 
-        handle_request_reply(msg.topic, decoded, msg.reply_to)
+        # Keep the consumer mailbox responsive under load by handling request/reply
+        # work asynchronously. This prevents long-running subjects like llm.skill.execute
+        # from blocking llm.skill.prompt.submit handling in the same GenServer loop.
+        spawn(fn -> handle_request_reply(msg.topic, decoded, msg.reply_to) end)
       else
         case BotArmyCore.NATS.Decoder.decode(msg.body) do
           {:ok, decoded_message} ->

@@ -112,50 +112,11 @@ defmodule BotArmyLlm.GossipPollVoter do
   end
 
   defp choose_priority_vote(options, context_snapshot) do
-    tasks = list_size(context_snapshot["tasks_top"])
-    projects = list_size(context_snapshot["projects_top"])
-    goals = list_size(context_snapshot["goals_top"])
-
-    text =
-      [
-        context_snapshot["tasks_top"],
-        context_snapshot["projects_top"],
-        context_snapshot["goals_top"]
-      ]
-      |> List.flatten()
-      |> Enum.filter(&is_binary/1)
-      |> Enum.join(" ")
-      |> String.downcase()
-
-    preferred =
-      cond do
-        String.contains?(text, ["risk", "block", "fix", "incident", "hardening"]) ->
-          "reduce_load"
-
-        tasks >= 9 or projects >= 6 ->
-          "reduce_load"
-
-        String.contains?(text, ["release", "ship", "deploy", "launch"]) and tasks <= 6 and
-            goals <= 3 ->
-          "ship_more"
-
-        true ->
-          "protect_focus"
-      end
-
-    cond do
-      preferred in options ->
-        preferred
-
-      is_list(options) and options != [] ->
-        idx = :erlang.phash2(text <> ":llm", length(options))
-        Enum.at(options, idx)
-
-      true ->
-        "protect_focus"
-    end
+    BotArmyRuntime.GossipPollAffinity.choose_priority_vote(
+      options,
+      context_snapshot,
+      :llm,
+      ":llm"
+    )
   end
-
-  defp list_size(list) when is_list(list), do: length(list)
-  defp list_size(_), do: 0
 end

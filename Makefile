@@ -27,7 +27,7 @@ help:
 	@echo "  make logs-errors     - Recent errors/warnings with grc"
 	@echo ""
 	@echo "Release commands:"
-	@echo "  make release         - Build OTP release locally"
+	@echo "  make release         - Build OTP release (runs test first; same gate as pre-push)"
 	@echo "  make publish-release - Build, package, and publish to GitHub"
 	@echo ""
 	@echo "Normal workflow:"
@@ -108,7 +108,7 @@ clean:
 	rm -rf _build cover
 	rm -rf llm_proxy-*.tar.gz
 
-release: check
+release: test
 	@echo "==============================================="
 	@echo "Building OTP release"
 	@echo "==============================================="

@@ -124,8 +124,9 @@ publish-release: release
 	@echo "==============================================="
 	@echo ""
 
-	# Get version from release metadata
-	VERSION=$$(cat _build/prod/rel/llm_proxy/releases/RELEASES | tail -1 | cut -d' ' -f2); \
+	# Get version from release metadata (OTP uses start_erl.data; older layouts use RELEASES)
+	VERSION=$$(if [ -f _build/prod/rel/llm_proxy/releases/start_erl.data ]; then awk '{print $$2}' _build/prod/rel/llm_proxy/releases/start_erl.data; else tail -1 _build/prod/rel/llm_proxy/releases/RELEASES | cut -d' ' -f2; fi); \
+	if [ -z "$$VERSION" ]; then echo "Could not read release version from start_erl.data or RELEASES"; exit 1; fi; \
 	echo "Version: $$VERSION"; \
 	\
 	# Create tarball

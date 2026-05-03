@@ -28,6 +28,11 @@ defmodule BotArmyLlm.NATS.Consumer do
   @reconnect_delay_ms 5000
   @version Mix.Project.config()[:version]
   @registry_heartbeat_ms 20_000
+  @pi_go_llm_lane_subjects [
+    "pi-go.llm.request.chat.urgent",
+    "pi-go.llm.request.chat.interactive",
+    "pi-go.llm.request.chat.background"
+  ]
 
   @subjects [
     %{subject: "llm.request.chat", type: :request_reply, description: "Chat request/reply"},
@@ -35,6 +40,21 @@ defmodule BotArmyLlm.NATS.Consumer do
       subject: "pi-go.llm.request.chat",
       type: :request_reply,
       description: "Pi-go dedicated chat request/reply"
+    },
+    %{
+      subject: "pi-go.llm.request.chat.urgent",
+      type: :request_reply,
+      description: "Pi-go urgent lane chat request/reply"
+    },
+    %{
+      subject: "pi-go.llm.request.chat.interactive",
+      type: :request_reply,
+      description: "Pi-go interactive lane chat request/reply"
+    },
+    %{
+      subject: "pi-go.llm.request.chat.background",
+      type: :request_reply,
+      description: "Pi-go background lane chat request/reply"
     },
     %{subject: "llm.prompt.submit", type: :request_reply, description: "Submit prompt"},
     %{
@@ -134,6 +154,9 @@ defmodule BotArmyLlm.NATS.Consumer do
     subjects = [
       "llm.request.chat",
       "pi-go.llm.request.chat",
+      "pi-go.llm.request.chat.urgent",
+      "pi-go.llm.request.chat.interactive",
+      "pi-go.llm.request.chat.background",
       "llm.prompt.submit",
       "llm.skill.prompt.submit",
       "llm.inference.chain",
@@ -289,10 +312,13 @@ defmodule BotArmyLlm.NATS.Consumer do
         handle_prompt_request_reply(message, reply_to, true)
 
       "llm.request.chat" ->
-        handle_chat_request_reply(message, reply_to)
+        handle_chat_request_reply(subject, message, reply_to)
 
       "pi-go.llm.request.chat" ->
-        handle_chat_request_reply(message, reply_to)
+        handle_chat_request_reply(subject, message, reply_to)
+
+      lane_subject when lane_subject in @pi_go_llm_lane_subjects ->
+        handle_chat_request_reply(subject, message, reply_to)
 
       "llm.usage.query" ->
         handle_usage_query(message, reply_to)
@@ -435,22 +461,24 @@ defmodule BotArmyLlm.NATS.Consumer do
     publish_reply(reply_to, response)
   end
 
-  defp handle_chat_request_reply(message, reply_to) do
+  defp handle_chat_request_reply(subject, message, reply_to) do
     spawn(fn ->
       request_id = Map.get(message, "request_id", UUID.uuid4())
       request_type = Map.get(message, "request_type", "chat")
       prompt_context = Map.get(message, "prompt_context", %{})
       prompt = Map.get(prompt_context, "prompt", "")
-      model_preference = Map.get(message, "model_preference", "auto")
+      lane = lane_for_chat_subject(subject, message)
+      chat_opts = chat_opts_for_lane(message, lane)
 
       llm_client = Application.get_env(:bot_army_llm, :llm_client, BotArmyLlm.LlmClient)
 
       started_at = System.monotonic_time(:millisecond)
+      record_lane_metric(:record_lane_request, lane)
 
       result =
         try do
           BotArmyLlm.LocalQueueManager.increment()
-          llm_client.complete(prompt, model: model_preference)
+          llm_client.complete(prompt, chat_opts)
         after
           BotArmyLlm.LocalQueueManager.decrement()
         end
@@ -461,9 +489,10 @@ defmodule BotArmyLlm.NATS.Consumer do
             %{
               "request_id" => request_id,
               "response_type" => request_type,
-              "model_used" => Map.get(resp, :model_used, model_preference),
+              "model_used" => Map.get(resp, :model_used, "auto"),
               "content" => Map.get(resp, :completion, ""),
               "cache_hit" => false,
+              "lane" => lane,
               "latency_ms" => System.monotonic_time(:millisecond) - started_at,
               "tokens" => %{
                 "input" => Map.get(resp, :tokens_input, 0),
@@ -472,17 +501,125 @@ defmodule BotArmyLlm.NATS.Consumer do
             }
 
           {:error, reason} ->
-            %{
-              "request_id" => request_id,
-              "response_type" => request_type,
-              "error" => inspect(reason),
-              "cache_hit" => false,
-              "latency_ms" => System.monotonic_time(:millisecond) - started_at
-            }
+            maybe_fallback_chat_response(
+              prompt,
+              request_id,
+              request_type,
+              lane,
+              started_at,
+              reason
+            )
         end
+
+      record_lane_metric(:record_lane_latency, lane, response["latency_ms"])
 
       publish_reply(reply_to, response)
     end)
+  end
+
+  defp lane_for_chat_subject(subject, message) do
+    payload_lane =
+      case Map.get(message, "priority") do
+        lane when lane in ["urgent", "interactive", "background"] -> lane
+        _ -> nil
+      end
+
+    subject_lane =
+      cond do
+        subject == "pi-go.llm.request.chat.urgent" -> "urgent"
+        subject == "pi-go.llm.request.chat.background" -> "background"
+        subject == "pi-go.llm.request.chat.interactive" -> "interactive"
+        true -> nil
+      end
+
+    payload_lane || subject_lane || "interactive"
+  end
+
+  defp chat_opts_for_lane(message, lane) do
+    # Tiered defaults keep foreground traffic snappy and background traffic cheaper.
+    # Explicit caller options still win when present.
+    defaults =
+      case lane do
+        "urgent" ->
+          [temperature: 0.2, max_tokens: 400, allow_cloud_when_sensitive: false]
+
+        "background" ->
+          [temperature: 0.7, max_tokens: 250, allow_cloud_when_sensitive: true]
+
+        _ ->
+          [temperature: 0.5, max_tokens: 700, allow_cloud_when_sensitive: false]
+      end
+
+    Enum.reduce(defaults, [], fn {key, default}, acc ->
+      value = Map.get(message, Atom.to_string(key), default)
+      Keyword.put(acc, key, value)
+    end)
+  end
+
+  defp record_lane_metric(:record_lane_request, lane) do
+    if Process.whereis(BotArmyLlm.Metrics) do
+      BotArmyLlm.Metrics.record_lane_request(lane)
+    end
+  end
+
+  defp record_lane_metric(:record_lane_latency, lane, latency_ms) when is_integer(latency_ms) do
+    if Process.whereis(BotArmyLlm.Metrics) do
+      BotArmyLlm.Metrics.record_lane_latency(lane, latency_ms)
+    end
+  end
+
+  defp maybe_fallback_chat_response(prompt, request_id, request_type, lane, started_at, reason) do
+    latency_ms = System.monotonic_time(:millisecond) - started_at
+
+    if llm_capacity_error?(reason) do
+      %{
+        "request_id" => request_id,
+        "response_type" => request_type,
+        "model_used" => "deterministic_fallback",
+        "provider" => "local_fallback",
+        "content" => deterministic_fallback_content(prompt),
+        "cache_hit" => false,
+        "degraded" => true,
+        "degrade_reason" => inspect(reason),
+        "lane" => lane,
+        "latency_ms" => latency_ms,
+        "tokens" => %{"input" => 0, "output" => 0}
+      }
+    else
+      %{
+        "request_id" => request_id,
+        "response_type" => request_type,
+        "error" => inspect(reason),
+        "cache_hit" => false,
+        "lane" => lane,
+        "latency_ms" => latency_ms
+      }
+    end
+  end
+
+  defp llm_capacity_error?(:no_providers_available), do: true
+  defp llm_capacity_error?(:provider_not_configured), do: true
+  defp llm_capacity_error?({:ollama_unavailable, _}), do: true
+  defp llm_capacity_error?(_), do: false
+
+  defp deterministic_fallback_content(prompt) when is_binary(prompt) do
+    down = String.downcase(prompt)
+
+    cond do
+      String.contains?(down, "file writing") or
+        String.contains?(down, "write files") or
+          String.contains?(down, "write capability") ->
+        "LLM providers are temporarily unavailable, so I cannot verify runtime tool capability right now. " <>
+          "Please run a quick direct capability probe in your agent runtime (for example a small temp file write/read test) and retry."
+
+      true ->
+        "LLM providers are temporarily unavailable. I can still return partial context and deterministic checks, " <>
+          "or you can retry in a few seconds for full model-backed output."
+    end
+  end
+
+  defp deterministic_fallback_content(_prompt) do
+    "LLM providers are temporarily unavailable. Please retry in a few seconds."
   end
 
   defp publish_reply(reply_to, response) do

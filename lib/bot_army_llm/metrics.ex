@@ -30,7 +30,8 @@ defmodule BotArmyLlm.Metrics do
   end
 
   @doc "Record a provider call with latency"
-  def record_provider_call(provider, latency_ms) when is_binary(provider) and is_integer(latency_ms) do
+  def record_provider_call(provider, latency_ms)
+      when is_binary(provider) and is_integer(latency_ms) do
     GenServer.cast(__MODULE__, {:record_provider_call, provider, latency_ms})
   end
 
@@ -47,6 +48,16 @@ defmodule BotArmyLlm.Metrics do
   @doc "Record RAG search operation"
   def record_rag_search do
     GenServer.cast(__MODULE__, :record_rag_search)
+  end
+
+  @doc "Record lane-level request count"
+  def record_lane_request(lane) when is_binary(lane) do
+    GenServer.cast(__MODULE__, {:record_lane_request, lane})
+  end
+
+  @doc "Record lane-level latency sample (ms)"
+  def record_lane_latency(lane, latency_ms) when is_binary(lane) and is_integer(latency_ms) do
+    GenServer.cast(__MODULE__, {:record_lane_latency, lane, latency_ms})
   end
 
   @doc "Get current metrics summary"
@@ -72,6 +83,8 @@ defmodule BotArmyLlm.Metrics do
       provider_errors: %{},
       provider_fallbacks: 0,
       latencies: %{},
+      lane_requests: %{},
+      lane_latencies: %{},
       rag_indexed: 0,
       rag_searched: 0,
       started_at: DateTime.utc_now()
@@ -105,11 +118,12 @@ defmodule BotArmyLlm.Metrics do
     updated_latencies = Enum.take([latency_ms | provider_latencies], 1000)
     updated_latencies_map = Map.put(latencies, provider, updated_latencies)
 
-    {:noreply, %{
-      state
-      | provider_calls: provider_calls,
-        latencies: updated_latencies_map
-    }}
+    {:noreply,
+     %{
+       state
+       | provider_calls: provider_calls,
+         latencies: updated_latencies_map
+     }}
   end
 
   def handle_cast(:record_provider_fallback, state) do
@@ -124,6 +138,22 @@ defmodule BotArmyLlm.Metrics do
     {:noreply, %{state | rag_searched: state.rag_searched + 1}}
   end
 
+  def handle_cast({:record_lane_request, lane}, state) do
+    lane_requests = Map.update(state.lane_requests, lane, 1, &(&1 + 1))
+    {:noreply, %{state | lane_requests: lane_requests}}
+  end
+
+  def handle_cast({:record_lane_latency, lane, latency_ms}, state) do
+    lane_latencies = state.lane_latencies
+    samples = Map.get(lane_latencies, lane, [])
+
+    # Keep last 1000 latency samples per lane.
+    updated_samples = Enum.take([latency_ms | samples], 1000)
+    updated_lane_latencies = Map.put(lane_latencies, lane, updated_samples)
+
+    {:noreply, %{state | lane_latencies: updated_lane_latencies}}
+  end
+
   def handle_cast(:reset, _state) do
     new_state = %{
       requests: %{},
@@ -132,6 +162,8 @@ defmodule BotArmyLlm.Metrics do
       provider_errors: %{},
       provider_fallbacks: 0,
       latencies: %{},
+      lane_requests: %{},
+      lane_latencies: %{},
       rag_indexed: 0,
       rag_searched: 0,
       started_at: DateTime.utc_now()
@@ -159,6 +191,8 @@ defmodule BotArmyLlm.Metrics do
       provider_errors: state.provider_errors,
       provider_fallbacks: state.provider_fallbacks,
       latency_percentiles: compute_percentiles(state.latencies),
+      lane_requests: state.lane_requests,
+      lane_latency_percentiles: compute_percentiles(state.lane_latencies),
       rag_indexed: state.rag_indexed,
       rag_searched: state.rag_searched
     }
@@ -169,13 +203,14 @@ defmodule BotArmyLlm.Metrics do
       sorted = Enum.sort(latency_list)
       count = length(sorted)
 
-      {provider, %{
-        p50: percentile(sorted, 0.50, count),
-        p95: percentile(sorted, 0.95, count),
-        p99: percentile(sorted, 0.99, count),
-        min: Enum.min(sorted),
-        max: Enum.max(sorted)
-      }}
+      {provider,
+       %{
+         p50: percentile(sorted, 0.50, count),
+         p95: percentile(sorted, 0.95, count),
+         p99: percentile(sorted, 0.99, count),
+         min: Enum.min(sorted),
+         max: Enum.max(sorted)
+       }}
     end)
     |> Map.new()
   end

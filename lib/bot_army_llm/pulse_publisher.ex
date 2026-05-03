@@ -31,6 +31,7 @@ defmodule BotArmyLlm.PulsePublisher do
   use GenServer
   require Logger
 
+  @health_interval_ms 30 * 1000
   # 5 minutes
   @publish_interval_ms 30 * 60 * 1000
   @server __MODULE__
@@ -51,7 +52,27 @@ defmodule BotArmyLlm.PulsePublisher do
     }
 
     Process.send_after(self(), :publish_pulse, @publish_interval_ms)
+    Process.send_after(self(), :publish_health, 2_000)
     {:ok, state}
+  end
+
+  @impl true
+  def handle_info(:publish_health, state) do
+    health_signal =
+      cond do
+        state.error_count > 10 -> "critical"
+        state.error_count > 5 -> "degraded"
+        true -> "nominal"
+      end
+
+    BotArmyRuntime.SynapseHealth.publish(
+      source: "bot_army_llm",
+      service: "llm",
+      health_signal: health_signal
+    )
+
+    Process.send_after(self(), :publish_health, @health_interval_ms)
+    {:noreply, state}
   end
 
   @impl true

@@ -1,6 +1,6 @@
 SCRIPTS_DIRECTORY ?= $(abspath $(CURDIR)/../scripts)
 
-.PHONY: test-handlers test-stores test-nats test-integration test-full setup help deps run test credo dialyzer coverage check format clean release publish-release setup-hooks setup-db reset-db logs logs-tail logs-errors
+.PHONY: test-handlers test-stores test-nats test-integration test-full setup help deps run test credo dialyzer coverage check format clean release publish-release setup-hooks setup-db reset-db logs logs-tail logs-errors push-and-publish
 
 help:
 	@echo "BotArmyLlm - LLM Bot"
@@ -26,12 +26,13 @@ help:
 	@echo "  make logs-tail       - Tail with grc (brew install grc; make -C .. install-grc)"
 	@echo "  make logs-errors     - Recent errors/warnings with grc"
 	@echo ""
-	@echo "Release commands (normally automatic via git hook):"
-	@echo "  make release         - Build OTP release locally (manual, if needed)"
-	@echo "  make publish-release - Build, package, and publish to GitHub (manual, if needed)"
+	@echo "Release commands:"
+	@echo "  make release         - Build OTP release locally"
+	@echo "  make publish-release - Build, package, and publish to GitHub"
 	@echo ""
 	@echo "Normal workflow:"
-	@echo "  git push             - Pre-push hook validates, builds, and publishes automatically"
+	@echo "  git push             - Fast compile+test validation"
+	@echo "  make push-and-publish - Push then publish release asset"
 	@echo ""
 
 setup: init deps setup-hooks setup-db
@@ -146,6 +147,9 @@ publish-release: release
 	echo "2. Trigger deployment in Jenkins UI or wait for auto-deployment"; \
 	echo "3. Check deployment status: make jenkins-logs"; \
 	echo ""
+
+push-and-publish:
+	@git push && $(MAKE) publish-release
 
 logs:
 	@echo "Last 100 lines of llm_proxy logs:"

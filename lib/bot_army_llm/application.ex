@@ -52,6 +52,12 @@ defmodule BotArmyLlm.Application do
         # Local queue manager (tracks pending Ollama requests for visibility)
         {BotArmyLlm.LocalQueueManager, []},
 
+        # Veto listener — vetoes GTD remind during active LLM conversations
+        {BotArmyRuntime.Intent.VetoListener,
+         rules: [
+           [bot: "gtd", action: "remind", custom: &BotArmyLlm.VetoRules.veto_remind_during_chat/1]
+         ],
+         bot_name: "llm"},
         # NATS message consumer (depends on BotArmyRuntime.NATS.Connection being available)
         # Not started in tests to avoid connecting to real NATS
         {BotArmyLlm.NATS.Consumer, []}
@@ -81,11 +87,12 @@ defmodule BotArmyLlm.Application do
     end
   end
 
-  # Exclude Consumer in tests to avoid connecting to real NATS
+  # Exclude Consumer + VetoListener in tests to avoid connecting to real NATS
   defp maybe_exclude_consumer(children) do
     if @env == :test do
       Enum.reject(children, fn
         {BotArmyLlm.NATS.Consumer, []} -> true
+        {BotArmyRuntime.Intent.VetoListener, _} -> true
         _ -> false
       end)
     else

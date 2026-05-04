@@ -17,6 +17,13 @@ end
 # Ecto repositories for migrations
 config :bot_army_llm, ecto_repos: [BotArmyLlm.Repo]
 
+# Intent thresholds for LLM heartbeat decisions
+config :bot_army_llm, :intent_thresholds, %{
+  unsummarized_events: %{min: 20, weight: 0.6},
+  idle_minutes: %{min: 120, weight: 0.4},
+  random_threshold: 0.5
+}
+
 # Database and HTTP proxy: see config/runtime.exs (runtime config, not compile-time — required
 # so OTP releases read BOT_ARMY_LLM_* / DATABASE_* from the host when running migrations).
 

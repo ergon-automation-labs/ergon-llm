@@ -112,6 +112,11 @@ defmodule BotArmyLlm.NATS.Consumer do
       subject: "gossip.poll.broadcast",
       type: :subscribe,
       description: "Army general poll broadcasts"
+    },
+    %{
+      subject: "bot_army.llm.intent.summarize",
+      type: :subscribe,
+      description: "Intent: summarize recent activity"
     }
   ]
 

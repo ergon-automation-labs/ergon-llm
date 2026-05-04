@@ -58,6 +58,8 @@ defmodule BotArmyLlm.Application do
            [bot: "gtd", action: "remind", custom: &BotArmyLlm.VetoRules.veto_remind_during_chat/1]
          ],
          bot_name: "llm"},
+        # Intent evaluator — proactive summarization when context warrants it
+        {BotArmyLlm.IntentEvaluator, []},
         # NATS message consumer (depends on BotArmyRuntime.NATS.Connection being available)
         # Not started in tests to avoid connecting to real NATS
         {BotArmyLlm.NATS.Consumer, []}
@@ -87,12 +89,13 @@ defmodule BotArmyLlm.Application do
     end
   end
 
-  # Exclude Consumer + VetoListener in tests to avoid connecting to real NATS
+  # Exclude Consumer + VetoListener + IntentEvaluator in tests to avoid connecting to real NATS
   defp maybe_exclude_consumer(children) do
     if @env == :test do
       Enum.reject(children, fn
         {BotArmyLlm.NATS.Consumer, []} -> true
         {BotArmyRuntime.Intent.VetoListener, _} -> true
+        {BotArmyLlm.IntentEvaluator, []} -> true
         _ -> false
       end)
     else

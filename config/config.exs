@@ -24,6 +24,25 @@ config :bot_army_llm, :intent_thresholds, %{
   random_threshold: 0.5
 }
 
+config :logger, :console,
+  metadata: [
+    :source,
+    :model,
+    :latency_ms,
+    :last_error,
+    :provider,
+    :slug,
+    :subject,
+    :timeout_ms,
+    :reason,
+    :payload,
+    :action,
+    :score,
+    :bot_name,
+    :result,
+    :sample
+  ]
+
 # Database and HTTP proxy: see config/runtime.exs (runtime config, not compile-time — required
 # so OTP releases read BOT_ARMY_LLM_* / DATABASE_* from the host when running migrations).
 

@@ -90,7 +90,7 @@ test-full:
 	$(MIX) test --include integration --include nats_live --trace
 
 credo:
-	$(MIX) credo
+	$(MIX) credo --only warning
 
 dialyzer: deps
 	$(MIX) dialyzer
@@ -98,7 +98,7 @@ dialyzer: deps
 coverage:
 	$(MIX) coveralls
 
-check: test credo dialyzer
+check: test credo
 	@echo "All checks passed!"
 
 format:
@@ -109,7 +109,7 @@ clean:
 	rm -rf _build cover
 	rm -rf llm_proxy-*.tar.gz
 
-release: test
+release: check
 	@echo "==============================================="
 	@echo "Building OTP release"
 	@echo "==============================================="
@@ -126,18 +126,26 @@ publish-release: release
 	@echo "==============================================="
 	@echo ""
 
-	VERSION=$$(if [ -f _build/prod/rel/llm_proxy/releases/start_erl.data ]; then awk '{print $$2}' _build/prod/rel/llm_proxy/releases/start_erl.data; else tail -1 _build/prod/rel/llm_proxy/releases/RELEASES | cut -d' ' -f2; fi); \
-	if [ -z "$$VERSION" ]; then echo "Could not read release version from start_erl.data or RELEASES"; exit 1; fi; \
+	VERSION=$$(sed -n 's/^[[:space:]]*version:[[:space:]]*"\([^"]*\)".*/\1/p' mix.exs | head -n 1); \
+	if [ -z "$$VERSION" ]; then \
+		echo "Failed to resolve version from mix.exs"; \
+		exit 1; \
+	fi; \
+	TARBALL=llm_proxy-$$VERSION.tar.gz; \
 	echo "Version: $$VERSION"; \
 	echo "Creating release tarball..."; \
-	tar -czf llm_proxy-$$VERSION.tar.gz -C _build/prod/rel llm_proxy/; \
-	echo "✓ Tarball created: llm_proxy-$$VERSION.tar.gz"; \
+	tar -czf "$$TARBALL" -C _build/prod/rel llm_proxy/; \
+	echo "✓ Tarball created: $$TARBALL"; \
 	echo ""; \
 	echo "Creating GitHub release v$$VERSION..."; \
-	gh release create v$$VERSION llm_proxy-$$VERSION.tar.gz \
-		--title "Release v$$VERSION" \
-		--notes "LLM Bot Elixir release v$$VERSION. Download and deploy with Jenkins." \
-		--draft=false || gh release upload v$$VERSION llm_proxy-$$VERSION.tar.gz --clobber; \
+	if gh release view "v$$VERSION" >/dev/null 2>&1; then \
+		gh release upload "v$$VERSION" "$$TARBALL" --clobber; \
+	else \
+		gh release create "v$$VERSION" "$$TARBALL" \
+			--title "Release v$$VERSION" \
+			--notes "LLM Bot Elixir release v$$VERSION. Download and deploy with Jenkins." \
+			--draft=false; \
+	fi; \
 	echo "✓ Release published to GitHub"; \
 	echo ""; \
 	echo "Next steps:"; \

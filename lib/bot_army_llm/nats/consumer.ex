@@ -117,6 +117,11 @@ defmodule BotArmyLlm.NATS.Consumer do
       subject: "bot_army.llm.intent.summarize",
       type: :subscribe,
       description: "Intent: summarize recent activity"
+    },
+    %{
+      subject: "llm.army.opinion.vote",
+      type: :request_reply,
+      description: "Army opinion collect voter (persona-style choice)"
     }
   ]
 
@@ -181,7 +186,8 @@ defmodule BotArmyLlm.NATS.Consumer do
       "conv.request.llm.>",
       "conv.mailbox.llm",
       "conv.followup.>",
-      "gossip.poll.broadcast"
+      "gossip.poll.broadcast",
+      "llm.army.opinion.vote"
     ]
 
     subs =
@@ -333,6 +339,10 @@ defmodule BotArmyLlm.NATS.Consumer do
 
       "llm.queue.status" ->
         handle_queue_status(message, reply_to)
+
+      "llm.army.opinion.vote" ->
+        vote = BotArmyRuntime.Intent.ArmyOpinionVote.build_reply(:llm, message)
+        publish_reply(reply_to, vote)
 
       _ ->
         Logger.debug("Unknown request/reply subject: #{subject}")

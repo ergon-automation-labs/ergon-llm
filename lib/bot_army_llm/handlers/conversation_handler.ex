@@ -50,6 +50,8 @@ defmodule BotArmyLlm.Handlers.ConversationHandler do
     intent = body["intent"]
     text = body["text"] || body["message"]
 
+    started_at = System.monotonic_time(:millisecond)
+
     result =
       case intent do
         "summarize" -> call_llm(text, :fast)
@@ -57,6 +59,12 @@ defmodule BotArmyLlm.Handlers.ConversationHandler do
         "ask" -> call_llm(text, :quality)
         _ -> {:error, :unknown_intent}
       end
+
+    if Process.whereis(BotArmyLlm.Metrics) do
+      elapsed = System.monotonic_time(:millisecond) - started_at
+      BotArmyLlm.Metrics.record_intent_request(intent)
+      BotArmyLlm.Metrics.record_intent_latency(intent, elapsed)
+    end
 
     case result do
       {:ok, response} ->

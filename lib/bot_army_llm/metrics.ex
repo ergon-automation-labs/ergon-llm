@@ -60,6 +60,17 @@ defmodule BotArmyLlm.Metrics do
     GenServer.cast(__MODULE__, {:record_lane_latency, lane, latency_ms})
   end
 
+  @doc "Record intent-type request count"
+  def record_intent_request(intent) when is_binary(intent) do
+    GenServer.cast(__MODULE__, {:record_intent_request, intent})
+  end
+
+  @doc "Record intent-type latency sample (ms)"
+  def record_intent_latency(intent, latency_ms)
+      when is_binary(intent) and is_integer(latency_ms) do
+    GenServer.cast(__MODULE__, {:record_intent_latency, intent, latency_ms})
+  end
+
   @doc "Get current metrics summary"
   def get_summary do
     GenServer.call(__MODULE__, :get_summary)
@@ -85,6 +96,8 @@ defmodule BotArmyLlm.Metrics do
       latencies: %{},
       lane_requests: %{},
       lane_latencies: %{},
+      intent_requests: %{},
+      intent_latencies: %{},
       rag_indexed: 0,
       rag_searched: 0,
       started_at: DateTime.utc_now()
@@ -154,6 +167,22 @@ defmodule BotArmyLlm.Metrics do
     {:noreply, %{state | lane_latencies: updated_lane_latencies}}
   end
 
+  def handle_cast({:record_intent_request, intent}, state) do
+    intent_requests = Map.update(state.intent_requests, intent, 1, &(&1 + 1))
+    {:noreply, %{state | intent_requests: intent_requests}}
+  end
+
+  def handle_cast({:record_intent_latency, intent, latency_ms}, state) do
+    intent_latencies = state.intent_latencies
+    samples = Map.get(intent_latencies, intent, [])
+
+    # Keep last 1000 latency samples per intent.
+    updated_samples = Enum.take([latency_ms | samples], 1000)
+    updated_intent_latencies = Map.put(intent_latencies, intent, updated_samples)
+
+    {:noreply, %{state | intent_latencies: updated_intent_latencies}}
+  end
+
   def handle_cast(:reset, _state) do
     new_state = %{
       requests: %{},
@@ -164,6 +193,8 @@ defmodule BotArmyLlm.Metrics do
       latencies: %{},
       lane_requests: %{},
       lane_latencies: %{},
+      intent_requests: %{},
+      intent_latencies: %{},
       rag_indexed: 0,
       rag_searched: 0,
       started_at: DateTime.utc_now()
@@ -193,6 +224,8 @@ defmodule BotArmyLlm.Metrics do
       latency_percentiles: compute_percentiles(state.latencies),
       lane_requests: state.lane_requests,
       lane_latency_percentiles: compute_percentiles(state.lane_latencies),
+      intent_requests: state.intent_requests,
+      intent_latency_percentiles: compute_percentiles(state.intent_latencies),
       rag_indexed: state.rag_indexed,
       rag_searched: state.rag_searched
     }

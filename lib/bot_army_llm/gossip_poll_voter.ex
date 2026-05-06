@@ -65,7 +65,7 @@ defmodule BotArmyLlm.GossipPollVoter do
   end
 
   defp publish_poll_vote(poll_id, topic, options, context_snapshot) do
-    vote = suggest_vote(topic, options, context_snapshot)
+    vote = llm_vote_or_fallback(topic, options, context_snapshot)
 
     message = %{
       "event_id" => UUID.uuid4(),
@@ -80,7 +80,7 @@ defmodule BotArmyLlm.GossipPollVoter do
         "topic" => topic,
         "voter" => "llm_bot",
         "vote" => vote,
-        "reason" => "voted_on_heartbeat_wakeup"
+        "reason" => "heartbeat_deliberation"
       }
     }
 
@@ -91,6 +91,30 @@ defmodule BotArmyLlm.GossipPollVoter do
     case :ets.whereis(@table) do
       :undefined -> :ets.new(@table, [:named_table, :set, :public, read_concurrency: true])
       _ -> :ok
+    end
+  end
+
+  defp llm_vote_or_fallback(topic, options, context_snapshot) do
+    prompt = """
+    You are the LLM bot. Poll topic: "#{topic}". Options: #{Enum.join(options, ", ")}.
+    Context: #{inspect(context_snapshot)}.
+    Reply JSON only: {"vote": "<option>", "reason": "<one sentence>"}
+    """
+
+    case BotArmyLlm.LlmClient.complete(prompt, model: :fast) do
+      {:ok, %{text: text}} ->
+        case Jason.decode(text) do
+          {:ok, %{"vote" => v}} when is_binary(v) ->
+            if Enum.member?(options, v),
+              do: v,
+              else: suggest_vote(topic, options, context_snapshot)
+
+          _ ->
+            suggest_vote(topic, options, context_snapshot)
+        end
+
+      _ ->
+        suggest_vote(topic, options, context_snapshot)
     end
   end
 

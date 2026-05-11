@@ -405,6 +405,36 @@ defmodule BotArmyLlm.LlmClientTest do
     end
   end
 
+  describe "failed provider skip routing" do
+    test "complete/2 skips providers listed in failed_providers opts" do
+      defmodule MockHealthCheckerSkipOllama do
+        def best_ollama_node(_complexity), do: {:error, :no_healthy_nodes}
+        def load_acceptable?(), do: true
+        def node_status, do: []
+      end
+
+      with_env(
+        [
+          {"BLACKBOX_API_KEY", nil},
+          {"OPENROUTER_API_KEY", nil},
+          {"ANTHROPIC_API_KEY", nil}
+        ],
+        fn ->
+          Application.put_env(:bot_army_llm, :ollama_health_checker, MockHealthCheckerSkipOllama)
+
+          try do
+            assert {:error, :no_providers_available} =
+                     LlmClient.complete("What is the capital of France?",
+                       failed_providers: ["ollama"]
+                     )
+          after
+            Application.delete_env(:bot_army_llm, :ollama_health_checker)
+          end
+        end
+      )
+    end
+  end
+
   # Temporarily override env vars for the duration of a test
   defp with_env(env_vars, func) do
     old_values = Enum.map(env_vars, fn {key, _} -> {key, System.get_env(key)} end)

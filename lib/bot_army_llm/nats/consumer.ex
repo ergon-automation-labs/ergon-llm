@@ -483,7 +483,11 @@ defmodule BotArmyLlm.NATS.Consumer do
       prompt_context = Map.get(message, "prompt_context", %{})
       prompt = Map.get(prompt_context, "prompt", "")
       lane = lane_for_chat_subject(subject, message)
-      chat_opts = chat_opts_for_lane(message, lane)
+
+      chat_opts =
+        message
+        |> chat_opts_for_lane(lane)
+        |> Keyword.merge(failed_provider_chat_opts(message, prompt_context))
 
       llm_client = Application.get_env(:bot_army_llm, :llm_client, BotArmyLlm.LlmClient)
 
@@ -549,6 +553,49 @@ defmodule BotArmyLlm.NATS.Consumer do
 
     payload_lane || subject_lane || "interactive"
   end
+
+  defp failed_provider_chat_opts(message, prompt_context) do
+    failed =
+      (collect_failed_providers(prompt_context) ++ collect_failed_providers(message))
+      |> Enum.map(&normalize_failed_provider_name/1)
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.uniq()
+
+    case failed do
+      [] ->
+        []
+
+      providers ->
+        [failed_providers: providers, provider_failed: List.last(providers)]
+    end
+  end
+
+  defp collect_failed_providers(%{} = map) do
+    Enum.flat_map(
+      ["failed_providers", "provider_failed"],
+      fn key ->
+        case Map.get(map, key) do
+          list when is_list(list) -> list
+          value when is_binary(value) -> [value]
+          _ -> []
+        end
+      end
+    )
+  end
+
+  defp collect_failed_providers(_), do: []
+
+  defp normalize_failed_provider_name(value) when is_binary(value) do
+    value
+    |> String.trim()
+    |> String.trim_leading(":")
+    |> String.downcase()
+  end
+
+  defp normalize_failed_provider_name(value) when is_atom(value),
+    do: normalize_failed_provider_name(Atom.to_string(value))
+
+  defp normalize_failed_provider_name(_), do: ""
 
   defp chat_opts_for_lane(message, lane) do
     # Tiered defaults keep foreground traffic snappy and background traffic cheaper.

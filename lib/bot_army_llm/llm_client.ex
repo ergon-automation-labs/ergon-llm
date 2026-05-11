@@ -61,6 +61,7 @@ defmodule BotArmyLlm.LlmClient do
         # Local only
         [:ollama]
       end
+      |> drop_failed_providers(opts)
 
     Logger.debug(
       "LLM routing: complexity=#{complexity}, chain=#{inspect(providers)}, safety_checked=true"
@@ -165,6 +166,7 @@ defmodule BotArmyLlm.LlmClient do
         # Local only
         [:ollama]
       end
+      |> drop_failed_providers(opts)
 
     Logger.debug(
       "LLM routing (messages): complexity=#{complexity}, chain=#{inspect(providers)}, safety_checked=true"
@@ -296,6 +298,62 @@ defmodule BotArmyLlm.LlmClient do
     else
       Logger.info("LLM: Local nodes under load — routing to cloud providers")
       chain
+    end
+  end
+
+  defp drop_failed_providers(providers, opts) when is_list(providers) do
+    skip = failed_provider_skip_set(opts)
+
+    if MapSet.size(skip) == 0 do
+      providers
+    else
+      Enum.reject(providers, fn provider ->
+        MapSet.member?(skip, provider) or MapSet.member?(skip, Atom.to_string(provider))
+      end)
+    end
+  end
+
+  defp failed_provider_skip_set(opts) do
+    (normalize_provider_list(Keyword.get(opts, :failed_providers, [])) ++
+       normalize_provider_list(Keyword.get(opts, :skip_providers, [])) ++
+       normalize_provider_list(List.wrap(Keyword.get(opts, :provider_failed))))
+    |> Enum.flat_map(&provider_token_variants/1)
+    |> Enum.reject(&(&1 == ""))
+    |> MapSet.new()
+  end
+
+  defp normalize_provider_list(values) when is_list(values) do
+    Enum.flat_map(values, &normalize_provider_list/1)
+  end
+
+  defp normalize_provider_list(value) when is_binary(value) do
+    value
+    |> String.split(",")
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+  end
+
+  defp normalize_provider_list(value) when is_atom(value) do
+    [Atom.to_string(value)]
+  end
+
+  defp normalize_provider_list(_), do: []
+
+  defp provider_token_variants(token) when is_binary(token) do
+    down = String.downcase(String.trim(token))
+
+    cond do
+      down == "" ->
+        []
+
+      down in ["local_fallback", "deterministic_fallback"] ->
+        ["local_fallback", "deterministic_fallback"]
+
+      String.starts_with?(down, ":") ->
+        [down, String.trim_leading(down, ":")]
+
+      true ->
+        [down, ":" <> down]
     end
   end
 

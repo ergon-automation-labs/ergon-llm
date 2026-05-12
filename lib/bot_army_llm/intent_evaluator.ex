@@ -54,6 +54,14 @@ defmodule BotArmyLlm.IntentEvaluator do
   @impl true
   def handle_info(:evaluate, state) do
     results = do_evaluate()
+
+    acted_count =
+      Enum.count(results, fn
+        {:acted, _, _, _, _} -> true
+        _ -> false
+      end)
+
+    Logger.debug("[LLM.Intent] Evaluated #{length(results)} intents, #{acted_count} acted")
     Process.send_after(self(), :evaluate, @evaluate_interval_ms)
     {:noreply, %{state | last_evaluation: DateTime.utc_now()}}
   end

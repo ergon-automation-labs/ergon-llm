@@ -48,6 +48,7 @@ defmodule BotArmyLlm.LlmClient do
     - `max_tokens`: Max response tokens (default: 1000)
   """
   def complete(text, opts \\ []) when is_binary(text) do
+    text = BotArmyLlm.ReasoningScaffold.wrap(text, opts)
     start_time = System.monotonic_time(:millisecond)
     complexity = ComplexityScorer.score(text)
     allow_cloud_when_sensitive = Keyword.get(opts, :allow_cloud_when_sensitive, false)
@@ -139,6 +140,7 @@ defmodule BotArmyLlm.LlmClient do
     - `max_tokens`: Max response tokens (default: 1000)
   """
   def complete_messages(messages, opts \\ []) when is_list(messages) do
+    messages = BotArmyLlm.ReasoningScaffold.wrap_messages(messages, opts)
     start_time = System.monotonic_time(:millisecond)
 
     # Score based on the last user message if available

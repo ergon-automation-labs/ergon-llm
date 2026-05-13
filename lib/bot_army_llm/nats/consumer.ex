@@ -421,6 +421,7 @@ defmodule BotArmyLlm.NATS.Consumer do
       text = payload["text"]
       model = Map.get(payload, "model", "auto")
       prompt_id = Map.get(payload, "prompt_id", UUID.uuid4())
+      reasoning_mode = Map.get(payload, "reasoning_mode")
 
       llm_client = Application.get_env(:bot_army_llm, :llm_client, BotArmyLlm.LlmClient)
 
@@ -430,7 +431,8 @@ defmodule BotArmyLlm.NATS.Consumer do
 
           llm_client.complete(text,
             model: model,
-            allow_cloud_when_sensitive: allow_cloud_when_sensitive
+            allow_cloud_when_sensitive: allow_cloud_when_sensitive,
+            reasoning_mode: reasoning_mode
           )
         after
           BotArmyLlm.LocalQueueManager.decrement()
@@ -483,11 +485,13 @@ defmodule BotArmyLlm.NATS.Consumer do
       prompt_context = Map.get(message, "prompt_context", %{})
       prompt = Map.get(prompt_context, "prompt", "")
       lane = lane_for_chat_subject(subject, message)
+      reasoning_mode = Map.get(message, "reasoning_mode")
 
       chat_opts =
         message
         |> chat_opts_for_lane(lane)
         |> Keyword.merge(failed_provider_chat_opts(message, prompt_context))
+        |> Keyword.put(:reasoning_mode, reasoning_mode)
 
       llm_client = Application.get_env(:bot_army_llm, :llm_client, BotArmyLlm.LlmClient)
 

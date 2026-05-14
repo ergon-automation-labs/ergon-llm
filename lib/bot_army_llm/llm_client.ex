@@ -1055,33 +1055,8 @@ defmodule BotArmyLlm.LlmClient do
     temperature = Keyword.get(opts, :temperature, 0.7)
     max_tokens = Keyword.get(opts, :max_tokens, 2000)
 
-    headers = [
-      {"Content-Type", "application/json"},
-      {"Authorization", "Bearer #{api_key}"},
-      {"HTTP-Referer", "https://github.com/ergon-automation-labs"}
-    ]
-
-    # Build content array
-    content =
-      case {is_binary(image_data), is_binary(image_url)} do
-        {true, _} ->
-          [
-            %{
-              "type" => "image_url",
-              "image_url" => %{"url" => "data:image/png;base64,#{image_data}"}
-            },
-            %{"type" => "text", "text" => prompt}
-          ]
-
-        {false, true} ->
-          [
-            %{"type" => "image_url", "image_url" => %{"url" => image_url}},
-            %{"type" => "text", "text" => prompt}
-          ]
-
-        _ ->
-          [%{"type" => "text", "text" => prompt}]
-      end
+    headers = build_openrouter_headers(api_key)
+    content = build_vision_content(image_data, image_url, prompt)
 
     payload =
       Jason.encode!(%{
@@ -1091,6 +1066,42 @@ defmodule BotArmyLlm.LlmClient do
         "max_tokens" => max_tokens
       })
 
+    make_openrouter_vision_request(payload, headers, model)
+  rescue
+    _ -> {:error, :request_failed}
+  end
+
+  defp build_openrouter_headers(api_key) do
+    [
+      {"Content-Type", "application/json"},
+      {"Authorization", "Bearer #{api_key}"},
+      {"HTTP-Referer", "https://github.com/ergon-automation-labs"}
+    ]
+  end
+
+  defp build_vision_content(image_data, image_url, prompt) do
+    case {is_binary(image_data), is_binary(image_url)} do
+      {true, _} ->
+        [
+          %{
+            "type" => "image_url",
+            "image_url" => %{"url" => "data:image/png;base64,#{image_data}"}
+          },
+          %{"type" => "text", "text" => prompt}
+        ]
+
+      {false, true} ->
+        [
+          %{"type" => "image_url", "image_url" => %{"url" => image_url}},
+          %{"type" => "text", "text" => prompt}
+        ]
+
+      _ ->
+        [%{"type" => "text", "text" => prompt}]
+    end
+  end
+
+  defp make_openrouter_vision_request(payload, headers, model) do
     case HTTPoison.post(
            "https://openrouter.ai/api/v1/chat/completions",
            payload,
@@ -1099,19 +1110,7 @@ defmodule BotArmyLlm.LlmClient do
            timeout: 60_000
          ) do
       {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
-        with {:ok, response} <- Jason.decode(body),
-             analysis when is_binary(analysis) <-
-               get_in(response, ["choices", Access.at(0), "message", "content"]) do
-          {:ok,
-           %{
-             completion: analysis,
-             model_used: model,
-             tokens_input: get_in(response, ["usage", "prompt_tokens"]) || 0,
-             tokens_output: get_in(response, ["usage", "completion_tokens"]) || 0
-           }}
-        else
-          _ -> {:error, :invalid_response_format}
-        end
+        parse_openrouter_vision_response(body, model)
 
       {:ok, %HTTPoison.Response{status_code: 429}} ->
         {:error, :rate_limited}
@@ -1123,8 +1122,22 @@ defmodule BotArmyLlm.LlmClient do
       {:error, reason} ->
         {:error, {:connection_error, reason}}
     end
-  rescue
-    _ -> {:error, :request_failed}
+  end
+
+  defp parse_openrouter_vision_response(body, model) do
+    with {:ok, response} <- Jason.decode(body),
+         analysis when is_binary(analysis) <-
+           get_in(response, ["choices", Access.at(0), "message", "content"]) do
+      {:ok,
+       %{
+         completion: analysis,
+         model_used: model,
+         tokens_input: get_in(response, ["usage", "prompt_tokens"]) || 0,
+         tokens_output: get_in(response, ["usage", "completion_tokens"]) || 0
+       }}
+    else
+      _ -> {:error, :invalid_response_format}
+    end
   end
 
   # Embedding providers

@@ -193,35 +193,62 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
 
     llm_client = Application.get_env(:bot_army_llm, :llm_client, BotArmyLlm.LlmClient)
 
-    # Get or create conversation
     {final_session_id, conversation} =
-      case session_id do
-        nil ->
-          # Create new conversation
-          case conversation_store.create(%{
-                 "model" => model_override || "auto",
-                 "tenant_id" => tenant_id,
-                 "user_id" => user_id
-               }) do
-            {:ok, sid, conv} ->
-              {sid, conv}
+      get_or_create_conversation(
+        session_id,
+        model_override,
+        tenant_id,
+        user_id,
+        conversation_store
+      )
 
-            {:error, _reason} ->
-              {UUID.uuid4(), %{"messages" => [], "model" => model_override || "auto"}}
-          end
+    handle_converse_llm_call(
+      conversation,
+      final_session_id,
+      user_message,
+      model_override,
+      llm_client,
+      conversation_store,
+      event_id,
+      tenant_id,
+      user_id
+    )
+  end
 
-        sid ->
-          # Get existing conversation
-          case conversation_store.get_session(sid) do
-            {:ok, conv} -> {sid, conv}
-            {:error, _reason} -> {sid, %{"messages" => [], "model" => model_override || "auto"}}
-          end
-      end
+  defp get_or_create_conversation(nil, model_override, tenant_id, user_id, conversation_store) do
+    case conversation_store.create(%{
+           "model" => model_override || "auto",
+           "tenant_id" => tenant_id,
+           "user_id" => user_id
+         }) do
+      {:ok, sid, conv} ->
+        {sid, conv}
 
-    # Append user message
+      {:error, _reason} ->
+        {UUID.uuid4(), %{"messages" => [], "model" => model_override || "auto"}}
+    end
+  end
+
+  defp get_or_create_conversation(sid, model_override, _tenant_id, _user_id, conversation_store) do
+    case conversation_store.get_session(sid) do
+      {:ok, conv} -> {sid, conv}
+      {:error, _reason} -> {sid, %{"messages" => [], "model" => model_override || "auto"}}
+    end
+  end
+
+  defp handle_converse_llm_call(
+         conversation,
+         final_session_id,
+         user_message,
+         model_override,
+         llm_client,
+         conversation_store,
+         event_id,
+         tenant_id,
+         user_id
+       ) do
     messages = conversation["messages"] ++ [%{"role" => "user", "content" => user_message}]
 
-    # Call LLM with conversation history
     BotArmyLlm.LocalQueueManager.increment()
 
     case llm_client.complete_messages(messages,
@@ -229,8 +256,6 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
          ) do
       {:ok, response} ->
         BotArmyLlm.LocalQueueManager.decrement()
-
-        # Append assistant response to messages
         assistant_message = %{"role" => "assistant", "content" => response.completion}
 
         case conversation_store.append_message(final_session_id, assistant_message) do

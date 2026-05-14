@@ -117,9 +117,8 @@ defmodule BotArmyLlm.Handlers.RAGHandler do
   defp validate_index_payload(payload) when is_map(payload) do
     with :ok <- require_field(payload, "document_id"),
          :ok <- require_field(payload, "document_type"),
-         :ok <- require_field(payload, "source"),
-         :ok <- require_field(payload, "content") do
-      :ok
+         :ok <- require_field(payload, "source") do
+      require_field(payload, "content")
     end
   end
 

@@ -41,7 +41,16 @@ defmodule BotArmyLlm.Handlers.PromptHandler do
         case call_llm(payload) do
           {:ok, response} ->
             Logger.info("LLM completion generated: event_id=#{event_id}")
-            publish_completion(payload, response, event_id, source_metadata, completion_event, tenant_id, user_id)
+
+            publish_completion(
+              payload,
+              response,
+              event_id,
+              source_metadata,
+              completion_event,
+              tenant_id,
+              user_id
+            )
 
           {:error, reason} ->
             Logger.error("LLM call failed: #{inspect(reason)}")
@@ -57,9 +66,8 @@ defmodule BotArmyLlm.Handlers.PromptHandler do
   # Private functions
 
   defp validate_submit_payload(payload) when is_map(payload) do
-    with :ok <- require_field(payload, "text"),
-         :ok <- require_field(payload, "prompt_id") do
-      :ok
+    with :ok <- require_field(payload, "text") do
+      require_field(payload, "prompt_id")
     end
   end
 
@@ -98,6 +106,7 @@ defmodule BotArmyLlm.Handlers.PromptHandler do
 
     # Call configured LLM client (real or mock in tests)
     llm_client = Application.get_env(:bot_army_llm, :llm_client, BotArmyLlm.LlmClient)
+
     case llm_client.complete(text, model: model) do
       {:ok, result} ->
         BotArmyLlm.LocalQueueManager.decrement()
@@ -109,7 +118,15 @@ defmodule BotArmyLlm.Handlers.PromptHandler do
     end
   end
 
-  defp publish_completion(payload, response, event_id, source_metadata, completion_event, tenant_id, user_id) do
+  defp publish_completion(
+         payload,
+         response,
+         event_id,
+         source_metadata,
+         completion_event,
+         tenant_id,
+         user_id
+       ) do
     prompt_id = payload["prompt_id"]
 
     # Persist to database

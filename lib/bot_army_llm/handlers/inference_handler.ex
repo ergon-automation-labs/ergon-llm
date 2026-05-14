@@ -88,9 +88,8 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
 
   defp validate_chain_payload(payload) when is_map(payload) do
     with :ok <- require_field(payload, "steps"),
-         :ok <- validate_steps(payload["steps"]),
-         :ok <- require_field(payload, "initial_input") do
-      :ok
+         :ok <- validate_steps(payload["steps"]) do
+      require_field(payload, "initial_input")
     end
   end
 

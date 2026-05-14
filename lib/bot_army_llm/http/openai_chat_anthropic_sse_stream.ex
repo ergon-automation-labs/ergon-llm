@@ -411,9 +411,8 @@ defmodule BotArmyLlm.Http.OpenaiChatAnthropicSseStream do
   defp ensure_ready_for_close(conn, acc, has_tools) do
     cond do
       has_tools && !acc.message_started ->
-        with {:ok, conn, acc} <- ensure_client_stream(conn, acc),
-             {:ok, conn, acc} <- ensure_message_start(conn, acc) do
-          {:ok, conn, acc}
+        with {:ok, conn, acc} <- ensure_client_stream(conn, acc) do
+          ensure_message_start(conn, acc)
         end
 
       acc.message_started || has_tools ->

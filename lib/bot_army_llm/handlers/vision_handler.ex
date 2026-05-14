@@ -50,9 +50,8 @@ defmodule BotArmyLlm.Handlers.VisionHandler do
   # Private functions
 
   defp validate_vision_payload(payload) when is_map(payload) do
-    with :ok <- require_field(payload, "prompt"),
-         :ok <- validate_image_fields(payload) do
-      :ok
+    with :ok <- require_field(payload, "prompt") do
+      validate_image_fields(payload)
     end
   end
 
@@ -89,7 +88,9 @@ defmodule BotArmyLlm.Handlers.VisionHandler do
 
     BotArmyLlm.LocalQueueManager.increment()
 
-    case llm_client.complete_vision(image_data, image_url, prompt, model: model_override || "auto") do
+    case llm_client.complete_vision(image_data, image_url, prompt,
+           model: model_override || "auto"
+         ) do
       {:ok, response} ->
         BotArmyLlm.LocalQueueManager.decrement()
         raw_analysis = response.completion
@@ -110,14 +111,24 @@ defmodule BotArmyLlm.Handlers.VisionHandler do
                 end
 
               {:error, :no_json_found} ->
-                Logger.warning("Vision analysis did not contain JSON, returning raw analysis only")
+                Logger.warning(
+                  "Vision analysis did not contain JSON, returning raw analysis only"
+                )
+
                 nil
             end
           else
             nil
           end
 
-        publish_analyzed(raw_analysis, structured_data, response.model_used, event_id, tenant_id, user_id)
+        publish_analyzed(
+          raw_analysis,
+          structured_data,
+          response.model_used,
+          event_id,
+          tenant_id,
+          user_id
+        )
 
       {:error, reason} ->
         BotArmyLlm.LocalQueueManager.decrement()
@@ -126,7 +137,14 @@ defmodule BotArmyLlm.Handlers.VisionHandler do
     end
   end
 
-  defp publish_analyzed(raw_analysis, structured_data, model_used, triggered_by_event_id, tenant_id, user_id) do
+  defp publish_analyzed(
+         raw_analysis,
+         structured_data,
+         model_used,
+         triggered_by_event_id,
+         tenant_id,
+         user_id
+       ) do
     payload = %{
       "raw_analysis" => raw_analysis,
       "model_used" => model_used,

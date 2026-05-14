@@ -2,7 +2,8 @@ defmodule BotArmyLlm.ChatCompletionToAnthropic do
   @moduledoc false
 
   @doc "Convert OpenAI-style chat/completions JSON body to Anthropic Messages API response JSON string."
-  @spec from_chat_completion_body(String.t(), String.t() | nil) :: {:ok, String.t()} | {:error, atom()}
+  @spec from_chat_completion_body(String.t(), String.t() | nil) ::
+          {:ok, String.t()} | {:error, atom()}
   def from_chat_completion_body(body, model_default \\ nil) when is_binary(body) do
     case Jason.decode(body) do
       {:ok, response} ->
@@ -81,27 +82,14 @@ defmodule BotArmyLlm.ChatCompletionToAnthropic do
   end
 
   defp infer_stop_reason(message, finish) do
-    has_tools =
-      case message do
-        %{"tool_calls" => t} when is_list(t) -> t != []
-        _ -> false
-      end
-
     cond do
-      has_tools ->
-        "tool_use"
-
-      finish == "tool_calls" ->
-        "tool_use"
-
-      finish in ["stop", nil, ""] ->
-        "end_turn"
-
-      is_binary(finish) ->
-        finish
-
-      true ->
-        "end_turn"
+      has_tool_calls?(message) or finish == "tool_calls" -> "tool_use"
+      finish in ["stop", nil, ""] -> "end_turn"
+      is_binary(finish) -> finish
+      true -> "end_turn"
     end
   end
+
+  defp has_tool_calls?(%{"tool_calls" => t}) when is_list(t), do: t != []
+  defp has_tool_calls?(_), do: false
 end

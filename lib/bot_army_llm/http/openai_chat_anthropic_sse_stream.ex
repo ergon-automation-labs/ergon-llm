@@ -227,10 +227,10 @@ defmodule BotArmyLlm.Http.OpenaiChatAnthropicSseStream do
           acc = merge_tool_deltas(acc, Map.get(delta, "tool_calls"))
 
           acc =
-            if finish not in [nil, ""] do
-              %{acc | finish_reason: finish}
-            else
+            if finish in [nil, ""] do
               acc
+            else
+              %{acc | finish_reason: finish}
             end
 
           case maybe_emit_text_delta(conn, acc, content) do

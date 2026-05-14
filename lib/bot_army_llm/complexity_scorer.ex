@@ -36,14 +36,27 @@ defmodule BotArmyLlm.ComplexityScorer do
     heavy_hits = Enum.count(@heavy_keywords, &String.contains?(lower, &1))
     light_hits = Enum.count(@light_keywords, &String.contains?(lower, &1))
 
-    cond do
-      word_count > 200 or heavy_hits >= 3 -> :heavy
-      heavy_hits >= 2 -> :heavy
-      heavy_hits >= 1 and word_count > 10 -> :medium
-      word_count > 100 -> :medium
-      word_count <= 20 and light_hits >= 1 -> :light
-      word_count <= 50 -> :light
-      true -> :medium
-    end
+    score_by_criteria(word_count, heavy_hits, light_hits)
   end
+
+  defp score_by_criteria(word_count, heavy_hits, _light_hits)
+       when word_count > 200 or heavy_hits >= 2,
+       do: :heavy
+
+  defp score_by_criteria(word_count, heavy_hits, _light_hits)
+       when heavy_hits >= 1 and word_count > 10,
+       do: :medium
+
+  defp score_by_criteria(word_count, _heavy_hits, _light_hits) when word_count > 100,
+    do: :medium
+
+  defp score_by_criteria(word_count, _heavy_hits, light_hits)
+       when word_count <= 20 and light_hits >= 1,
+       do: :light
+
+  defp score_by_criteria(word_count, _heavy_hits, _light_hits) when word_count <= 50,
+    do: :light
+
+  defp score_by_criteria(_word_count, _heavy_hits, _light_hits),
+    do: :medium
 end

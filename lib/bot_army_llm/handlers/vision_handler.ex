@@ -94,32 +94,7 @@ defmodule BotArmyLlm.Handlers.VisionHandler do
       {:ok, response} ->
         BotArmyLlm.LocalQueueManager.decrement()
         raw_analysis = response.completion
-
-        # Try to extract structured data if schema provided (best-effort)
-        structured_data =
-          if output_schema do
-            case JsonExtractor.extract(raw_analysis) do
-              {:ok, data} ->
-                case JsonExtractor.validate_schema(data, output_schema) do
-                  :ok ->
-                    Logger.debug("Vision analysis parsed successfully")
-                    data
-
-                  {:error, :schema_mismatch} ->
-                    Logger.warning("Vision analysis schema mismatch, returning raw analysis only")
-                    nil
-                end
-
-              {:error, :no_json_found} ->
-                Logger.warning(
-                  "Vision analysis did not contain JSON, returning raw analysis only"
-                )
-
-                nil
-            end
-          else
-            nil
-          end
+        structured_data = extract_vision_structured_data(raw_analysis, output_schema)
 
         publish_analyzed(
           raw_analysis,
@@ -134,6 +109,29 @@ defmodule BotArmyLlm.Handlers.VisionHandler do
         BotArmyLlm.LocalQueueManager.decrement()
         Logger.error("Vision analysis failed: #{inspect(reason)}")
         publish_error(event_id, reason, "Vision analysis failed", tenant_id, user_id)
+    end
+  end
+
+  defp extract_vision_structured_data(nil, _output_schema), do: nil
+
+  defp extract_vision_structured_data(_raw_analysis, nil), do: nil
+
+  defp extract_vision_structured_data(raw_analysis, output_schema) do
+    case JsonExtractor.extract(raw_analysis) do
+      {:ok, data} ->
+        case JsonExtractor.validate_schema(data, output_schema) do
+          :ok ->
+            Logger.debug("Vision analysis parsed successfully")
+            data
+
+          {:error, :schema_mismatch} ->
+            Logger.warning("Vision analysis schema mismatch, returning raw analysis only")
+            nil
+        end
+
+      {:error, :no_json_found} ->
+        Logger.warning("Vision analysis did not contain JSON, returning raw analysis only")
+        nil
     end
   end
 

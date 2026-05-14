@@ -46,9 +46,7 @@ defmodule BotArmyLlm.Handlers.EmbeddingHandler do
   # Private functions
 
   defp validate_embed_payload(payload) when is_map(payload) do
-    with :ok <- require_field(payload, "text") do
-      :ok
-    end
+    require_field(payload, "text")
   end
 
   defp validate_embed_payload(_), do: {:error, :invalid_payload}

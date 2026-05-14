@@ -126,17 +126,13 @@ defmodule BotArmyLlm.Handlers.RAGHandler do
   defp validate_index_payload(_), do: {:error, :invalid_payload}
 
   defp validate_search_payload(payload) when is_map(payload) do
-    with :ok <- require_field(payload, "query") do
-      :ok
-    end
+    require_field(payload, "query")
   end
 
   defp validate_search_payload(_), do: {:error, :invalid_payload}
 
   defp validate_delete_payload(payload) when is_map(payload) do
-    with :ok <- require_field(payload, "document_id") do
-      :ok
-    end
+    require_field(payload, "document_id")
   end
 
   defp validate_delete_payload(_), do: {:error, :invalid_payload}

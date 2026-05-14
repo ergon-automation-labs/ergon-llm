@@ -156,7 +156,7 @@ defmodule BotArmyLlm.LlmClient do
       end
 
     # Check all messages for sensitive data
-    messages_text = messages |> Enum.map(& &1["content"]) |> Enum.join(" ")
+    messages_text = Enum.map_join(messages, " ", & &1["content"])
 
     providers =
       if SafetyClassifier.safe_for_cloud?(messages_text) do

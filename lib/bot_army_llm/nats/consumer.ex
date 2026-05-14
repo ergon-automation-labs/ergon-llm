@@ -234,46 +234,49 @@ defmodule BotArmyLlm.NATS.Consumer do
         "Received NATS message on subject: #{msg.topic}, has_reply_to: #{msg.reply_to != nil}"
       )
 
-      # Handle request/reply messages first (they may not have valid envelope structure)
-      if msg.topic == "gossip.poll.broadcast" do
-        case Jason.decode(msg.body) do
-          {:ok, decoded} -> BotArmyLlm.GossipPollVoter.handle_poll_broadcast(decoded)
-          {:error, reason} -> Logger.warning("Failed to decode gossip poll: #{inspect(reason)}")
-        end
-      else
-        if msg.reply_to do
-          Logger.debug("Processing request/reply on #{msg.topic}, reply_to: #{msg.reply_to}")
-
-          decoded =
-            case BotArmyCore.NATS.Decoder.decode(msg.body) do
-              {:ok, decoded_message} ->
-                decoded_message
-
-              {:error, _reason} ->
-                # Request/reply messages may not follow envelope format — try plain JSON
-                case Jason.decode(msg.body) do
-                  {:ok, plain} -> plain
-                  _ -> %{}
-                end
-            end
-
-          # Keep the consumer mailbox responsive under load by handling request/reply
-          # work asynchronously. This prevents long-running subjects like llm.skill.execute
-          # from blocking llm.skill.prompt.submit handling in the same GenServer loop.
-          spawn(fn -> handle_request_reply(msg.topic, decoded, msg.reply_to) end)
-        else
-          case BotArmyCore.NATS.Decoder.decode(msg.body) do
-            {:ok, decoded_message} ->
-              route_message(decoded_message)
-
-            {:error, reason} ->
-              Logger.warning("Failed to decode message from #{msg.topic}: #{inspect(reason)}")
-          end
-        end
-      end
+      process_message(msg)
     end)
 
     {:noreply, state}
+  end
+
+  defp process_message(%{topic: "gossip.poll.broadcast", body: body}) do
+    case Jason.decode(body) do
+      {:ok, decoded} -> BotArmyLlm.GossipPollVoter.handle_poll_broadcast(decoded)
+      {:error, reason} -> Logger.warning("Failed to decode gossip poll: #{inspect(reason)}")
+    end
+  end
+
+  defp process_message(%{reply_to: reply_to, topic: topic, body: body})
+       when not is_nil(reply_to) do
+    Logger.debug("Processing request/reply on #{topic}, reply_to: #{reply_to}")
+
+    decoded = decode_message_fallback(body)
+
+    spawn(fn -> handle_request_reply(topic, decoded, reply_to) end)
+  end
+
+  defp process_message(%{body: body, topic: topic}) do
+    case BotArmyCore.NATS.Decoder.decode(body) do
+      {:ok, decoded_message} ->
+        route_message(decoded_message)
+
+      {:error, reason} ->
+        Logger.warning("Failed to decode message from #{topic}: #{inspect(reason)}")
+    end
+  end
+
+  defp decode_message_fallback(body) do
+    case BotArmyCore.NATS.Decoder.decode(body) do
+      {:ok, decoded_message} ->
+        decoded_message
+
+      {:error, _reason} ->
+        case Jason.decode(body) do
+          {:ok, plain} -> plain
+          _ -> %{}
+        end
+    end
   end
 
   @impl true

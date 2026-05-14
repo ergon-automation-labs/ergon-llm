@@ -668,16 +668,14 @@ defmodule BotArmyLlm.NATS.Consumer do
   defp deterministic_fallback_content(prompt) when is_binary(prompt) do
     down = String.downcase(prompt)
 
-    cond do
-      String.contains?(down, "file writing") or
-        String.contains?(down, "write files") or
-          String.contains?(down, "write capability") ->
-        "LLM providers are temporarily unavailable, so I cannot verify runtime tool capability right now. " <>
-          "Please run a quick direct capability probe in your agent runtime (for example a small temp file write/read test) and retry."
-
-      true ->
-        "LLM providers are temporarily unavailable. I can still return partial context and deterministic checks, " <>
-          "or you can retry in a few seconds for full model-backed output."
+    if String.contains?(down, "file writing") or
+         String.contains?(down, "write files") or
+         String.contains?(down, "write capability") do
+      "LLM providers are temporarily unavailable, so I cannot verify runtime tool capability right now. " <>
+        "Please run a quick direct capability probe in your agent runtime (for example a small temp file write/read test) and retry."
+    else
+      "LLM providers are temporarily unavailable. I can still return partial context and deterministic checks, " <>
+        "or you can retry in a few seconds for full model-backed output."
     end
   end
 

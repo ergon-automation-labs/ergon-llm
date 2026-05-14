@@ -7,11 +7,13 @@ defmodule BotArmyLlm.AnthropicMessagesToOpenaiChat do
 
   Handles Anthropic `tools`, `tool_use` / `tool_result` content blocks, and plain text.
   """
-  @spec to_chat_completion_request(map()) :: {:ok, %{messages: list(map()), tools: list(map())}} | {:error, atom()}
+  @spec to_chat_completion_request(map()) ::
+          {:ok, %{messages: list(map()), tools: list(map())}} | {:error, atom()}
   def to_chat_completion_request(payload) when is_map(payload) do
     tools = anthropic_tools_to_openai(Map.get(payload, "tools") || [])
 
-    with {:ok, openai_msgs} <- convert_messages(Map.get(payload, "messages", []), extract_system_string(payload)) do
+    with {:ok, openai_msgs} <-
+           convert_messages(Map.get(payload, "messages", []), extract_system_string(payload)) do
       {:ok, %{messages: openai_msgs, tools: tools}}
     end
   end
@@ -95,23 +97,26 @@ defmodule BotArmyLlm.AnthropicMessagesToOpenaiChat do
         _ -> false
       end)
 
-    cond do
-      tool_results == [] and texts == [] ->
-        {:error, :no_user_content}
+    if tool_results == [] and texts == [] do
+      {:error, :no_user_content}
+    else
+      base = maybe_user_text([], texts)
 
-      true ->
-        base = maybe_user_text([], texts)
+      Enum.reduce_while(tool_results, {:ok, base}, fn tr, {:ok, acc} ->
+        case Map.get(tr, "tool_use_id") do
+          id when is_binary(id) and id != "" ->
+            row = %{
+              "role" => "tool",
+              "tool_call_id" => id,
+              "content" => tool_result_content_string(tr)
+            }
 
-        Enum.reduce_while(tool_results, {:ok, base}, fn tr, {:ok, acc} ->
-          case Map.get(tr, "tool_use_id") do
-            id when is_binary(id) and id != "" ->
-              row = %{"role" => "tool", "tool_call_id" => id, "content" => tool_result_content_string(tr)}
-              {:cont, {:ok, acc ++ [row]}}
+            {:cont, {:ok, acc ++ [row]}}
 
-            _ ->
-              {:halt, {:error, :missing_tool_use_id}}
-          end
-        end)
+          _ ->
+            {:halt, {:error, :missing_tool_use_id}}
+        end
+      end)
     end
   end
 

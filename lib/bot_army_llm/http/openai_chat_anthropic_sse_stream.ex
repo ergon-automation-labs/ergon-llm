@@ -23,9 +23,15 @@ defmodule BotArmyLlm.Http.OpenaiChatAnthropicSseStream do
            AnthropicMessagesToOpenaiChat.to_chat_completion_request(anthropic_payload),
          {:ok, body_map} <- build_stream_request(messages, tools, anthropic_payload, model),
          {:ok, json} <- Jason.encode(body_map) do
-      headers = [{"content-type", "application/json"}, {"authorization", "Bearer #{api_key}"} | extra_headers]
+      headers = [
+        {"content-type", "application/json"},
+        {"authorization", "Bearer #{api_key}"} | extra_headers
+      ]
+
       req = Finch.build(:post, url, headers, json)
-      msg_id = "msg-#{provider}-" <> (:crypto.strong_rand_bytes(10) |> Base.encode16(case: :lower))
+
+      msg_id =
+        "msg-#{provider}-" <> (:crypto.strong_rand_bytes(10) |> Base.encode16(case: :lower))
 
       acc0 = %{
         phase: :need_status,
@@ -90,7 +96,10 @@ defmodule BotArmyLlm.Http.OpenaiChatAnthropicSseStream do
           end
 
         {:error, exception, {conn, _acc}} ->
-          Logger.error("http_proxy OpenAI-compat stream transport: #{Exception.message(exception)}")
+          Logger.error(
+            "http_proxy OpenAI-compat stream transport: #{Exception.message(exception)}"
+          )
+
           {:error, {:stream_exception, exception, conn}}
 
         other ->
@@ -203,7 +212,9 @@ defmodule BotArmyLlm.Http.OpenaiChatAnthropicSseStream do
 
     cond do
       payload == "" or payload == "[DONE]" ->
-        {conn, acc} = if payload == "[DONE]", do: close_anthropic_stream_impl(conn, acc), else: {conn, acc}
+        {conn, acc} =
+          if payload == "[DONE]", do: close_anthropic_stream_impl(conn, acc), else: {conn, acc}
+
         {:ok, conn, acc}
 
       true ->
@@ -247,9 +258,10 @@ defmodule BotArmyLlm.Http.OpenaiChatAnthropicSseStream do
 
         String.starts_with?(line, "data:") ->
           rest =
-            cond do
-              String.starts_with?(line, "data: ") -> String.slice(line, 6..-1//1)
-              true -> String.slice(line, 5..-1//1) |> String.trim_leading()
+            if String.starts_with?(line, "data: ") do
+              String.slice(line, 6..-1//1)
+            else
+              String.slice(line, 5..-1//1) |> String.trim_leading()
             end
 
           if rest != "", do: [rest | acc], else: acc
@@ -437,7 +449,7 @@ defmodule BotArmyLlm.Http.OpenaiChatAnthropicSseStream do
 
   defp emit_tool_blocks(conn, acc, start_idx, sorted_tools) do
     Enum.reduce_while(Enum.with_index(sorted_tools), {:ok, conn, acc}, fn {{_i, t}, pos},
-                                                                           {:ok, conn, acc} ->
+                                                                          {:ok, conn, acc} ->
       anthropic_idx = start_idx + pos
       id = t["id"] || "call_unknown"
       name = t["name"] || ""

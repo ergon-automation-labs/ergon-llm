@@ -730,52 +730,48 @@ defmodule BotArmyLlm.NATS.Consumer do
   def route_message(message) do
     event = message["event"]
 
-    cond do
-      is_binary(event) and String.starts_with?(event, "conv.request.llm.") ->
-        BotArmyLlm.Handlers.ConversationHandler.handle_request(message)
-
-      is_binary(event) and String.starts_with?(event, "conv.followup.") ->
-        BotArmyLlm.Handlers.ConversationHandler.handle_request(message)
-
-      true ->
-        case event do
-          "llm.prompt.submit" ->
-            BotArmyLlm.Handlers.PromptHandler.handle_submit(message)
-
-          "llm.skill.prompt.submit" ->
-            BotArmyLlm.Handlers.PromptHandler.handle_submit(message)
-
-          "llm.inference.chain" ->
-            BotArmyLlm.Handlers.InferenceHandler.handle_chain(message)
-
-          "llm.inference.converse" ->
-            BotArmyLlm.Handlers.InferenceHandler.handle_converse(message)
-
-          "llm.response.parse" ->
-            BotArmyLlm.Handlers.ResponseHandler.handle_parse(message)
-
-          "llm.vision.analyze" ->
-            BotArmyLlm.Handlers.VisionHandler.handle_analyze(message)
-
-          "llm.embed.request" ->
-            spawn_embedding_handler(message)
-
-          "llm.embed.request.bulk" ->
-            spawn_embedding_handler(message)
-
-          "llm.rag.index" ->
-            BotArmyLlm.Handlers.RAGHandler.handle_index(message)
-
-          "llm.rag.search" ->
-            BotArmyLlm.Handlers.RAGHandler.handle_search(message)
-
-          "llm.rag.delete" ->
-            BotArmyLlm.Handlers.RAGHandler.handle_delete(message)
-
-          _ ->
-            Logger.debug("Unknown LLM event type: #{event}")
-        end
+    if is_binary(event) and String.starts_with?(event, "conv.") do
+      BotArmyLlm.Handlers.ConversationHandler.handle_request(message)
+    else
+      route_by_event(event, message)
     end
+  end
+
+  defp route_by_event("llm.prompt.submit", message),
+    do: BotArmyLlm.Handlers.PromptHandler.handle_submit(message)
+
+  defp route_by_event("llm.skill.prompt.submit", message),
+    do: BotArmyLlm.Handlers.PromptHandler.handle_submit(message)
+
+  defp route_by_event("llm.inference.chain", message),
+    do: BotArmyLlm.Handlers.InferenceHandler.handle_chain(message)
+
+  defp route_by_event("llm.inference.converse", message),
+    do: BotArmyLlm.Handlers.InferenceHandler.handle_converse(message)
+
+  defp route_by_event("llm.response.parse", message),
+    do: BotArmyLlm.Handlers.ResponseHandler.handle_parse(message)
+
+  defp route_by_event("llm.vision.analyze", message),
+    do: BotArmyLlm.Handlers.VisionHandler.handle_analyze(message)
+
+  defp route_by_event("llm.embed.request", message),
+    do: spawn_embedding_handler(message)
+
+  defp route_by_event("llm.embed.request.bulk", message),
+    do: spawn_embedding_handler(message)
+
+  defp route_by_event("llm.rag.index", message),
+    do: BotArmyLlm.Handlers.RAGHandler.handle_index(message)
+
+  defp route_by_event("llm.rag.search", message),
+    do: BotArmyLlm.Handlers.RAGHandler.handle_search(message)
+
+  defp route_by_event("llm.rag.delete", message),
+    do: BotArmyLlm.Handlers.RAGHandler.handle_delete(message)
+
+  defp route_by_event(event, _message) do
+    Logger.debug("Unknown LLM event type: #{event}")
   end
 
   defp spawn_embedding_handler(message) do

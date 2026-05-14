@@ -32,16 +32,24 @@ defmodule BotArmyLlm.Handlers.ClaudeCodeHandler do
 
       {:error, reason} ->
         Logger.warning("Invalid Claude Code payload: #{inspect(reason)}")
-        publish_error_reply(reply_to, event_id, reason, "Invalid request payload", tenant_id, user_id)
+
+        publish_error_reply(
+          reply_to,
+          event_id,
+          reason,
+          "Invalid request payload",
+          tenant_id,
+          user_id
+        )
     end
   end
 
   # Private functions
 
   defp validate_claude_code_payload(payload) when is_map(payload) do
-    with :ok <- require_field(payload, "model"),
-         :ok <- require_field(payload, "messages") do
-      :ok
+    case require_field(payload, "model") do
+      :ok -> require_field(payload, "messages")
+      err -> err
     end
   end
 

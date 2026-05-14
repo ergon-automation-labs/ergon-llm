@@ -85,39 +85,47 @@ defmodule BotArmyLlm.AnthropicMessagesToOpenaiChat do
   end
 
   defp expand_user_message(parts) when is_list(parts) do
-    texts =
-      Enum.flat_map(parts, fn
-        %{"type" => "text", "text" => t} when is_binary(t) -> [t]
-        _ -> []
-      end)
-
-    tool_results =
-      Enum.filter(parts, fn
-        %{"type" => "tool_result"} -> true
-        _ -> false
-      end)
+    texts = extract_message_texts(parts)
+    tool_results = extract_tool_results(parts)
 
     if tool_results == [] and texts == [] do
       {:error, :no_user_content}
     else
       base = maybe_user_text([], texts)
-
-      Enum.reduce_while(tool_results, {:ok, base}, fn tr, {:ok, acc} ->
-        case Map.get(tr, "tool_use_id") do
-          id when is_binary(id) and id != "" ->
-            row = %{
-              "role" => "tool",
-              "tool_call_id" => id,
-              "content" => tool_result_content_string(tr)
-            }
-
-            {:cont, {:ok, acc ++ [row]}}
-
-          _ ->
-            {:halt, {:error, :missing_tool_use_id}}
-        end
-      end)
+      accumulate_tool_results(tool_results, {:ok, base})
     end
+  end
+
+  defp extract_message_texts(parts) do
+    Enum.flat_map(parts, fn
+      %{"type" => "text", "text" => t} when is_binary(t) -> [t]
+      _ -> []
+    end)
+  end
+
+  defp extract_tool_results(parts) do
+    Enum.filter(parts, fn
+      %{"type" => "tool_result"} -> true
+      _ -> false
+    end)
+  end
+
+  defp accumulate_tool_results(tool_results, base) do
+    Enum.reduce_while(tool_results, base, fn tr, {:ok, acc} ->
+      case Map.get(tr, "tool_use_id") do
+        id when is_binary(id) and id != "" ->
+          row = %{
+            "role" => "tool",
+            "tool_call_id" => id,
+            "content" => tool_result_content_string(tr)
+          }
+
+          {:cont, {:ok, acc ++ [row]}}
+
+        _ ->
+          {:halt, {:error, :missing_tool_use_id}}
+      end
+    end)
   end
 
   defp expand_user_message(nil), do: {:error, :no_user_content}

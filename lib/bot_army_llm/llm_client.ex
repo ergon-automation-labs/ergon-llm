@@ -1159,7 +1159,7 @@ defmodule BotArmyLlm.LlmClient do
     payload =
       Jason.encode!(%{
         "model" => model,
-        "prompt" => text
+        "input" => text
       })
 
     case HTTPoison.post(endpoint, payload, headers, recv_timeout: timeout_ms, timeout: timeout_ms) do

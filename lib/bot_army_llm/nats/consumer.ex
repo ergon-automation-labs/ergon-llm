@@ -308,45 +308,39 @@ defmodule BotArmyLlm.NATS.Consumer do
 
   # Private functions
 
-  defp handle_request_reply(subject, message, reply_to) do
-    case subject do
-      "llm.claude_code.complete" ->
-        BotArmyLlm.Handlers.ClaudeCodeHandler.handle_complete(message, reply_to)
+  defp handle_request_reply("llm.claude_code.complete", message, reply_to),
+    do: BotArmyLlm.Handlers.ClaudeCodeHandler.handle_complete(message, reply_to)
 
-      "llm.skill.execute" ->
-        BotArmyLlm.Handlers.SkillExecuteHandler.handle_execute(message, reply_to)
+  defp handle_request_reply("llm.skill.execute", message, reply_to),
+    do: BotArmyLlm.Handlers.SkillExecuteHandler.handle_execute(message, reply_to)
 
-      "llm.prompt.submit" ->
-        handle_prompt_request_reply(message, reply_to, false)
+  defp handle_request_reply("llm.prompt.submit", message, reply_to),
+    do: handle_prompt_request_reply(message, reply_to, false)
 
-      "llm.skill.prompt.submit" ->
-        handle_prompt_request_reply(message, reply_to, true)
+  defp handle_request_reply("llm.skill.prompt.submit", message, reply_to),
+    do: handle_prompt_request_reply(message, reply_to, true)
 
-      "llm.request.chat" ->
-        handle_chat_request_reply(subject, message, reply_to)
+  defp handle_request_reply(subject, message, reply_to)
+       when subject in ["llm.request.chat", "pi-go.llm.request.chat"] or
+              subject in @pi_go_llm_lane_subjects,
+       do: handle_chat_request_reply(subject, message, reply_to)
 
-      "pi-go.llm.request.chat" ->
-        handle_chat_request_reply(subject, message, reply_to)
+  defp handle_request_reply("llm.usage.query", message, reply_to),
+    do: handle_usage_query(message, reply_to)
 
-      lane_subject when lane_subject in @pi_go_llm_lane_subjects ->
-        handle_chat_request_reply(subject, message, reply_to)
+  defp handle_request_reply("llm.metrics.get", message, reply_to),
+    do: handle_metrics_get(message, reply_to)
 
-      "llm.usage.query" ->
-        handle_usage_query(message, reply_to)
+  defp handle_request_reply("llm.queue.status", message, reply_to),
+    do: handle_queue_status(message, reply_to)
 
-      "llm.metrics.get" ->
-        handle_metrics_get(message, reply_to)
+  defp handle_request_reply("llm.army.opinion.vote", message, reply_to) do
+    vote = BotArmyRuntime.Intent.ArmyOpinionVote.build_reply(:llm, message)
+    publish_reply(reply_to, vote)
+  end
 
-      "llm.queue.status" ->
-        handle_queue_status(message, reply_to)
-
-      "llm.army.opinion.vote" ->
-        vote = BotArmyRuntime.Intent.ArmyOpinionVote.build_reply(:llm, message)
-        publish_reply(reply_to, vote)
-
-      _ ->
-        Logger.debug("Unknown request/reply subject: #{subject}")
-    end
+  defp handle_request_reply(subject, _message, _reply_to) do
+    Logger.debug("Unknown request/reply subject: #{subject}")
   end
 
   defp handle_usage_query(message, reply_to) do

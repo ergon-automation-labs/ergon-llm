@@ -82,27 +82,30 @@ defmodule BotArmyLlm.Handlers.ResponseHandler do
   defp attempt_parse(text, schema, max_retries, attempt) when attempt < max_retries do
     case JsonExtractor.extract(text) do
       {:ok, data} ->
-        case JsonExtractor.validate_schema(data, schema) do
-          :ok ->
-            Logger.info("JSON extracted and validated on attempt #{attempt + 1}")
-            {:ok, data}
-
-          {:error, :schema_mismatch} ->
-            if attempt + 1 < max_retries do
-              Logger.warning("Schema mismatch on attempt #{attempt + 1}, retrying with correction")
-              retry_with_correction(text, schema, max_retries, attempt + 1)
-            else
-              {:error, :schema_mismatch}
-            end
-        end
+        validate_and_retry(data, text, schema, max_retries, attempt)
 
       {:error, :no_json_found} ->
-        if attempt + 1 < max_retries do
-          Logger.warning("No JSON found on attempt #{attempt + 1}, retrying with correction")
-          retry_with_correction(text, schema, max_retries, attempt + 1)
-        else
-          {:error, :no_json_found}
-        end
+        handle_extract_failure(:no_json_found, text, schema, max_retries, attempt)
+    end
+  end
+
+  defp validate_and_retry(data, _text, schema, _max_retries, attempt) do
+    case JsonExtractor.validate_schema(data, schema) do
+      :ok ->
+        Logger.info("JSON extracted and validated on attempt #{attempt + 1}")
+        {:ok, data}
+
+      {:error, :schema_mismatch} ->
+        {:error, :schema_mismatch}
+    end
+  end
+
+  defp handle_extract_failure(reason, text, schema, max_retries, attempt) do
+    if attempt + 1 < max_retries do
+      Logger.warning("#{reason} on attempt #{attempt + 1}, retrying with correction")
+      retry_with_correction(text, schema, max_retries, attempt + 1)
+    else
+      {:error, reason}
     end
   end
 
@@ -142,12 +145,16 @@ defmodule BotArmyLlm.Handlers.ResponseHandler do
   end
 
   defp publish_parsed(structured_data, context, triggered_by_event_id, tenant_id, user_id) do
-    event_data = EventBuilder.build("llm.response.parsed", Map.merge(context, %{
-      "structured_data" => structured_data,
-      "triggered_by_event_id" => triggered_by_event_id,
-      "tenant_id" => tenant_id,
-      "user_id" => user_id
-    }))
+    event_data =
+      EventBuilder.build(
+        "llm.response.parsed",
+        Map.merge(context, %{
+          "structured_data" => structured_data,
+          "triggered_by_event_id" => triggered_by_event_id,
+          "tenant_id" => tenant_id,
+          "user_id" => user_id
+        })
+      )
 
     case BotArmyLlm.NATS.Publisher.publish(event_data) do
       :ok -> Logger.debug("Published parsed response event")

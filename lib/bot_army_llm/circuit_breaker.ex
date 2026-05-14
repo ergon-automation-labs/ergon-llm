@@ -24,6 +24,7 @@ defmodule BotArmyLlm.CircuitBreaker do
 
   require Logger
 
+  @env Mix.env()
   @failure_threshold 5
 
   def child_spec(provider) do
@@ -142,7 +143,7 @@ defmodule BotArmyLlm.CircuitBreaker do
   end
 
   # Test-only: simulate time passing for half-open timeout
-  if Mix.env() == :test do
+  if @env == :test do
     @impl true
     def handle_call({:set_opened_at, timestamp}, _from, state) do
       {:reply, :ok, %{state | opened_at: timestamp}}

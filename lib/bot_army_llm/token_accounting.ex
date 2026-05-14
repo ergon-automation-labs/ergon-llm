@@ -93,12 +93,13 @@ defmodule BotArmyLlm.TokenAccounting do
   def record(attrs) when is_map(attrs) do
     attrs = apply_identity_defaults(attrs)
 
-    cost = estimate_cost(
-      attrs["provider"],
-      attrs["model"],
-      attrs["tokens_input"],
-      attrs["tokens_output"]
-    )
+    cost =
+      estimate_cost(
+        attrs["provider"],
+        attrs["model"],
+        attrs["tokens_input"],
+        attrs["tokens_output"]
+      )
 
     record_attrs = Map.put(attrs, "estimated_cost_usd", cost)
     changeset = TokenUsage.changeset(record_attrs)
@@ -142,24 +143,24 @@ defmodule BotArmyLlm.TokenAccounting do
     tid = Map.get(attrs, "tenant_id") || Map.get(attrs, :tenant_id)
 
     if tid in [nil, ""] do
-      tenant =
-        if source == "claude_code" do
-          case System.get_env("BOT_ARMY_LLM_CLAUDE_CODE_TENANT_ID") do
-            v when is_binary(v) and v != "" -> v
-            _ -> WellKnownIds.claude_code_default_tenant()
-          end
-        else
-          case System.get_env("BOT_ARMY_LLM_DEFAULT_TENANT_ID") do
-            v when is_binary(v) and v != "" -> v
-            _ -> WellKnownIds.legacy_default_tenant()
-          end
-        end
-
-      attrs
-      |> Map.delete(:tenant_id)
-      |> Map.put("tenant_id", tenant)
+      tenant = get_default_tenant_id(source)
+      attrs |> Map.delete(:tenant_id) |> Map.put("tenant_id", tenant)
     else
       attrs
+    end
+  end
+
+  defp get_default_tenant_id("claude_code") do
+    case System.get_env("BOT_ARMY_LLM_CLAUDE_CODE_TENANT_ID") do
+      v when is_binary(v) and v != "" -> v
+      _ -> WellKnownIds.claude_code_default_tenant()
+    end
+  end
+
+  defp get_default_tenant_id(_source) do
+    case System.get_env("BOT_ARMY_LLM_DEFAULT_TENANT_ID") do
+      v when is_binary(v) and v != "" -> v
+      _ -> WellKnownIds.legacy_default_tenant()
     end
   end
 
@@ -196,12 +197,13 @@ defmodule BotArmyLlm.TokenAccounting do
     0.0
   end
 
-  def estimate_cost(provider, model, tokens_in, tokens_out) when is_binary(provider) and is_binary(model) do
+  def estimate_cost(provider, model, tokens_in, tokens_out)
+      when is_binary(provider) and is_binary(model) do
     provider_lc = String.downcase(provider)
     {input_rate, output_rate} = find_pricing(provider_lc, model)
 
-    input_cost = if tokens_in, do: (tokens_in * input_rate) / 1_000_000, else: 0.0
-    output_cost = if tokens_out, do: (tokens_out * output_rate) / 1_000_000, else: 0.0
+    input_cost = if tokens_in, do: tokens_in * input_rate / 1_000_000, else: 0.0
+    output_cost = if tokens_out, do: tokens_out * output_rate / 1_000_000, else: 0.0
 
     input_cost + output_cost
   end
@@ -239,7 +241,9 @@ defmodule BotArmyLlm.TokenAccounting do
       if is_binary(source), do: where(query_base, [t], t.source == ^source), else: query_base
 
     query_base =
-      if is_binary(provider), do: where(query_base, [t], t.provider == ^provider), else: query_base
+      if is_binary(provider),
+        do: where(query_base, [t], t.provider == ^provider),
+        else: query_base
 
     try do
       rows = repo().all(query_base)
@@ -249,7 +253,8 @@ defmodule BotArmyLlm.TokenAccounting do
         total_calls: length(rows),
         total_tokens_in: Enum.reduce(rows, 0, fn r, acc -> (r.tokens_input || 0) + acc end),
         total_tokens_out: Enum.reduce(rows, 0, fn r, acc -> (r.tokens_output || 0) + acc end),
-        total_cost_usd: Enum.reduce(rows, 0.0, fn r, acc -> (r.estimated_cost_usd || 0.0) + acc end),
+        total_cost_usd:
+          Enum.reduce(rows, 0.0, fn r, acc -> (r.estimated_cost_usd || 0.0) + acc end),
         by_provider: group_by_provider(rows),
         by_source: group_by_source(rows)
       }
@@ -318,15 +323,23 @@ defmodule BotArmyLlm.TokenAccounting do
       {:ok, list} when is_list(list) ->
         Enum.flat_map(list, fn item ->
           case parse_overlay_rule(item) do
-            {:ok, rule} -> [rule]
+            {:ok, rule} ->
+              [rule]
+
             {:error, reason} ->
-              Logger.warning("Ignoring pricing rule from #{source_tag}: #{inspect(reason)} item=#{inspect(item, limit: 100)}")
+              Logger.warning(
+                "Ignoring pricing rule from #{source_tag}: #{inspect(reason)} item=#{inspect(item, limit: 100)}"
+              )
+
               []
           end
         end)
 
       {:ok, other} ->
-        Logger.warning("Pricing overlay from #{source_tag} must be a JSON array, got: #{inspect(other)}")
+        Logger.warning(
+          "Pricing overlay from #{source_tag} must be a JSON array, got: #{inspect(other)}"
+        )
+
         []
 
       {:error, e} ->
@@ -360,7 +373,8 @@ defmodule BotArmyLlm.TokenAccounting do
           {:error, e} -> {:error, {:bad_regex, e}}
         end
 
-      is_binary(Map.get(m, "model_substring")) and String.trim(Map.get(m, "model_substring")) != "" ->
+      is_binary(Map.get(m, "model_substring")) and
+          String.trim(Map.get(m, "model_substring")) != "" ->
         {:ok, {:contains, String.downcase(String.trim(Map.get(m, "model_substring")))}}
 
       true ->
@@ -412,12 +426,13 @@ defmodule BotArmyLlm.TokenAccounting do
     rows
     |> Enum.group_by(& &1.provider)
     |> Enum.map(fn {provider, group} ->
-      {provider, %{
-        calls: length(group),
-        tokens_in: Enum.reduce(group, 0, fn r, acc -> (r.tokens_input || 0) + acc end),
-        tokens_out: Enum.reduce(group, 0, fn r, acc -> (r.tokens_output || 0) + acc end),
-        cost_usd: Enum.reduce(group, 0.0, fn r, acc -> (r.estimated_cost_usd || 0.0) + acc end)
-      }}
+      {provider,
+       %{
+         calls: length(group),
+         tokens_in: Enum.reduce(group, 0, fn r, acc -> (r.tokens_input || 0) + acc end),
+         tokens_out: Enum.reduce(group, 0, fn r, acc -> (r.tokens_output || 0) + acc end),
+         cost_usd: Enum.reduce(group, 0.0, fn r, acc -> (r.estimated_cost_usd || 0.0) + acc end)
+       }}
     end)
     |> Map.new()
   end
@@ -427,12 +442,13 @@ defmodule BotArmyLlm.TokenAccounting do
     |> Enum.group_by(& &1.source)
     |> Enum.filter(fn {s, _} -> is_binary(s) end)
     |> Enum.map(fn {source, group} ->
-      {source, %{
-        calls: length(group),
-        tokens_in: Enum.reduce(group, 0, fn r, acc -> (r.tokens_input || 0) + acc end),
-        tokens_out: Enum.reduce(group, 0, fn r, acc -> (r.tokens_output || 0) + acc end),
-        cost_usd: Enum.reduce(group, 0.0, fn r, acc -> (r.estimated_cost_usd || 0.0) + acc end)
-      }}
+      {source,
+       %{
+         calls: length(group),
+         tokens_in: Enum.reduce(group, 0, fn r, acc -> (r.tokens_input || 0) + acc end),
+         tokens_out: Enum.reduce(group, 0, fn r, acc -> (r.tokens_output || 0) + acc end),
+         cost_usd: Enum.reduce(group, 0.0, fn r, acc -> (r.estimated_cost_usd || 0.0) + acc end)
+       }}
     end)
     |> Map.new()
   end

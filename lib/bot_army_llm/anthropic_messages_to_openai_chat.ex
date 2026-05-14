@@ -147,17 +147,8 @@ defmodule BotArmyLlm.AnthropicMessagesToOpenaiChat do
   end
 
   defp assistant_to_openai(parts) when is_list(parts) do
-    texts =
-      Enum.flat_map(parts, fn
-        %{"type" => "text", "text" => t} when is_binary(t) -> [t]
-        _ -> []
-      end)
-
-    tool_uses =
-      Enum.filter(parts, fn
-        %{"type" => "tool_use"} -> true
-        _ -> false
-      end)
+    texts = extract_text_parts(parts)
+    tool_uses = extract_tool_uses(parts)
 
     text_content =
       case texts do
@@ -165,39 +156,46 @@ defmodule BotArmyLlm.AnthropicMessagesToOpenaiChat do
         _ -> Enum.join(texts, "\n")
       end
 
-    base = %{"role" => "assistant"}
-
-    base =
-      if text_content && text_content != "" do
-        Map.put(base, "content", text_content)
-      else
-        Map.put(base, "content", nil)
-      end
+    base = %{"role" => "assistant", "content" => text_content}
 
     if tool_uses == [] do
       base
     else
-      calls =
-        Enum.map(tool_uses, fn tu ->
-          id = Map.get(tu, "id") || "toolu_unknown"
-          name = Map.get(tu, "name") || ""
-          input = Map.get(tu, "input") || %{}
-
-          args =
-            case input do
-              s when is_binary(s) -> s
-              _ -> Jason.encode!(input)
-            end
-
-          %{
-            "id" => id,
-            "type" => "function",
-            "function" => %{"name" => name, "arguments" => args}
-          }
-        end)
-
+      calls = Enum.map(tool_uses, &build_tool_call/1)
       Map.put(base, "tool_calls", calls)
     end
+  end
+
+  defp extract_text_parts(parts) do
+    Enum.flat_map(parts, fn
+      %{"type" => "text", "text" => t} when is_binary(t) -> [t]
+      _ -> []
+    end)
+  end
+
+  defp extract_tool_uses(parts) do
+    Enum.filter(parts, fn
+      %{"type" => "tool_use"} -> true
+      _ -> false
+    end)
+  end
+
+  defp build_tool_call(tu) do
+    id = Map.get(tu, "id") || "toolu_unknown"
+    name = Map.get(tu, "name") || ""
+    input = Map.get(tu, "input") || %{}
+
+    args =
+      case input do
+        s when is_binary(s) -> s
+        _ -> Jason.encode!(input)
+      end
+
+    %{
+      "id" => id,
+      "type" => "function",
+      "function" => %{"name" => name, "arguments" => args}
+    }
   end
 
   defp assistant_to_openai(nil) do

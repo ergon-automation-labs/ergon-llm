@@ -22,8 +22,7 @@ config :bot_army_llm, BotArmyLlm.Repo,
     String.to_integer(
       System.get_env("BOT_ARMY_LLM_DB_PORT") || System.get_env("DATABASE_PORT", "30003")
     ),
-  username:
-    System.get_env("BOT_ARMY_LLM_DB_USER") || System.get_env("DATABASE_USER", "postgres"),
+  username: System.get_env("BOT_ARMY_LLM_DB_USER") || System.get_env("DATABASE_USER", "postgres"),
   password:
     System.get_env("BOT_ARMY_LLM_DB_PASSWORD") || System.get_env("DATABASE_PASSWORD", "postgres"),
   pool_size: 3
@@ -39,7 +38,7 @@ end
 
 # NATS configuration for bot_army_runtime
 nats_host = System.get_env("NATS_HOST") || "localhost"
-nats_port = String.to_integer(System.get_env("NATS_PORT") || "4222")
+nats_port = String.to_integer(System.get_env("NATS_PORT") || "4223")
 
 config :bot_army_runtime, :nats,
   servers: [{nats_host, nats_port}],

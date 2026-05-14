@@ -103,17 +103,19 @@ defmodule BotArmyLlm.LlmClient do
     start_time = System.monotonic_time(:millisecond)
 
     # Check for sensitive data before routing
+    chain = resolved_embed_provider_chain()
+
     providers =
       if SafetyClassifier.safe_for_cloud?(text) do
-        [:ollama_embed, :openrouter_embed]
+        chain
       else
         SafetyClassifier.log_decision(
           :contains_sensitive,
           "routing embed to local-only providers"
         )
 
-        # Local only
-        [:ollama_embed]
+        # Local only - filter to just ollama_embed
+        Enum.filter(chain, fn p -> p == :ollama_embed end)
       end
 
     Logger.debug("Embed routing: providers=#{inspect(providers)}, safety_checked=true")
@@ -301,6 +303,34 @@ defmodule BotArmyLlm.LlmClient do
       Logger.info("LLM: Local nodes under load — routing to cloud providers")
       chain
     end
+  end
+
+  @doc false
+  @spec resolved_embed_provider_chain() :: list(atom())
+  def resolved_embed_provider_chain do
+    case Application.get_env(:bot_army_llm, :embed_provider_chain) do
+      list when is_list(list) ->
+        list
+
+      nil ->
+        case System.get_env("BOT_ARMY_LLM_EMBED_PROVIDER_CHAIN") do
+          nil -> [:ollama_embed, :openrouter_embed]
+          env_str -> parse_embed_provider_chain_string(env_str)
+        end
+    end
+  end
+
+  defp parse_embed_provider_chain_string(str) when is_binary(str) do
+    str
+    |> String.split(",")
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.map(&String.downcase/1)
+    |> Enum.map(fn
+      "ollama" -> :ollama_embed
+      "openrouter" -> :openrouter_embed
+      unknown -> raise ArgumentError, "Unknown embed provider: #{unknown}"
+    end)
   end
 
   defp drop_failed_providers(providers, opts) when is_list(providers) do

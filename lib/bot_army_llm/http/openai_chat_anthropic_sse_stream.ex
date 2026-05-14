@@ -210,39 +210,37 @@ defmodule BotArmyLlm.Http.OpenaiChatAnthropicSseStream do
   defp handle_sse_frame(conn, acc, frame) do
     payload = collect_data_lines(frame)
 
-    cond do
-      payload == "" or payload == "[DONE]" ->
-        {conn, acc} =
-          if payload == "[DONE]", do: close_anthropic_stream_impl(conn, acc), else: {conn, acc}
+    if payload == "" or payload == "[DONE]" do
+      {conn, acc} =
+        if payload == "[DONE]", do: close_anthropic_stream_impl(conn, acc), else: {conn, acc}
 
-        {:ok, conn, acc}
+      {:ok, conn, acc}
+    else
+      case Jason.decode(payload) do
+        {:ok, obj} ->
+          acc = merge_usage_from_chunk(acc, obj)
 
-      true ->
-        case Jason.decode(payload) do
-          {:ok, obj} ->
-            acc = merge_usage_from_chunk(acc, obj)
+          choice = List.first(obj["choices"] || []) || %{}
+          delta = Map.get(choice, "delta") || %{}
+          content = Map.get(delta, "content")
+          finish = Map.get(choice, "finish_reason")
+          acc = merge_tool_deltas(acc, Map.get(delta, "tool_calls"))
 
-            choice = List.first(obj["choices"] || []) || %{}
-            delta = Map.get(choice, "delta") || %{}
-            content = Map.get(delta, "content")
-            finish = Map.get(choice, "finish_reason")
-            acc = merge_tool_deltas(acc, Map.get(delta, "tool_calls"))
-
-            acc =
-              if finish not in [nil, ""] do
-                %{acc | finish_reason: finish}
-              else
-                acc
-              end
-
-            case maybe_emit_text_delta(conn, acc, content) do
-              {:ok, conn, acc} -> {:ok, conn, acc}
-              {:error, _} = err -> err
+          acc =
+            if finish not in [nil, ""] do
+              %{acc | finish_reason: finish}
+            else
+              acc
             end
 
-          {:error, _} ->
-            {:ok, conn, acc}
-        end
+          case maybe_emit_text_delta(conn, acc, content) do
+            {:ok, conn, acc} -> {:ok, conn, acc}
+            {:error, _} = err -> err
+          end
+
+        {:error, _} ->
+          {:ok, conn, acc}
+      end
     end
   end
 
@@ -495,9 +493,10 @@ defmodule BotArmyLlm.Http.OpenaiChatAnthropicSseStream do
     {tin, tout} = acc.last_usage
 
     stop =
-      cond do
-        has_tools -> "tool_use"
-        true -> stop_reason_from_finish(acc.finish_reason)
+      if has_tools do
+        "tool_use"
+      else
+        stop_reason_from_finish(acc.finish_reason)
       end
 
     sse2 =

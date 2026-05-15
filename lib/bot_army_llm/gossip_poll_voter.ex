@@ -103,15 +103,19 @@ defmodule BotArmyLlm.GossipPollVoter do
 
     case BotArmyLlm.LlmClient.complete(prompt, model: :fast) do
       {:ok, %{text: text}} ->
-        case Jason.decode(text) do
-          {:ok, %{"vote" => v}} when is_binary(v) ->
-            if Enum.member?(options, v),
-              do: v,
-              else: suggest_vote(topic, options, context_snapshot)
+        handle_llm_response(text, topic, options, context_snapshot)
 
-          _ ->
-            suggest_vote(topic, options, context_snapshot)
-        end
+      _ ->
+        suggest_vote(topic, options, context_snapshot)
+    end
+  end
+
+  defp handle_llm_response(text, topic, options, context_snapshot) do
+    case Jason.decode(text) do
+      {:ok, %{"vote" => v}} when is_binary(v) ->
+        if Enum.member?(options, v),
+          do: v,
+          else: suggest_vote(topic, options, context_snapshot)
 
       _ ->
         suggest_vote(topic, options, context_snapshot)

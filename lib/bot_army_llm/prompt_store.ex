@@ -97,16 +97,22 @@ defmodule BotArmyLlm.PromptStore do
     Logger.info("PromptStore started")
     # Load all prompts from database into GenServer state
     # Gracefully handle database unavailability (e.g., in tests)
-    state = try do
-      prompts = BotArmyLlm.Repo.all(BotArmyLlm.Schemas.Prompt)
-      Enum.reduce(prompts, %{}, fn prompt, acc ->
-        Map.put(acc, prompt.id |> to_string(), schema_to_map(prompt))
-      end)
-    rescue
-      _ ->
-        Logger.warning("Could not load prompts from database (database unavailable). Starting with empty state.")
-        %{}
-    end
+    state =
+      try do
+        prompts = BotArmyLlm.Repo.all(BotArmyLlm.Schemas.Prompt)
+
+        Enum.reduce(prompts, %{}, fn prompt, acc ->
+          Map.put(acc, prompt.id |> to_string(), schema_to_map(prompt))
+        end)
+      rescue
+        _ ->
+          Logger.warning(
+            "Could not load prompts from database (database unavailable). Starting with empty state."
+          )
+
+          %{}
+      end
+
     {:ok, state}
   end
 
@@ -114,16 +120,17 @@ defmodule BotArmyLlm.PromptStore do
   def handle_call({:create, payload}, _from, state) do
     prompt_id = Ecto.UUID.generate()
 
-    changeset = BotArmyLlm.Schemas.Prompt.changeset(
-      %BotArmyLlm.Schemas.Prompt{id: prompt_id},
-      %{
-        "text" => payload["text"],
-        "model" => payload["model"],
-        "temperature" => Map.get(payload, "temperature", 0.7),
-        "max_tokens" => Map.get(payload, "max_tokens"),
-        "status" => "active"
-      }
-    )
+    changeset =
+      BotArmyLlm.Schemas.Prompt.changeset(
+        %BotArmyLlm.Schemas.Prompt{id: prompt_id},
+        %{
+          "text" => payload["text"],
+          "model" => payload["model"],
+          "temperature" => Map.get(payload, "temperature", 0.7),
+          "max_tokens" => Map.get(payload, "max_tokens"),
+          "status" => "active"
+        }
+      )
 
     case BotArmyLlm.Repo.insert(changeset) do
       {:ok, db_prompt} ->
@@ -145,34 +152,43 @@ defmodule BotArmyLlm.PromptStore do
         {:reply, {:error, :not_found}, state}
 
       _prompt ->
-        prompt_uuid = Ecto.UUID.cast!(prompt_id)
-        db_prompt = BotArmyLlm.Repo.get(BotArmyLlm.Schemas.Prompt, prompt_uuid)
+        perform_update(prompt_id, payload, state)
+    end
+  end
 
-        if db_prompt do
-          changeset = BotArmyLlm.Schemas.Prompt.changeset(
-            db_prompt,
-            %{
-              "text" => Map.get(payload, "text", db_prompt.text),
-              "model" => Map.get(payload, "model", db_prompt.model),
-              "temperature" => Map.get(payload, "temperature", db_prompt.temperature),
-              "max_tokens" => Map.get(payload, "max_tokens", db_prompt.max_tokens)
-            }
-          )
+  defp perform_update(prompt_id, payload, state) do
+    prompt_uuid = Ecto.UUID.cast!(prompt_id)
+    db_prompt = BotArmyLlm.Repo.get(BotArmyLlm.Schemas.Prompt, prompt_uuid)
 
-          case BotArmyLlm.Repo.update(changeset) do
-            {:ok, updated_db_prompt} ->
-              updated_prompt = schema_to_map(updated_db_prompt)
-              new_state = Map.put(state, prompt_id, updated_prompt)
-              Logger.info("Updated prompt in database: #{prompt_id}")
-              {:reply, {:ok, updated_prompt}, new_state}
+    if db_prompt do
+      changeset =
+        BotArmyLlm.Schemas.Prompt.changeset(
+          db_prompt,
+          %{
+            "text" => Map.get(payload, "text", db_prompt.text),
+            "model" => Map.get(payload, "model", db_prompt.model),
+            "temperature" => Map.get(payload, "temperature", db_prompt.temperature),
+            "max_tokens" => Map.get(payload, "max_tokens", db_prompt.max_tokens)
+          }
+        )
 
-            {:error, changeset} ->
-              Logger.error("Failed to update prompt: #{inspect(changeset.errors)}")
-              {:reply, {:error, :database_error}, state}
-          end
-        else
-          {:reply, {:error, :not_found}, state}
-        end
+      handle_update_result(changeset, prompt_id, state)
+    else
+      {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  defp handle_update_result(changeset, prompt_id, state) do
+    case BotArmyLlm.Repo.update(changeset) do
+      {:ok, updated_db_prompt} ->
+        updated_prompt = schema_to_map(updated_db_prompt)
+        new_state = Map.put(state, prompt_id, updated_prompt)
+        Logger.info("Updated prompt in database: #{prompt_id}")
+        {:reply, {:ok, updated_prompt}, new_state}
+
+      {:error, changeset} ->
+        Logger.error("Failed to update prompt: #{inspect(changeset.errors)}")
+        {:reply, {:error, :database_error}, state}
     end
   end
 
@@ -183,29 +199,38 @@ defmodule BotArmyLlm.PromptStore do
         {:reply, {:error, :not_found}, state}
 
       _prompt ->
-        prompt_uuid = Ecto.UUID.cast!(prompt_id)
-        db_prompt = BotArmyLlm.Repo.get(BotArmyLlm.Schemas.Prompt, prompt_uuid)
+        perform_archive(prompt_id, state)
+    end
+  end
 
-        if db_prompt do
-          changeset = BotArmyLlm.Schemas.Prompt.changeset(
-            db_prompt,
-            %{"status" => "archived"}
-          )
+  defp perform_archive(prompt_id, state) do
+    prompt_uuid = Ecto.UUID.cast!(prompt_id)
+    db_prompt = BotArmyLlm.Repo.get(BotArmyLlm.Schemas.Prompt, prompt_uuid)
 
-          case BotArmyLlm.Repo.update(changeset) do
-            {:ok, archived_db_prompt} ->
-              archived_prompt = schema_to_map(archived_db_prompt)
-              new_state = Map.put(state, prompt_id, archived_prompt)
-              Logger.info("Archived prompt in database: #{prompt_id}")
-              {:reply, {:ok, archived_prompt}, new_state}
+    if db_prompt do
+      changeset =
+        BotArmyLlm.Schemas.Prompt.changeset(
+          db_prompt,
+          %{"status" => "archived"}
+        )
 
-            {:error, changeset} ->
-              Logger.error("Failed to archive prompt: #{inspect(changeset.errors)}")
-              {:reply, {:error, :database_error}, state}
-          end
-        else
-          {:reply, {:error, :not_found}, state}
-        end
+      handle_archive_result(changeset, prompt_id, state)
+    else
+      {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  defp handle_archive_result(changeset, prompt_id, state) do
+    case BotArmyLlm.Repo.update(changeset) do
+      {:ok, archived_db_prompt} ->
+        archived_prompt = schema_to_map(archived_db_prompt)
+        new_state = Map.put(state, prompt_id, archived_prompt)
+        Logger.info("Archived prompt in database: #{prompt_id}")
+        {:reply, {:ok, archived_prompt}, new_state}
+
+      {:error, changeset} ->
+        Logger.error("Failed to archive prompt: #{inspect(changeset.errors)}")
+        {:reply, {:error, :database_error}, state}
     end
   end
 
@@ -219,9 +244,11 @@ defmodule BotArmyLlm.PromptStore do
 
   @impl true
   def handle_call(:list, _from, state) do
-    prompts = state
+    prompts =
+      state
       |> Map.values()
       |> Enum.filter(fn p -> p["status"] == "active" end)
+
     {:reply, {:ok, prompts}, state}
   end
 

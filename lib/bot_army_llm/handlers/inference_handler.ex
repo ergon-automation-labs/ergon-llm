@@ -209,9 +209,7 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
       model_override,
       llm_client,
       conversation_store,
-      event_id,
-      tenant_id,
-      user_id
+      %{"event_id" => event_id, "tenant_id" => tenant_id, "user_id" => user_id}
     )
   end
 
@@ -243,11 +241,12 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
          model_override,
          llm_client,
          conversation_store,
-         event_id,
-         tenant_id,
-         user_id
+         context
        ) do
     messages = conversation["messages"] ++ [%{"role" => "user", "content" => user_message}]
+    event_id = context["event_id"]
+    tenant_id = context["tenant_id"]
+    user_id = context["user_id"]
 
     BotArmyLlm.LocalQueueManager.increment()
 

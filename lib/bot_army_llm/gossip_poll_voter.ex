@@ -119,20 +119,29 @@ defmodule BotArmyLlm.GossipPollVoter do
   end
 
   defp suggest_vote(topic, options, context_snapshot) do
-    preferred =
-      case topic do
-        "focus" -> "deep_work"
-        "risk" -> "quality"
-        "coordination" -> "dependencies"
-        "priorities" -> choose_priority_vote(options, context_snapshot)
-        _ -> nil
-      end
+    preferred = topic_preference(topic, options, context_snapshot)
+    select_best_option(preferred, options)
+  end
 
-    cond do
-      is_binary(preferred) and preferred in options -> preferred
-      is_list(options) and options != [] -> List.first(options)
-      true -> "upvote"
-    end
+  defp topic_preference("focus", _options, _context), do: "deep_work"
+  defp topic_preference("risk", _options, _context), do: "quality"
+  defp topic_preference("coordination", _options, _context), do: "dependencies"
+
+  defp topic_preference("priorities", options, context),
+    do: choose_priority_vote(options, context)
+
+  defp topic_preference(_, _options, _context), do: nil
+
+  defp select_best_option(preferred, options) when is_binary(preferred) do
+    if Enum.member?(options, preferred), do: preferred, else: select_best_option(nil, options)
+  end
+
+  defp select_best_option(_preferred, options) when is_list(options) and options != [] do
+    List.first(options)
+  end
+
+  defp select_best_option(_preferred, _options) do
+    "upvote"
   end
 
   defp choose_priority_vote(options, context_snapshot) do

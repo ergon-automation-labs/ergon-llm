@@ -240,6 +240,36 @@ defmodule BotArmyLlm.NATS.Consumer do
     {:noreply, state}
   end
 
+  @impl true
+  def handle_info(:reconnect, state) do
+    Logger.info("Attempting to reconnect to NATS")
+    {:noreply, state, {:continue, :connect}}
+  end
+
+  @impl true
+  def handle_info({:nats, :disconnected}, state) do
+    Logger.warning("Disconnected from NATS, will reconnect")
+    Process.send_after(self(), :reconnect, @reconnect_delay_ms)
+    {:noreply, %{state | subscriptions: [], connection: nil}}
+  end
+
+  @impl true
+  def handle_info({:nats, :connected}, state) do
+    Logger.info("Reconnected to NATS, re-subscribing")
+    {:noreply, state, {:continue, :connect}}
+  end
+
+  @impl true
+  def handle_info(:registry_heartbeat, state) do
+    if state.subscriptions != [] do
+      BotArmyRuntime.Registry.register("llm", @subjects, @version)
+      BotArmyLlm.GossipPollVoter.maybe_vote_on_heartbeat()
+      Process.send_after(self(), :registry_heartbeat, @registry_heartbeat_ms)
+    end
+
+    {:noreply, state}
+  end
+
   defp process_message(%{topic: "gossip.poll.broadcast", body: body}) do
     case Jason.decode(body) do
       {:ok, decoded} -> BotArmyLlm.GossipPollVoter.handle_poll_broadcast(decoded)
@@ -277,36 +307,6 @@ defmodule BotArmyLlm.NATS.Consumer do
           _ -> %{}
         end
     end
-  end
-
-  @impl true
-  def handle_info(:reconnect, state) do
-    Logger.info("Attempting to reconnect to NATS")
-    {:noreply, state, {:continue, :connect}}
-  end
-
-  @impl true
-  def handle_info({:nats, :disconnected}, state) do
-    Logger.warning("Disconnected from NATS, will reconnect")
-    Process.send_after(self(), :reconnect, @reconnect_delay_ms)
-    {:noreply, %{state | subscriptions: [], connection: nil}}
-  end
-
-  @impl true
-  def handle_info({:nats, :connected}, state) do
-    Logger.info("Reconnected to NATS, re-subscribing")
-    {:noreply, state, {:continue, :connect}}
-  end
-
-  @impl true
-  def handle_info(:registry_heartbeat, state) do
-    if state.subscriptions != [] do
-      BotArmyRuntime.Registry.register("llm", @subjects, @version)
-      BotArmyLlm.GossipPollVoter.maybe_vote_on_heartbeat()
-      Process.send_after(self(), :registry_heartbeat, @registry_heartbeat_ms)
-    end
-
-    {:noreply, state}
   end
 
   # Private functions
@@ -534,6 +534,24 @@ defmodule BotArmyLlm.NATS.Consumer do
       record_lane_metric(:record_lane_latency, lane, response["latency_ms"])
 
       publish_reply(reply_to, response)
+
+      # Record outcome: LLM chat quality
+      try do
+        was_successful =
+          Map.get(response, "content") != "" and Map.get(response, "content") != nil
+
+        model_used = Map.get(response, "model_used", "auto")
+
+        BotArmyLearning.OutcomeTracker.record(
+          request_id,
+          "llm.chat_quality",
+          model_used,
+          lane,
+          was_successful
+        )
+      rescue
+        _ -> :ok
+      end
     end)
   end
 

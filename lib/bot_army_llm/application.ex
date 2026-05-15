@@ -43,6 +43,9 @@ defmodule BotArmyLlm.Application do
         # Metrics collection (in-memory counters and percentiles)
         {BotArmyLlm.Metrics, []},
 
+        # Shared-library outcome tracker — records LLM inference quality
+        {BotArmyLearning.OutcomeTracker, []},
+
         # Pulse publisher (reports inference health to Synapse every 5 min)
         {BotArmyLlm.PulsePublisher, []},
 

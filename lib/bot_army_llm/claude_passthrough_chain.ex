@@ -260,6 +260,16 @@ defmodule BotArmyLlm.ClaudePassthroughChain do
     headers = [{"Content-Type", "application/json"}]
     timeout_ms = ollama_timeout_ms()
 
+    base = build_ollama_request_body(model, messages, anthropic_payload)
+
+    with {:ok, body} <- Jason.encode(base) do
+      make_ollama_request(endpoint, body, headers, timeout_ms)
+    end
+  rescue
+    _ -> {:error, :request_failed}
+  end
+
+  defp build_ollama_request_body(model, messages, anthropic_payload) do
     base = %{
       "model" => model,
       "messages" => messages,
@@ -272,33 +282,26 @@ defmodule BotArmyLlm.ClaudePassthroughChain do
         _ -> base
       end
 
-    base =
-      case Map.get(anthropic_payload, "max_tokens") do
-        n when is_integer(n) and n > 0 -> put_ollama_options(base, %{"num_predict" => n})
-        _ -> base
-      end
-
-    case Jason.encode(base) do
-      {:ok, body} ->
-        case HTTPoison.post(endpoint, body, headers,
-               recv_timeout: timeout_ms,
-               timeout: timeout_ms
-             ) do
-          {:ok, %HTTPoison.Response{status_code: 200, body: resp_body}} ->
-            {:ok, resp_body}
-
-          {:ok, %HTTPoison.Response{status_code: status}} ->
-            {:error, {:ollama_http_error, status}}
-
-          {:error, reason} ->
-            {:error, {:connection_error, reason}}
-        end
-
-      {:error, e} ->
-        {:error, {:encode_error, e}}
+    case Map.get(anthropic_payload, "max_tokens") do
+      n when is_integer(n) and n > 0 -> put_ollama_options(base, %{"num_predict" => n})
+      _ -> base
     end
-  rescue
-    _ -> {:error, :request_failed}
+  end
+
+  defp make_ollama_request(endpoint, body, headers, timeout_ms) do
+    case HTTPoison.post(endpoint, body, headers,
+           recv_timeout: timeout_ms,
+           timeout: timeout_ms
+         ) do
+      {:ok, %HTTPoison.Response{status_code: 200, body: resp_body}} ->
+        {:ok, resp_body}
+
+      {:ok, %HTTPoison.Response{status_code: status}} ->
+        {:error, {:ollama_http_error, status}}
+
+      {:error, reason} ->
+        {:error, {:connection_error, reason}}
+    end
   end
 
   defp put_ollama_options(%{"options" => o} = m, extra),

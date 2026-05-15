@@ -178,14 +178,16 @@ defmodule BotArmyLlm.Http.OpenaiChatAnthropicSseStream do
   end
 
   defp process_frames(frames, conn, acc) do
-    case Enum.reduce_while(frames, {:ok, conn, acc}, fn frame, {:ok, conn, acc} ->
-           case handle_sse_frame(conn, acc, frame) do
-             {:ok, conn, acc} -> {:cont, {:ok, conn, acc}}
-             {:error, _} = err -> {:halt, err}
-           end
-         end) do
+    case Enum.reduce_while(frames, {:ok, conn, acc}, &process_frame/2) do
       {:ok, conn, acc} -> {:ok, conn, acc}
       {:error, _} = err -> err
+    end
+  end
+
+  defp process_frame(frame, {:ok, conn, acc}) do
+    case handle_sse_frame(conn, acc, frame) do
+      {:ok, conn, acc} -> {:cont, {:ok, conn, acc}}
+      {:error, _} = err -> {:halt, err}
     end
   end
 

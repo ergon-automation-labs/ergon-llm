@@ -205,32 +205,35 @@ defmodule BotArmyLlm.LlmClient do
     if is_nil(image_data_base64) and is_nil(image_url) do
       {:error, :no_image_provided}
     else
-      start_time = System.monotonic_time(:millisecond)
+      run_vision_analysis(image_data_base64, image_url, prompt_text, opts)
+    end
+  end
 
-      # Check prompt for sensitive data
-      providers =
-        if SafetyClassifier.safe_for_cloud?(prompt_text) do
-          [:ollama_vision, :anthropic_vision, :openrouter_vision]
-        else
-          SafetyClassifier.log_decision(
-            :contains_sensitive,
-            "routing vision to local-only providers"
-          )
+  defp run_vision_analysis(image_data_base64, image_url, prompt_text, opts) do
+    start_time = System.monotonic_time(:millisecond)
+    providers = select_vision_providers(prompt_text)
+    Logger.debug("LLM vision routing: chain=#{inspect(providers)}, safety_checked=true")
 
-          # Local only
-          [:ollama_vision]
-        end
+    case try_vision_providers(providers, image_data_base64, image_url, prompt_text, opts) do
+      {:ok, result} ->
+        latency = System.monotonic_time(:millisecond) - start_time
+        {:ok, Map.put(result, :latency_ms, latency)}
 
-      Logger.debug("LLM vision routing: chain=#{inspect(providers)}, safety_checked=true")
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
 
-      case try_vision_providers(providers, image_data_base64, image_url, prompt_text, opts) do
-        {:ok, result} ->
-          latency = System.monotonic_time(:millisecond) - start_time
-          {:ok, Map.put(result, :latency_ms, latency)}
+  defp select_vision_providers(prompt_text) do
+    if SafetyClassifier.safe_for_cloud?(prompt_text) do
+      [:ollama_vision, :anthropic_vision, :openrouter_vision]
+    else
+      SafetyClassifier.log_decision(
+        :contains_sensitive,
+        "routing vision to local-only providers"
+      )
 
-        {:error, reason} ->
-          {:error, reason}
-      end
+      [:ollama_vision]
     end
   end
 

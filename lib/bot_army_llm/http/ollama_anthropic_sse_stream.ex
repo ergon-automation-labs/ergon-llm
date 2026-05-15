@@ -42,61 +42,82 @@ defmodule BotArmyLlm.Http.OllamaAnthropicSseStream do
         last_usage: {nil, nil}
       }
 
-      case Finch.stream_while(
-             req,
-             BotArmyLlm.Finch,
-             {conn, acc0},
-             &stream_o_chunk/2,
-             receive_timeout: @receive_timeout,
-             request_timeout: @receive_timeout
-           ) do
-        {:ok, {:upstream_failed, status, _conn}} ->
-          {:error, {:http_error, status}}
-
-        {:ok, {:stream_failed, conn}} ->
-          if conn.state == :chunked do
-            {:ok, conn}
-          else
-            {:error, :ollama_stream_failed}
-          end
-
-        {:ok, {conn, acc}} ->
-          {tin, tout} = acc.last_usage
-          latency = System.monotonic_time(:millisecond) - start_ms
-
-          BotArmyLlm.TokenAccounting.record(%{
-            "event_id" => event_id,
-            "event_type" => "anthropic.messages.stream",
-            "source" => source,
-            "provider" => "ollama",
-            "model" => model,
-            "tokens_input" => tin,
-            "tokens_output" => tout,
-            "latency_ms" => latency
-          })
-
-          Logger.info("http_proxy Ollama SSE stream done",
-            source: source,
-            model: model,
-            latency_ms: latency
-          )
-
-          {:ok, conn}
-
-        {:error, exception, {conn, _acc}} ->
-          Logger.error("Ollama SSE stream failed: #{Exception.message(exception)}")
-
-          if conn.state == :chunked do
-            {:ok, conn}
-          else
-            {:error, {:stream_exception, exception}}
-          end
-      end
+      handle_stream_result(
+        Finch.stream_while(
+          req,
+          BotArmyLlm.Finch,
+          {conn, acc0},
+          &stream_o_chunk/2,
+          receive_timeout: @receive_timeout,
+          request_timeout: @receive_timeout
+        ),
+        event_id,
+        source,
+        model,
+        start_ms
+      )
     else
       {:error, reason} ->
         Logger.debug("Ollama SSE stream unavailable: #{inspect(reason)}")
         {:error, {:ollama_unavailable, reason}}
     end
+  end
+
+  defp handle_stream_result(stream_result, event_id, source, model, start_ms) do
+    case stream_result do
+      {:ok, {:upstream_failed, status, _conn}} ->
+        {:error, {:http_error, status}}
+
+      {:ok, {:stream_failed, conn}} ->
+        handle_stream_failed(conn)
+
+      {:ok, {conn, acc}} ->
+        finalize_ollama_stream(conn, acc, event_id, source, model, start_ms)
+
+      {:error, exception, {conn, _acc}} ->
+        Logger.error("Ollama SSE stream failed: #{Exception.message(exception)}")
+        handle_stream_exception(conn, exception)
+    end
+  end
+
+  defp handle_stream_failed(conn) do
+    if conn.state == :chunked do
+      {:ok, conn}
+    else
+      {:error, :ollama_stream_failed}
+    end
+  end
+
+  defp handle_stream_exception(conn, exception) do
+    if conn.state == :chunked do
+      {:ok, conn}
+    else
+      {:error, {:stream_exception, exception}}
+    end
+  end
+
+  defp finalize_ollama_stream(conn, acc, event_id, source, model, start_ms) do
+    {tin, tout} = acc.last_usage
+    latency = System.monotonic_time(:millisecond) - start_ms
+
+    BotArmyLlm.TokenAccounting.record(%{
+      "event_id" => event_id,
+      "event_type" => "anthropic.messages.stream",
+      "source" => source,
+      "provider" => "ollama",
+      "model" => model,
+      "tokens_input" => tin,
+      "tokens_output" => tout,
+      "latency_ms" => latency
+    })
+
+    Logger.info("http_proxy Ollama SSE stream done",
+      source: source,
+      model: model,
+      latency_ms: latency
+    )
+
+    {:ok, conn}
   end
 
   defp build_body(model, messages, anthropic_body) do

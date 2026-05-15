@@ -69,28 +69,7 @@ defmodule BotArmyLlm.Http.OpenaiChatAnthropicSseStream do
           {conn, acc} = finalize_upstream(conn, acc)
 
           if acc.client_started do
-            latency = System.monotonic_time(:millisecond) - start_ms
-            {tin, tout} = acc.last_usage
-
-            BotArmyLlm.TokenAccounting.record(%{
-              "event_id" => event_id,
-              "event_type" => "anthropic.messages.stream",
-              "source" => source,
-              "provider" => to_string(provider),
-              "model" => model,
-              "tokens_input" => tin,
-              "tokens_output" => tout,
-              "latency_ms" => latency
-            })
-
-            Logger.info("http_proxy OpenAI-compat stream done",
-              source: source,
-              provider: provider,
-              model: model,
-              latency_ms: latency
-            )
-
-            {:ok, conn}
+            finalize_successful_stream(conn, acc, event_id, start_ms, source, provider, model)
           else
             {:error, {:openai_stream_no_body, provider}}
           end
@@ -134,6 +113,31 @@ defmodule BotArmyLlm.Http.OpenaiChatAnthropicSseStream do
       end
 
     {:ok, body}
+  end
+
+  defp finalize_successful_stream(conn, acc, event_id, start_ms, source, provider, model) do
+    latency = System.monotonic_time(:millisecond) - start_ms
+    {tin, tout} = acc.last_usage
+
+    BotArmyLlm.TokenAccounting.record(%{
+      "event_id" => event_id,
+      "event_type" => "anthropic.messages.stream",
+      "source" => source,
+      "provider" => to_string(provider),
+      "model" => model,
+      "tokens_input" => tin,
+      "tokens_output" => tout,
+      "latency_ms" => latency
+    })
+
+    Logger.info("http_proxy OpenAI-compat stream done",
+      source: source,
+      provider: provider,
+      model: model,
+      latency_ms: latency
+    )
+
+    {:ok, conn}
   end
 
   defp stream_finch({:status, status}, {conn, acc}) when acc.phase == :need_status do
@@ -210,68 +214,66 @@ defmodule BotArmyLlm.Http.OpenaiChatAnthropicSseStream do
   defp handle_sse_frame(conn, acc, frame) do
     payload = collect_data_lines(frame)
 
-    if payload == "" or payload == "[DONE]" do
-      {conn, acc} =
-        if payload == "[DONE]", do: close_anthropic_stream_impl(conn, acc), else: {conn, acc}
+    case payload do
+      "" ->
+        {:ok, conn, acc}
 
-      {:ok, conn, acc}
-    else
-      case Jason.decode(payload) do
-        {:ok, obj} ->
-          acc = merge_usage_from_chunk(acc, obj)
+      "[DONE]" ->
+        {conn, acc} = close_anthropic_stream_impl(conn, acc)
+        {:ok, conn, acc}
 
-          choice = List.first(obj["choices"] || []) || %{}
-          delta = Map.get(choice, "delta") || %{}
-          content = Map.get(delta, "content")
-          finish = Map.get(choice, "finish_reason")
-          acc = merge_tool_deltas(acc, Map.get(delta, "tool_calls"))
-
-          acc =
-            if finish in [nil, ""] do
-              acc
-            else
-              %{acc | finish_reason: finish}
-            end
-
-          case maybe_emit_text_delta(conn, acc, content) do
-            {:ok, conn, acc} -> {:ok, conn, acc}
-            {:error, _} = err -> err
-          end
-
-        {:error, _} ->
-          {:ok, conn, acc}
-      end
+      _ ->
+        process_sse_payload(conn, acc, payload)
     end
   end
+
+  defp process_sse_payload(conn, acc, payload) do
+    case Jason.decode(payload) do
+      {:ok, obj} ->
+        acc = merge_usage_from_chunk(acc, obj)
+        choice = List.first(obj["choices"] || []) || %{}
+        delta = Map.get(choice, "delta") || %{}
+        content = Map.get(delta, "content")
+        finish = Map.get(choice, "finish_reason")
+        acc = merge_tool_deltas(acc, Map.get(delta, "tool_calls"))
+        acc = update_finish_reason(acc, finish)
+
+        case maybe_emit_text_delta(conn, acc, content) do
+          {:ok, conn, acc} -> {:ok, conn, acc}
+          {:error, _} = err -> err
+        end
+
+      {:error, _} ->
+        {:ok, conn, acc}
+    end
+  end
+
+  defp update_finish_reason(acc, finish) when finish in [nil, ""], do: acc
+  defp update_finish_reason(acc, finish), do: %{acc | finish_reason: finish}
 
   defp collect_data_lines(frame) do
     frame
     |> String.split("\n", trim: false)
     |> Enum.reduce([], fn line, acc ->
-      line = String.trim(line)
-
-      cond do
-        line == "" ->
-          acc
-
-        String.starts_with?(line, "data:") ->
-          rest =
-            if String.starts_with?(line, "data: ") do
-              String.slice(line, 6..-1//1)
-            else
-              String.slice(line, 5..-1//1) |> String.trim_leading()
-            end
-
-          if rest != "", do: [rest | acc], else: acc
-
-        true ->
-          acc
-      end
+      process_frame_line(String.trim(line), acc)
     end)
     |> Enum.reverse()
     |> Enum.join("\n")
     |> String.trim()
   end
+
+  defp process_frame_line("", acc), do: acc
+
+  defp process_frame_line("data: " <> rest, acc) do
+    if rest != "", do: [rest | acc], else: acc
+  end
+
+  defp process_frame_line("data:" <> rest, acc) do
+    trimmed = String.trim_leading(rest)
+    if trimmed != "", do: [trimmed | acc], else: acc
+  end
+
+  defp process_frame_line(_, acc), do: acc
 
   defp merge_tool_deltas(acc, nil), do: acc
 

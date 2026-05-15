@@ -67,12 +67,7 @@ defmodule BotArmyLlm.Http.OpenaiChatAnthropicSseStream do
 
         {:ok, {conn, acc}} ->
           {conn, acc} = finalize_upstream(conn, acc)
-
-          if acc.client_started do
-            finalize_successful_stream(conn, acc, event_id, start_ms, source, provider, model)
-          else
-            {:error, {:openai_stream_no_body, provider}}
-          end
+          finalize_or_error(conn, acc, event_id, start_ms, source, provider, model)
 
         {:error, exception, {conn, _acc}} ->
           Logger.error(
@@ -140,6 +135,14 @@ defmodule BotArmyLlm.Http.OpenaiChatAnthropicSseStream do
     {:ok, conn}
   end
 
+  defp finalize_or_error(conn, acc, event_id, start_ms, source, provider, model) do
+    if acc.client_started do
+      finalize_successful_stream(conn, acc, event_id, start_ms, source, provider, model)
+    else
+      {:error, {:openai_stream_no_body, provider}}
+    end
+  end
+
   defp stream_finch({:status, status}, {conn, acc}) when acc.phase == :need_status do
     if status == 200 do
       {:cont, {conn, %{acc | phase: :need_headers}}}
@@ -171,7 +174,10 @@ defmodule BotArmyLlm.Http.OpenaiChatAnthropicSseStream do
   defp process_sse_buffer(conn, acc) do
     {frames, rest} = take_sse_frames(acc.upstream_sse_buf)
     acc = %{acc | upstream_sse_buf: rest}
+    process_frames(frames, conn, acc)
+  end
 
+  defp process_frames(frames, conn, acc) do
     case Enum.reduce_while(frames, {:ok, conn, acc}, fn frame, {:ok, conn, acc} ->
            case handle_sse_frame(conn, acc, frame) do
              {:ok, conn, acc} -> {:cont, {:ok, conn, acc}}

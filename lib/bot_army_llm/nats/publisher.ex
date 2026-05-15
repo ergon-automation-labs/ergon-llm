@@ -76,20 +76,24 @@ defmodule BotArmyLlm.NATS.Publisher do
   end
 
   defp derive_subject(event_type) when is_binary(event_type) do
-    case event_type do
-      "llm.completion" -> "events.llm.completion"
-      "llm.completion." <> _rest -> "events." <> event_type
-      "llm.error" -> "events.llm.error"
-      "llm.chain.step.completed" -> "events.llm.chain.step.completed"
-      "llm.chain.completed" -> "events.llm.chain.completed"
-      "llm.conversation.replied" -> "events.llm.conversation.replied"
-      "llm.response.parsed" -> "events.llm.response.parsed"
-      "llm.vision.analyzed" -> "events.llm.vision.analyzed"
-      "llm.embedding.created" -> "events.llm.embedding.created"
-      "llm.rag.indexed" -> "events.llm.rag.indexed"
-      "llm.rag.search.result" -> "events.llm.rag.search.result"
-      "llm.rag.deleted" -> "events.llm.rag.deleted"
-      _ -> "events.llm.unknown"
+    known_events = [
+      "llm.completion",
+      "llm.error",
+      "llm.chain.step.completed",
+      "llm.chain.completed",
+      "llm.conversation.replied",
+      "llm.response.parsed",
+      "llm.vision.analyzed",
+      "llm.embedding.created",
+      "llm.rag.indexed",
+      "llm.rag.search.result",
+      "llm.rag.deleted"
+    ]
+
+    if String.starts_with?(event_type, "llm.") and event_type in known_events do
+      "events." <> event_type
+    else
+      "events.llm.unknown"
     end
   end
 

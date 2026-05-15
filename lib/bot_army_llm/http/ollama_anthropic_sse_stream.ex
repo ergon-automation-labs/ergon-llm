@@ -245,15 +245,19 @@ defmodule BotArmyLlm.Http.OllamaAnthropicSseStream do
 
     with {:ok, conn, acc} <- maybe_start_events(conn, acc),
          {:ok, conn, acc} <- emit_delta_chunk(conn, acc, delta) do
-      if obj["done"] == true do
-        case emit_done(conn, acc) do
-          {:ok, conn} -> {:ok, conn, acc}
-          {:error, _} = err -> err
-        end
-      else
-        {:ok, conn, acc}
-      end
+      handle_emission_done(obj["done"], conn, acc)
     end
+  end
+
+  defp handle_emission_done(true, conn, acc) do
+    case emit_done(conn, acc) do
+      {:ok, conn} -> {:ok, conn, acc}
+      {:error, _} = err -> err
+    end
+  end
+
+  defp handle_emission_done(_false, conn, acc) do
+    {:ok, conn, acc}
   end
 
   defp put_usage(acc, tin, tout) do

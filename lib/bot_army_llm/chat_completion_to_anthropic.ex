@@ -7,35 +7,45 @@ defmodule BotArmyLlm.ChatCompletionToAnthropic do
   def from_chat_completion_body(body, model_default \\ nil) when is_binary(body) do
     case Jason.decode(body) do
       {:ok, response} ->
-        model =
-          response["model"] || model_default ||
-            System.get_env("OPENROUTER_MODEL_CLAUDE_CODE", "anthropic/claude-3.5-sonnet")
-
-        usage = Map.get(response, "usage") || %{}
-        message = get_in(response, ["choices", Access.at(0), "message"]) || %{}
-        finish = get_in(response, ["choices", Access.at(0), "finish_reason"])
-
-        content = anthropic_content_from_openai_message(message)
-        stop_reason = infer_stop_reason(message, finish)
-
-        out = %{
-          "id" => response["id"] || "msg-chat-passthrough",
-          "type" => "message",
-          "role" => "assistant",
-          "content" => content,
-          "model" => model,
-          "stop_reason" => stop_reason,
-          "usage" => %{
-            "input_tokens" => Map.get(usage, "prompt_tokens") || 0,
-            "output_tokens" => Map.get(usage, "completion_tokens") || 0
-          }
-        }
-
-        {:ok, Jason.encode!(out)}
+        {:ok, build_anthropic_response(response, model_default)}
 
       {:error, _} ->
         {:error, :invalid_chat_completion_json}
     end
+  end
+
+  defp build_anthropic_response(response, model_default) do
+    model = resolve_model(response, model_default)
+    usage = Map.get(response, "usage") || %{}
+    message = get_in(response, ["choices", Access.at(0), "message"]) || %{}
+    finish = get_in(response, ["choices", Access.at(0), "finish_reason"])
+
+    content = anthropic_content_from_openai_message(message)
+    stop_reason = infer_stop_reason(message, finish)
+
+    out = %{
+      "id" => response["id"] || "msg-chat-passthrough",
+      "type" => "message",
+      "role" => "assistant",
+      "content" => content,
+      "model" => model,
+      "stop_reason" => stop_reason,
+      "usage" => build_usage(usage)
+    }
+
+    Jason.encode!(out)
+  end
+
+  defp resolve_model(response, model_default) do
+    response["model"] || model_default ||
+      System.get_env("OPENROUTER_MODEL_CLAUDE_CODE", "anthropic/claude-3.5-sonnet")
+  end
+
+  defp build_usage(usage) do
+    %{
+      "input_tokens" => Map.get(usage, "prompt_tokens") || 0,
+      "output_tokens" => Map.get(usage, "completion_tokens") || 0
+    }
   end
 
   defp anthropic_content_from_openai_message(message) do

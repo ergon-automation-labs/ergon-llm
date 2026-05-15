@@ -20,7 +20,12 @@ defmodule BotArmyLlm.Http.OllamaAnthropicSseStream do
          {:ok, {url, _}} <- BotArmyLlm.OllamaHealthChecker.best_ollama_node(:medium),
          {:ok, json} <- Jason.encode(build_body(model, messages, anthropic_body)) do
       req =
-        Finch.build(:post, "#{String.trim_trailing(url, "/")}/api/chat", [{"content-type", "application/json"}], json)
+        Finch.build(
+          :post,
+          "#{String.trim_trailing(url, "/")}/api/chat",
+          [{"content-type", "application/json"}],
+          json
+        )
 
       msg_id = "msg-ollama-" <> (:crypto.strong_rand_bytes(12) |> Base.encode16(case: :lower))
 
@@ -173,23 +178,31 @@ defmodule BotArmyLlm.Http.OllamaAnthropicSseStream do
 
   defp emit_lines(conn, acc, lines) do
     Enum.reduce_while(lines, {:ok, conn, acc}, fn line, {:ok, conn, acc} ->
-      line = String.trim(line)
-
-      if line == "" do
-        {:cont, {:ok, conn, acc}}
-      else
-        case Jason.decode(line) do
-          {:ok, obj} ->
-            case emit_for_json(conn, acc, obj) do
-              {:ok, conn, acc} -> {:cont, {:ok, conn, acc}}
-              {:error, _} = err -> {:halt, err}
-            end
-
-          _ ->
-            {:cont, {:ok, conn, acc}}
-        end
-      end
+      process_sse_line(line, conn, acc)
     end)
+  end
+
+  defp process_sse_line(line, conn, acc) do
+    line = String.trim(line)
+
+    if line == "" do
+      {:cont, {:ok, conn, acc}}
+    else
+      case Jason.decode(line) do
+        {:ok, obj} ->
+          handle_json_line(conn, acc, obj)
+
+        _ ->
+          {:cont, {:ok, conn, acc}}
+      end
+    end
+  end
+
+  defp handle_json_line(conn, acc, obj) do
+    case emit_for_json(conn, acc, obj) do
+      {:ok, conn, acc} -> {:cont, {:ok, conn, acc}}
+      {:error, _} = err -> {:halt, err}
+    end
   end
 
   defp emit_for_json(conn, acc, obj) do

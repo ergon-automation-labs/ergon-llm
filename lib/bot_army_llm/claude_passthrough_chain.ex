@@ -27,7 +27,11 @@ defmodule BotArmyLlm.ClaudePassthroughChain do
 
   require Logger
 
-  alias BotArmyLlm.{AnthropicMessagesToOpenaiChat, AnthropicOllamaAdapter, ChatCompletionToAnthropic}
+  alias BotArmyLlm.{
+    AnthropicMessagesToOpenaiChat,
+    AnthropicOllamaAdapter,
+    ChatCompletionToAnthropic
+  }
 
   @default_chain "openrouter,anthropic,ollama"
 
@@ -126,55 +130,59 @@ defmodule BotArmyLlm.ClaudePassthroughChain do
 
   defp chat_completions_passthrough(payload, api_key, url, extra_headers, model) do
     with {:ok, %{messages: messages, tools: tools}} <-
-           AnthropicMessagesToOpenaiChat.to_chat_completion_request(payload) do
-      body_map = %{
-        "model" => model,
-        "messages" => messages,
-        "stream" => false
-      }
-
-      body_map =
-        case tools do
-          [] -> body_map
-          list when is_list(list) -> Map.put(body_map, "tools", list)
-        end
-
-      body_map =
-        case Map.get(payload, "temperature") do
-          t when is_number(t) -> Map.put(body_map, "temperature", t)
-          _ -> body_map
-        end
-
-      body_map =
-        case Map.get(payload, "max_tokens") do
-          n when is_integer(n) and n > 0 -> Map.put(body_map, "max_tokens", n)
-          _ -> body_map
-        end
-
-      case Jason.encode(body_map) do
-        {:ok, json} ->
-          headers = [{"Content-Type", "application/json"}, {"Authorization", "Bearer #{api_key}"} | extra_headers]
-
-          case HTTPoison.post(url, json, headers, recv_timeout: 120_000, timeout: 120_000) do
-            {:ok, %HTTPoison.Response{status_code: 200, body: resp}} ->
-              ChatCompletionToAnthropic.from_chat_completion_body(resp, model)
-
-            {:ok, %HTTPoison.Response{status_code: 429}} ->
-              {:error, :rate_limited}
-
-            {:ok, %HTTPoison.Response{status_code: status}} ->
-              {:error, {:http_error, status}}
-
-            {:error, reason} ->
-              {:error, {:connection_error, reason}}
-          end
-
-        {:error, e} ->
-          {:error, {:encode_error, e}}
-      end
+           AnthropicMessagesToOpenaiChat.to_chat_completion_request(payload),
+         body_map <- build_chat_completion_body(model, messages, tools, payload),
+         {:ok, json} <- Jason.encode(body_map) do
+      make_chat_completion_request(json, api_key, url, extra_headers, model)
     end
   rescue
     _ -> {:error, :request_failed}
+  end
+
+  defp build_chat_completion_body(model, messages, tools, payload) do
+    body_map = %{
+      "model" => model,
+      "messages" => messages,
+      "stream" => false
+    }
+
+    body_map =
+      case tools do
+        [] -> body_map
+        list when is_list(list) -> Map.put(body_map, "tools", list)
+      end
+
+    body_map =
+      case Map.get(payload, "temperature") do
+        t when is_number(t) -> Map.put(body_map, "temperature", t)
+        _ -> body_map
+      end
+
+    case Map.get(payload, "max_tokens") do
+      n when is_integer(n) and n > 0 -> Map.put(body_map, "max_tokens", n)
+      _ -> body_map
+    end
+  end
+
+  defp make_chat_completion_request(json, api_key, url, extra_headers, model) do
+    headers = [
+      {"Content-Type", "application/json"},
+      {"Authorization", "Bearer #{api_key}"} | extra_headers
+    ]
+
+    case HTTPoison.post(url, json, headers, recv_timeout: 120_000, timeout: 120_000) do
+      {:ok, %HTTPoison.Response{status_code: 200, body: resp}} ->
+        ChatCompletionToAnthropic.from_chat_completion_body(resp, model)
+
+      {:ok, %HTTPoison.Response{status_code: 429}} ->
+        {:error, :rate_limited}
+
+      {:ok, %HTTPoison.Response{status_code: status}} ->
+        {:error, {:http_error, status}}
+
+      {:error, reason} ->
+        {:error, {:connection_error, reason}}
+    end
   end
 
   defp try_anthropic_direct(payload) do
@@ -272,7 +280,10 @@ defmodule BotArmyLlm.ClaudePassthroughChain do
 
     case Jason.encode(base) do
       {:ok, body} ->
-        case HTTPoison.post(endpoint, body, headers, recv_timeout: timeout_ms, timeout: timeout_ms) do
+        case HTTPoison.post(endpoint, body, headers,
+               recv_timeout: timeout_ms,
+               timeout: timeout_ms
+             ) do
           {:ok, %HTTPoison.Response{status_code: 200, body: resp_body}} ->
             {:ok, resp_body}
 
@@ -290,7 +301,9 @@ defmodule BotArmyLlm.ClaudePassthroughChain do
     _ -> {:error, :request_failed}
   end
 
-  defp put_ollama_options(%{"options" => o} = m, extra), do: %{m | "options" => Map.merge(o, extra)}
+  defp put_ollama_options(%{"options" => o} = m, extra),
+    do: %{m | "options" => Map.merge(o, extra)}
+
   defp put_ollama_options(m, extra), do: Map.put(m, "options", extra)
 
   defp ollama_timeout_ms do

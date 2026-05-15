@@ -14,77 +14,89 @@ defmodule BotArmyLlm.Http.AnthropicNativeSseStream do
   def run(conn, body, source, event_id, start_ms) when is_map(body) do
     case System.get_env("ANTHROPIC_API_KEY") do
       key when is_binary(key) and key != "" ->
-        model = System.get_env("ANTHROPIC_MODEL_CLAUDE_CODE", "claude-haiku-4-5-20251001")
-
-        payload =
-          body
-          |> Map.put("model", model)
-          |> Map.put("stream", true)
-
-        case Jason.encode(payload) do
-          {:ok, json} ->
-            req = Finch.build(:post, @anthropic_url, anthropic_headers(key), json)
-
-            meta = %{
-              source: source,
-              event_id: event_id,
-              start_ms: start_ms,
-              model: model,
-              phase: :need_status,
-              status: nil,
-              buf: <<>>
-            }
-
-            case Finch.stream_while(
-                   req,
-                   BotArmyLlm.Finch,
-                   {conn, meta},
-                   &stream_chunk/2,
-                   receive_timeout: @receive_timeout,
-                   request_timeout: @receive_timeout
-                 ) do
-              {:ok, {:upstream_failed, status, _conn}} ->
-                {:error, {:http_error, status}}
-
-              {:ok, {conn, meta}} ->
-                latency = System.monotonic_time(:millisecond) - start_ms
-                {tin, tout} = SseUsage.last_usage_from_sse(meta.buf)
-
-                BotArmyLlm.TokenAccounting.record(%{
-                  "event_id" => event_id,
-                  "event_type" => "anthropic.messages.stream",
-                  "source" => source,
-                  "provider" => "anthropic",
-                  "model" => model,
-                  "tokens_input" => tin,
-                  "tokens_output" => tout,
-                  "latency_ms" => latency
-                })
-
-                Logger.info("http_proxy Anthropic native stream done",
-                  source: source,
-                  model: model,
-                  latency_ms: latency
-                )
-
-                {:ok, conn}
-
-              {:error, exception, {conn, _meta}} ->
-                Logger.error("http_proxy Anthropic stream failed: #{Exception.message(exception)}")
-                {:error, {:stream_exception, exception, conn}}
-
-              other ->
-                Logger.error("http_proxy Anthropic stream unexpected: #{inspect(other)}")
-                {:error, {:unexpected_result, other}}
-            end
-
-          {:error, reason} ->
-            {:error, {:encode_error, reason}}
-        end
+        run_with_auth(conn, body, source, event_id, start_ms, key)
 
       _ ->
         {:error, {:provider_not_configured, "Anthropic"}}
     end
+  end
+
+  defp run_with_auth(conn, body, source, event_id, start_ms, api_key) do
+    model = System.get_env("ANTHROPIC_MODEL_CLAUDE_CODE", "claude-haiku-4-5-20251001")
+
+    payload =
+      body
+      |> Map.put("model", model)
+      |> Map.put("stream", true)
+
+    case Jason.encode(payload) do
+      {:ok, json} ->
+        run_stream(conn, json, source, event_id, start_ms, model, api_key)
+
+      {:error, reason} ->
+        {:error, {:encode_error, reason}}
+    end
+  end
+
+  defp run_stream(conn, json, source, event_id, start_ms, model, api_key) do
+    req = Finch.build(:post, @anthropic_url, anthropic_headers(api_key), json)
+
+    meta = %{
+      source: source,
+      event_id: event_id,
+      start_ms: start_ms,
+      model: model,
+      phase: :need_status,
+      status: nil,
+      buf: <<>>
+    }
+
+    case Finch.stream_while(
+           req,
+           BotArmyLlm.Finch,
+           {conn, meta},
+           &stream_chunk/2,
+           receive_timeout: @receive_timeout,
+           request_timeout: @receive_timeout
+         ) do
+      {:ok, {:upstream_failed, status, _conn}} ->
+        {:error, {:http_error, status}}
+
+      {:ok, {conn, meta}} ->
+        finalize_stream(conn, meta, event_id, start_ms)
+
+      {:error, exception, {conn, _meta}} ->
+        Logger.error("http_proxy Anthropic stream failed: #{Exception.message(exception)}")
+        {:error, {:stream_exception, exception, conn}}
+
+      other ->
+        Logger.error("http_proxy Anthropic stream unexpected: #{inspect(other)}")
+        {:error, {:unexpected_result, other}}
+    end
+  end
+
+  defp finalize_stream(conn, meta, event_id, start_ms) do
+    latency = System.monotonic_time(:millisecond) - start_ms
+    {tin, tout} = SseUsage.last_usage_from_sse(meta.buf)
+
+    BotArmyLlm.TokenAccounting.record(%{
+      "event_id" => event_id,
+      "event_type" => "anthropic.messages.stream",
+      "source" => meta.source,
+      "provider" => "anthropic",
+      "model" => meta.model,
+      "tokens_input" => tin,
+      "tokens_output" => tout,
+      "latency_ms" => latency
+    })
+
+    Logger.info("http_proxy Anthropic native stream done",
+      source: meta.source,
+      model: meta.model,
+      latency_ms: latency
+    )
+
+    {:ok, conn}
   end
 
   defp stream_chunk({:status, status}, {conn, meta}) when meta.phase == :need_status do

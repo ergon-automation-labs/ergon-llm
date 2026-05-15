@@ -321,19 +321,7 @@ defmodule BotArmyLlm.TokenAccounting do
   defp decode_rules_list(body, source_tag) do
     case Jason.decode(body) do
       {:ok, list} when is_list(list) ->
-        Enum.flat_map(list, fn item ->
-          case parse_overlay_rule(item) do
-            {:ok, rule} ->
-              [rule]
-
-            {:error, reason} ->
-              Logger.warning(
-                "Ignoring pricing rule from #{source_tag}: #{inspect(reason)} item=#{inspect(item, limit: 100)}"
-              )
-
-              []
-          end
-        end)
+        Enum.flat_map(list, fn item -> process_rule_item(item, source_tag) end)
 
       {:ok, other} ->
         Logger.warning(
@@ -344,6 +332,20 @@ defmodule BotArmyLlm.TokenAccounting do
 
       {:error, e} ->
         Logger.warning("Invalid JSON in #{source_tag}: #{inspect(e)}")
+        []
+    end
+  end
+
+  defp process_rule_item(item, source_tag) do
+    case parse_overlay_rule(item) do
+      {:ok, rule} ->
+        [rule]
+
+      {:error, reason} ->
+        Logger.warning(
+          "Ignoring pricing rule from #{source_tag}: #{inspect(reason)} item=#{inspect(item, limit: 100)}"
+        )
+
         []
     end
   end

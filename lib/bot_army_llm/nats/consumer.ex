@@ -122,6 +122,11 @@ defmodule BotArmyLlm.NATS.Consumer do
       subject: "llm.army.opinion.vote",
       type: :request_reply,
       description: "Army opinion collect voter (persona-style choice)"
+    },
+    %{
+      subject: "dispatcher.subtask.intent.bot_army_llm",
+      type: :subscribe,
+      description: "Dispatcher subtask intent (Phase 2: autonomous execution)"
     }
   ]
 
@@ -782,6 +787,9 @@ defmodule BotArmyLlm.NATS.Consumer do
 
   defp route_by_event("llm.rag.delete", message),
     do: BotArmyLlm.Handlers.RAGHandler.handle_delete(message)
+
+  defp route_by_event("dispatcher.subtask.intent", message),
+    do: BotArmyLlm.Handlers.SubtaskHandler.handle_subtask_intent(message)
 
   defp route_by_event(event, _message) do
     Logger.debug("Unknown LLM event type: #{event}")

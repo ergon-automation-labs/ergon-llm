@@ -96,6 +96,8 @@ defmodule BotArmyLlm.AnthropicMessagesToOpenaiChat do
     end
   end
 
+  defp expand_user_message(nil), do: {:error, :no_user_content}
+
   defp extract_message_texts(parts) do
     Enum.flat_map(parts, fn
       %{"type" => "text", "text" => t} when is_binary(t) -> [t]
@@ -127,8 +129,6 @@ defmodule BotArmyLlm.AnthropicMessagesToOpenaiChat do
       end
     end)
   end
-
-  defp expand_user_message(nil), do: {:error, :no_user_content}
 
   defp maybe_user_text(msgs, []), do: msgs
 
@@ -174,6 +174,10 @@ defmodule BotArmyLlm.AnthropicMessagesToOpenaiChat do
     end
   end
 
+  defp assistant_to_openai(nil) do
+    %{"role" => "assistant", "content" => nil}
+  end
+
   defp extract_text_parts(parts) do
     Enum.flat_map(parts, fn
       %{"type" => "text", "text" => t} when is_binary(t) -> [t]
@@ -204,10 +208,6 @@ defmodule BotArmyLlm.AnthropicMessagesToOpenaiChat do
       "type" => "function",
       "function" => %{"name" => name, "arguments" => args}
     }
-  end
-
-  defp assistant_to_openai(nil) do
-    %{"role" => "assistant", "content" => nil}
   end
 
   defp anthropic_tools_to_openai([]), do: []

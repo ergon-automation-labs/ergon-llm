@@ -112,19 +112,19 @@ defmodule BotArmyLlm.PulsePublisher do
 
   # API for other modules to record inference metrics
   def record_inference(latency_ms, model) when is_integer(latency_ms) and is_binary(model) do
-    try do
-      GenServer.call(@server, {:record_inference, latency_ms, model})
-    catch
-      :exit, _ -> :ok
-    end
+    GenServer.call(@server, {:record_inference, latency_ms, model})
+  rescue
+    _ -> :ok
+  catch
+    :exit, _ -> :ok
   end
 
   def record_error(reason) do
-    try do
-      GenServer.call(@server, {:record_error, reason})
-    catch
-      :exit, _ -> :ok
-    end
+    GenServer.call(@server, {:record_error, reason})
+  rescue
+    _ -> :ok
+  catch
+    :exit, _ -> :ok
   end
 
   # Private
@@ -161,25 +161,23 @@ defmodule BotArmyLlm.PulsePublisher do
   end
 
   defp publish_to_nats(pulse) do
-    try do
-      case GenServer.call(BotArmyRuntime.NATS.Connection, :get_connection, 5_000) do
-        {:ok, conn} ->
-          json = Jason.encode!(pulse)
+    case GenServer.call(BotArmyRuntime.NATS.Connection, :get_connection, 5_000) do
+      {:ok, conn} ->
+        json = Jason.encode!(pulse)
 
-          case Gnat.pub(conn, "bot.llm.pulse", json) do
-            :ok ->
-              Logger.debug("[PulsePublisher] Published LLM pulse")
+        case Gnat.pub(conn, "bot.llm.pulse", json) do
+          :ok ->
+            Logger.debug("[PulsePublisher] Published LLM pulse")
 
-            {:error, reason} ->
-              Logger.warning("[PulsePublisher] Failed to publish pulse: #{inspect(reason)}")
-          end
+          {:error, reason} ->
+            Logger.warning("[PulsePublisher] Failed to publish pulse: #{inspect(reason)}")
+        end
 
-        {:error, reason} ->
-          Logger.warning("[PulsePublisher] NATS unavailable, skipping pulse: #{inspect(reason)}")
-      end
-    rescue
-      e ->
-        Logger.warning("[PulsePublisher] Error publishing pulse: #{inspect(e)}")
+      {:error, reason} ->
+        Logger.warning("[PulsePublisher] NATS unavailable, skipping pulse: #{inspect(reason)}")
     end
+  rescue
+    e ->
+      Logger.warning("[PulsePublisher] Error publishing pulse: #{inspect(e)}")
   end
 end

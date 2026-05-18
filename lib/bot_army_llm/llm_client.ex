@@ -1168,13 +1168,32 @@ defmodule BotArmyLlm.LlmClient do
         :openrouter_embed -> openrouter_model
       end
 
-    case call_embed_provider(provider, text, model_for_call) do
-      {:ok, result} ->
-        {:ok, Map.put(result, :model_used, model_for_call)}
+    cb_provider =
+      case provider do
+        :ollama_embed -> :ollama
+        :openrouter_embed -> :openrouter
+      end
 
-      {:error, reason} ->
-        Logger.warning("Embed provider #{provider} failed: #{inspect(reason)}, trying next")
-        try_embed_chain(rest, text, ollama_model, openrouter_model)
+    if BotArmyLlm.CircuitBreaker.allow?(cb_provider) == :ok do
+      case call_embed_provider(provider, text, model_for_call) do
+        {:ok, result} ->
+          BotArmyLlm.CircuitBreaker.record_success(cb_provider)
+          {:ok, Map.put(result, :model_used, model_for_call)}
+
+        {:error, :rate_limited} ->
+          BotArmyLlm.CircuitBreaker.record_failure(cb_provider, :rate_limited)
+          Logger.warning("Embed provider #{provider} rate limited, trying next")
+          Process.sleep(100)
+          try_embed_chain(rest, text, ollama_model, openrouter_model)
+
+        {:error, reason} ->
+          BotArmyLlm.CircuitBreaker.record_failure(cb_provider, reason)
+          Logger.warning("Embed provider #{provider} failed: #{inspect(reason)}, trying next")
+          try_embed_chain(rest, text, ollama_model, openrouter_model)
+      end
+    else
+      Logger.warning("Embed provider #{provider} circuit open, skipping")
+      try_embed_chain(rest, text, ollama_model, openrouter_model)
     end
   end
 

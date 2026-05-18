@@ -5,7 +5,12 @@ defmodule BotArmyLlm.ClaudePassthroughStream do
   require Logger
 
   alias BotArmyLlm.ClaudePassthroughChain
-  alias BotArmyLlm.Http.{AnthropicNativeSseStream, OpenaiChatAnthropicSseStream, OllamaAnthropicSseStream}
+
+  alias BotArmyLlm.Http.{
+    AnthropicNativeSseStream,
+    OllamaAnthropicSseStream,
+    OpenaiChatAnthropicSseStream
+  }
 
   @spec run(Plug.Conn.t(), map(), String.t(), String.t(), integer()) :: Plug.Conn.t()
   def run(conn, body, source, event_id, start_ms) when is_map(body) do

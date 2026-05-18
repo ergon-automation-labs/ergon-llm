@@ -89,6 +89,10 @@ defmodule BotArmyLlm.Handlers.ResponseHandler do
     end
   end
 
+  defp attempt_parse(_text, _schema, _max_retries, _attempt) do
+    {:error, :max_retries_exceeded}
+  end
+
   defp validate_and_retry(data, _text, schema, _max_retries, attempt) do
     case JsonExtractor.validate_schema(data, schema) do
       :ok ->
@@ -107,10 +111,6 @@ defmodule BotArmyLlm.Handlers.ResponseHandler do
     else
       {:error, reason}
     end
-  end
-
-  defp attempt_parse(_text, _schema, _max_retries, _attempt) do
-    {:error, :max_retries_exceeded}
   end
 
   defp retry_with_correction(original_text, schema, max_retries, attempt) do

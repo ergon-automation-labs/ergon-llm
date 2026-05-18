@@ -46,6 +46,9 @@ defmodule BotArmyLlm.Application do
         # Shared-library outcome tracker — records LLM inference quality
         {BotArmyLearning.OutcomeTracker, []},
 
+        # Embedding worker pool — bounded concurrency for embed requests
+        {BotArmyLlm.EmbeddingWorkerPool, []},
+
         # Pulse publisher (reports inference health to Synapse every 5 min)
         {BotArmyLlm.PulsePublisher, []},
 

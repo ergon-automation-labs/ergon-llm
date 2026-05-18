@@ -774,10 +774,10 @@ defmodule BotArmyLlm.NATS.Consumer do
     do: BotArmyLlm.Handlers.VisionHandler.handle_analyze(message)
 
   defp route_by_event("llm.embed.request", message),
-    do: spawn_embedding_handler(message)
+    do: BotArmyLlm.EmbeddingWorkerPool.enqueue(message)
 
   defp route_by_event("llm.embed.request.bulk", message),
-    do: spawn_embedding_handler(message)
+    do: BotArmyLlm.EmbeddingWorkerPool.enqueue(message)
 
   defp route_by_event("llm.rag.index", message),
     do: BotArmyLlm.Handlers.RAGHandler.handle_index(message)
@@ -793,9 +793,5 @@ defmodule BotArmyLlm.NATS.Consumer do
 
   defp route_by_event(event, _message) do
     Logger.debug("Unknown LLM event type: #{event}")
-  end
-
-  defp spawn_embedding_handler(message) do
-    spawn(fn -> BotArmyLlm.Handlers.EmbeddingHandler.handle_embed(message) end)
   end
 end

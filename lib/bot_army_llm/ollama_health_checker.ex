@@ -55,7 +55,7 @@ defmodule BotArmyLlm.OllamaHealthChecker do
   When metrics are unavailable (Prometheus unreachable), treats as acceptable (fail-open).
   """
   @spec load_acceptable?() :: boolean()
-  def load_acceptable?() do
+  def load_acceptable? do
     GenServer.call(__MODULE__, :load_acceptable?)
   end
 
@@ -191,7 +191,9 @@ defmodule BotArmyLlm.OllamaHealthChecker do
           )
         end
 
-        Logger.debug("Ollama node #{name} probe ok: #{latency}ms, memory=#{inspect(memory_pressure)}, cpu_load=#{inspect(cpu_load)}")
+        Logger.debug(
+          "Ollama node #{name} probe ok: #{latency}ms, memory=#{inspect(memory_pressure)}, cpu_load=#{inspect(cpu_load)}"
+        )
 
         %{
           node

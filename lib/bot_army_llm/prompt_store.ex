@@ -156,6 +156,47 @@ defmodule BotArmyLlm.PromptStore do
     end
   end
 
+  @impl true
+  def handle_call({:archive, prompt_id}, _from, state) do
+    case Map.get(state, prompt_id) do
+      nil ->
+        {:reply, {:error, :not_found}, state}
+
+      _prompt ->
+        perform_archive(prompt_id, state)
+    end
+  end
+
+  @impl true
+  def handle_call({:get, prompt_id}, _from, state) do
+    case Map.get(state, prompt_id) do
+      nil -> {:reply, {:error, :not_found}, state}
+      prompt -> {:reply, {:ok, prompt}, state}
+    end
+  end
+
+  @impl true
+  def handle_call(:list, _from, state) do
+    prompts =
+      state
+      |> Map.values()
+      |> Enum.filter(fn p -> p["status"] == "active" end)
+
+    {:reply, {:ok, prompts}, state}
+  end
+
+  @impl true
+  def handle_call(:list_all, _from, state) do
+    prompts = Map.values(state)
+    {:reply, {:ok, prompts}, state}
+  end
+
+  @impl true
+  def handle_call(:clear, _from, _state) do
+    Logger.debug("Clearing all prompts")
+    {:reply, :ok, %{}}
+  end
+
   defp perform_update(prompt_id, payload, state) do
     prompt_uuid = Ecto.UUID.cast!(prompt_id)
     db_prompt = BotArmyLlm.Repo.get(BotArmyLlm.Schemas.Prompt, prompt_uuid)
@@ -192,17 +233,6 @@ defmodule BotArmyLlm.PromptStore do
     end
   end
 
-  @impl true
-  def handle_call({:archive, prompt_id}, _from, state) do
-    case Map.get(state, prompt_id) do
-      nil ->
-        {:reply, {:error, :not_found}, state}
-
-      _prompt ->
-        perform_archive(prompt_id, state)
-    end
-  end
-
   defp perform_archive(prompt_id, state) do
     prompt_uuid = Ecto.UUID.cast!(prompt_id)
     db_prompt = BotArmyLlm.Repo.get(BotArmyLlm.Schemas.Prompt, prompt_uuid)
@@ -232,36 +262,6 @@ defmodule BotArmyLlm.PromptStore do
         Logger.error("Failed to archive prompt: #{inspect(changeset.errors)}")
         {:reply, {:error, :database_error}, state}
     end
-  end
-
-  @impl true
-  def handle_call({:get, prompt_id}, _from, state) do
-    case Map.get(state, prompt_id) do
-      nil -> {:reply, {:error, :not_found}, state}
-      prompt -> {:reply, {:ok, prompt}, state}
-    end
-  end
-
-  @impl true
-  def handle_call(:list, _from, state) do
-    prompts =
-      state
-      |> Map.values()
-      |> Enum.filter(fn p -> p["status"] == "active" end)
-
-    {:reply, {:ok, prompts}, state}
-  end
-
-  @impl true
-  def handle_call(:list_all, _from, state) do
-    prompts = Map.values(state)
-    {:reply, {:ok, prompts}, state}
-  end
-
-  @impl true
-  def handle_call(:clear, _from, _state) do
-    Logger.debug("Clearing all prompts")
-    {:reply, :ok, %{}}
   end
 
   # Helper function to convert Ecto schema to map for GenServer state

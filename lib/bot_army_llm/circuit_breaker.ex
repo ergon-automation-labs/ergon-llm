@@ -55,22 +55,22 @@ defmodule BotArmyLlm.CircuitBreaker do
   - `{:open, retry_after_ms}` — circuit is open, try next provider
   """
   def allow?(provider) do
-    try do
-      GenServer.call(via(provider), :check, 1000)
-    catch
-      :exit, _ -> :ok
-    end
+    GenServer.call(via(provider), :check, 1000)
+  rescue
+    _ -> :ok
+  catch
+    :exit, _ -> :ok
   end
 
   @doc """
   Record a successful call. Closes the circuit if it was half-open.
   """
   def record_success(provider) do
-    try do
-      GenServer.cast(via(provider), :success)
-    catch
-      :exit, _ -> :ok
-    end
+    GenServer.cast(via(provider), :success)
+  rescue
+    _ -> :ok
+  catch
+    :exit, _ -> :ok
   end
 
   @doc """
@@ -79,22 +79,22 @@ defmodule BotArmyLlm.CircuitBreaker do
   Pass `:rate_limited` as reason for longer cooldown.
   """
   def record_failure(provider, reason \\ :error) do
-    try do
-      GenServer.cast(via(provider), {:failure, reason})
-    catch
-      :exit, _ -> :ok
-    end
+    GenServer.cast(via(provider), {:failure, reason})
+  rescue
+    _ -> :ok
+  catch
+    :exit, _ -> :ok
   end
 
   @doc """
   Get the current state of a provider's circuit breaker.
   """
   def get_state(provider) do
-    try do
-      GenServer.call(via(provider), :get_state, 1000)
-    catch
-      :exit, _ -> %{state: :unknown, failures: 0}
-    end
+    GenServer.call(via(provider), :get_state, 1000)
+  rescue
+    _ -> %{state: :unknown, failures: 0}
+  catch
+    :exit, _ -> %{state: :unknown, failures: 0}
   end
 
   # GenServer callbacks

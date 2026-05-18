@@ -30,23 +30,23 @@ defmodule BotArmyLlm.LocalQueueManager do
   end
 
   @doc "Increment pending local request count. Called when request is added to Ollama queue."
-  def increment() do
+  def increment do
     GenServer.cast(__MODULE__, :increment)
   end
 
   @doc "Decrement pending local request count. Called when request completes."
-  def decrement() do
+  def decrement do
     GenServer.cast(__MODULE__, :decrement)
   end
 
   @doc "Get current number of pending local requests."
   @spec pending_count() :: non_neg_integer()
-  def pending_count() do
+  def pending_count do
     GenServer.call(__MODULE__, :get_count)
   end
 
   @doc "Get queue status including active/queued breakdown and last activity time."
-  def queue_status() do
+  def queue_status do
     GenServer.call(__MODULE__, :get_status)
   end
 

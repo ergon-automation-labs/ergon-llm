@@ -44,7 +44,7 @@ defmodule BotArmyLlm.LlmClientTest do
     test "heavy prompt returns error when all providers unconfigured" do
       defmodule MockHealthCheckerUnavailable do
         def best_ollama_node(_complexity), do: {:error, :no_healthy_nodes}
-        def load_acceptable?(), do: true
+        def load_acceptable?, do: true
         def node_status, do: []
       end
 
@@ -105,7 +105,7 @@ defmodule BotArmyLlm.LlmClientTest do
 
     test "sensitive text (AWS key) blocks cloud routing" do
       defmodule MockHealthCheckerSensitiveAWS do
-        def load_acceptable?(), do: true
+        def load_acceptable?, do: true
         def best_ollama_node(_complexity), do: {:error, :no_healthy_nodes}
         def node_status, do: []
       end
@@ -130,7 +130,7 @@ defmodule BotArmyLlm.LlmClientTest do
 
     test "sensitive text (private key) blocks cloud routing" do
       defmodule MockHealthCheckerSensitiveKey do
-        def load_acceptable?(), do: true
+        def load_acceptable?, do: true
         def best_ollama_node(_complexity), do: {:error, :no_healthy_nodes}
         def node_status, do: []
       end
@@ -170,7 +170,7 @@ defmodule BotArmyLlm.LlmClientTest do
 
     test "messages with sensitive content block cloud routing" do
       defmodule MockHealthCheckerMessagesAuth do
-        def load_acceptable?(), do: true
+        def load_acceptable?, do: true
         def best_ollama_node(_complexity), do: {:error, :no_healthy_nodes}
         def node_status, do: []
       end
@@ -196,7 +196,7 @@ defmodule BotArmyLlm.LlmClientTest do
 
     test "mixed messages check all content for sensitivity" do
       defmodule MockHealthCheckerMessagesMixed do
-        def load_acceptable?(), do: true
+        def load_acceptable?, do: true
         def best_ollama_node(_complexity), do: {:error, :no_healthy_nodes}
         def node_status, do: []
       end
@@ -324,7 +324,7 @@ defmodule BotArmyLlm.LlmClientTest do
       # When load is acceptable, Ollama should be attempted before cloud providers
       # Since Ollama will fail (not running), we check that the error doesn't mention "under load"
       defmodule MockHealthCheckerLoad do
-        def load_acceptable?(), do: true
+        def load_acceptable?, do: true
         def best_ollama_node(:light), do: {:error, :no_healthy_nodes}
         def best_ollama_node(:medium), do: {:error, :no_healthy_nodes}
         def best_ollama_node(:heavy), do: {:error, :no_healthy_nodes}
@@ -350,7 +350,7 @@ defmodule BotArmyLlm.LlmClientTest do
 
     test "light prompt with high load skips Ollama and logs routing decision" do
       defmodule MockHealthCheckerHighLoad do
-        def load_acceptable?(), do: false
+        def load_acceptable?, do: false
         def best_ollama_node(complexity), do: {:error, :no_healthy_nodes}
         def node_status, do: []
       end
@@ -375,7 +375,7 @@ defmodule BotArmyLlm.LlmClientTest do
 
     test "sensitive prompt still forces Ollama even with high load" do
       defmodule MockHealthCheckerHighLoadSensitive do
-        def load_acceptable?(), do: false
+        def load_acceptable?, do: false
         def best_ollama_node(complexity), do: {:error, :no_healthy_nodes}
         def node_status, do: []
       end
@@ -409,7 +409,7 @@ defmodule BotArmyLlm.LlmClientTest do
     test "complete/2 skips providers listed in failed_providers opts" do
       defmodule MockHealthCheckerSkipOllama do
         def best_ollama_node(_complexity), do: {:error, :no_healthy_nodes}
-        def load_acceptable?(), do: true
+        def load_acceptable?, do: true
         def node_status, do: []
       end
 

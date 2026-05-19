@@ -9,8 +9,8 @@ defmodule BotArmyLlm.Handlers.RAGHandler do
   """
 
   require Logger
-  alias BotArmyLlm.NATS.Publisher
   alias BotArmyLlm.{EmbeddingConfig, EventBuilder}
+  alias BotArmyLlm.NATS.Publisher
 
   defp vector_store do
     Application.get_env(:bot_army_llm, :vector_store, BotArmyLlm.VectorStore)

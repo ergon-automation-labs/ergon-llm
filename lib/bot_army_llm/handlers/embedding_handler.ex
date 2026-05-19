@@ -7,8 +7,8 @@ defmodule BotArmyLlm.Handlers.EmbeddingHandler do
   """
 
   require Logger
-  alias BotArmyLlm.NATS.Publisher
   alias BotArmyLlm.{EmbeddingConfig, EventBuilder}
+  alias BotArmyLlm.NATS.Publisher
 
   @doc """
   Handle embedding requests.

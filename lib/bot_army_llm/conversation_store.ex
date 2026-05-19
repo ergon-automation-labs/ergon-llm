@@ -16,6 +16,7 @@ defmodule BotArmyLlm.ConversationStore do
   """
 
   use GenServer
+  alias BotArmyLlm.{Conversation, Repo}
   require Logger
 
   @server __MODULE__
@@ -82,7 +83,7 @@ defmodule BotArmyLlm.ConversationStore do
     # Gracefully handle database unavailability (e.g., in tests)
     state =
       try do
-        conversations = BotArmyLlm.Repo.all(BotArmyLlm.Schemas.Conversation)
+        conversations = Repo.all(BotArmyLlm.Schemas.Conversation)
 
         Enum.reduce(conversations, %{}, fn conv, acc ->
           Map.put(acc, conv.session_id |> to_string(), schema_to_map(conv))
@@ -118,7 +119,7 @@ defmodule BotArmyLlm.ConversationStore do
 
     result =
       try do
-        BotArmyLlm.Repo.insert(changeset)
+        Repo.insert(changeset)
       rescue
         error ->
           Logger.error("Database error during conversation creation: #{inspect(error)}")
@@ -166,7 +167,7 @@ defmodule BotArmyLlm.ConversationStore do
             session_uuid = Ecto.UUID.cast!(session_id)
 
             db_conversation =
-              BotArmyLlm.Repo.get_by(BotArmyLlm.Schemas.Conversation, session_id: session_uuid)
+              Repo.get_by(BotArmyLlm.Schemas.Conversation, session_id: session_uuid)
 
             if db_conversation do
               # Append message to messages list
@@ -178,7 +179,7 @@ defmodule BotArmyLlm.ConversationStore do
                   %{"messages" => updated_messages}
                 )
 
-              BotArmyLlm.Repo.update(changeset)
+              Repo.update(changeset)
             else
               {:error, :not_found}
             end
@@ -222,7 +223,7 @@ defmodule BotArmyLlm.ConversationStore do
             session_uuid = Ecto.UUID.cast!(session_id)
 
             db_conversation =
-              BotArmyLlm.Repo.get_by(BotArmyLlm.Schemas.Conversation, session_id: session_uuid)
+              Repo.get_by(BotArmyLlm.Schemas.Conversation, session_id: session_uuid)
 
             if db_conversation do
               changeset =
@@ -231,7 +232,7 @@ defmodule BotArmyLlm.ConversationStore do
                   %{"status" => "archived"}
                 )
 
-              BotArmyLlm.Repo.update(changeset)
+              Repo.update(changeset)
             else
               {:error, :not_found}
             end

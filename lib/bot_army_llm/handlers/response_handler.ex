@@ -7,6 +7,7 @@ defmodule BotArmyLlm.Handlers.ResponseHandler do
   """
 
   require Logger
+  alias BotArmyLlm.NATS.Publisher
 
   alias BotArmyLlm.{EventBuilder, JsonExtractor}
 
@@ -156,7 +157,7 @@ defmodule BotArmyLlm.Handlers.ResponseHandler do
         })
       )
 
-    case BotArmyLlm.NATS.Publisher.publish(event_data) do
+    case Publisher.publish(event_data) do
       :ok -> Logger.debug("Published parsed response event")
       {:error, reason} -> Logger.error("Failed to publish parsed event: #{inspect(reason)}")
     end
@@ -180,7 +181,7 @@ defmodule BotArmyLlm.Handlers.ResponseHandler do
       }
     }
 
-    case BotArmyLlm.NATS.Publisher.publish(error_event) do
+    case Publisher.publish(error_event) do
       :ok -> Logger.debug("Published error event")
       {:error, err} -> Logger.error("Failed to publish error: #{inspect(err)}")
     end

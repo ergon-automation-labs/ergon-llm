@@ -45,6 +45,7 @@ end
 
 defmodule BotArmyLlm.Handlers.PromptHandlerTest do
   use ExUnit.Case, async: false
+  alias BotArmyLlm.Handlers.PromptHandler
   @moduletag :handlers
 
   setup do
@@ -72,7 +73,7 @@ defmodule BotArmyLlm.Handlers.PromptHandlerTest do
 
       # Mock LlmClient to return a success response
       stub_llm_success()
-      assert :ok = BotArmyLlm.Handlers.PromptHandler.handle_submit(message)
+      assert :ok = PromptHandler.handle_submit(message)
     end
 
     test "returns error for missing text field" do
@@ -81,7 +82,7 @@ defmodule BotArmyLlm.Handlers.PromptHandlerTest do
         |> put_in(["payload", "text"], nil)
 
       stub_llm_success()
-      assert :ok = BotArmyLlm.Handlers.PromptHandler.handle_submit(message)
+      assert :ok = PromptHandler.handle_submit(message)
     end
 
     test "returns error for missing prompt_id field" do
@@ -90,14 +91,14 @@ defmodule BotArmyLlm.Handlers.PromptHandlerTest do
         |> put_in(["payload", "prompt_id"], nil)
 
       stub_llm_success()
-      assert :ok = BotArmyLlm.Handlers.PromptHandler.handle_submit(message)
+      assert :ok = PromptHandler.handle_submit(message)
     end
 
     test "accepts custom model" do
       message = valid_submit_message() |> put_in(["payload", "model"], "powerful")
 
       stub_llm_success()
-      assert :ok = BotArmyLlm.Handlers.PromptHandler.handle_submit(message)
+      assert :ok = PromptHandler.handle_submit(message)
     end
 
     test "accepts various prompt texts" do
@@ -111,7 +112,7 @@ defmodule BotArmyLlm.Handlers.PromptHandlerTest do
           |> put_in(["payload", "text"], prompt_text)
           |> put_in(["payload", "prompt_id"], prompt_id)
 
-        assert :ok = BotArmyLlm.Handlers.PromptHandler.handle_submit(message)
+        assert :ok = PromptHandler.handle_submit(message)
       end
     end
 
@@ -119,7 +120,7 @@ defmodule BotArmyLlm.Handlers.PromptHandlerTest do
       message = valid_submit_message() |> Map.update!("payload", &Map.delete(&1, "model"))
 
       stub_llm_success()
-      assert :ok = BotArmyLlm.Handlers.PromptHandler.handle_submit(message)
+      assert :ok = PromptHandler.handle_submit(message)
     end
 
     test "handles LLM client failures gracefully" do
@@ -127,7 +128,7 @@ defmodule BotArmyLlm.Handlers.PromptHandlerTest do
 
       # Message is processed and error published on failure
       stub_llm_failure()
-      assert :ok = BotArmyLlm.Handlers.PromptHandler.handle_submit(message)
+      assert :ok = PromptHandler.handle_submit(message)
     end
   end
 

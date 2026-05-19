@@ -1,5 +1,6 @@
 defmodule BotArmyLlm.Handlers.VisionHandlerTest do
   use ExUnit.Case, async: false
+  alias BotArmyLlm.Handlers.VisionHandler
   @moduletag :handlers
 
   setup do
@@ -37,7 +38,7 @@ defmodule BotArmyLlm.Handlers.VisionHandlerTest do
          }}
       )
 
-      assert :ok = BotArmyLlm.Handlers.VisionHandler.handle_analyze(message)
+      assert :ok = VisionHandler.handle_analyze(message)
     end
 
     test "extracts structured data with output_schema" do
@@ -68,7 +69,7 @@ defmodule BotArmyLlm.Handlers.VisionHandlerTest do
          }}
       )
 
-      assert :ok = BotArmyLlm.Handlers.VisionHandler.handle_analyze(message)
+      assert :ok = VisionHandler.handle_analyze(message)
     end
 
     test "handles best-effort JSON parsing with schema" do
@@ -100,7 +101,7 @@ defmodule BotArmyLlm.Handlers.VisionHandlerTest do
          }}
       )
 
-      assert :ok = BotArmyLlm.Handlers.VisionHandler.handle_analyze(message)
+      assert :ok = VisionHandler.handle_analyze(message)
     end
 
     test "validates required prompt field" do
@@ -118,7 +119,7 @@ defmodule BotArmyLlm.Handlers.VisionHandlerTest do
         }
       }
 
-      assert :ok = BotArmyLlm.Handlers.VisionHandler.handle_analyze(message)
+      assert :ok = VisionHandler.handle_analyze(message)
     end
 
     test "validates at least one image field is provided" do
@@ -137,7 +138,7 @@ defmodule BotArmyLlm.Handlers.VisionHandlerTest do
         }
       }
 
-      assert :ok = BotArmyLlm.Handlers.VisionHandler.handle_analyze(message)
+      assert :ok = VisionHandler.handle_analyze(message)
     end
 
     test "accepts image_url alone" do
@@ -167,7 +168,7 @@ defmodule BotArmyLlm.Handlers.VisionHandlerTest do
          }}
       )
 
-      assert :ok = BotArmyLlm.Handlers.VisionHandler.handle_analyze(message)
+      assert :ok = VisionHandler.handle_analyze(message)
     end
 
     test "accepts image_data alone" do
@@ -197,7 +198,7 @@ defmodule BotArmyLlm.Handlers.VisionHandlerTest do
          }}
       )
 
-      assert :ok = BotArmyLlm.Handlers.VisionHandler.handle_analyze(message)
+      assert :ok = VisionHandler.handle_analyze(message)
     end
 
     test "handles vision model failures" do
@@ -217,7 +218,7 @@ defmodule BotArmyLlm.Handlers.VisionHandlerTest do
 
       Process.put({:vision_llm_mock, :response}, {:error, :no_providers_available})
 
-      assert :ok = BotArmyLlm.Handlers.VisionHandler.handle_analyze(message)
+      assert :ok = VisionHandler.handle_analyze(message)
     end
   end
 end

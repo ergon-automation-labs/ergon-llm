@@ -1,5 +1,6 @@
 defmodule BotArmyLlm.Handlers.ResponseHandlerTest do
   use ExUnit.Case, async: false
+  alias BotArmyLlm.Handlers.ResponseHandler
   @moduletag :handlers
 
   setup do
@@ -24,7 +25,7 @@ defmodule BotArmyLlm.Handlers.ResponseHandlerTest do
         }
       }
 
-      assert :ok = BotArmyLlm.Handlers.ResponseHandler.handle_parse(message)
+      assert :ok = ResponseHandler.handle_parse(message)
     end
 
     test "extracts JSON from markdown fence" do
@@ -42,7 +43,7 @@ defmodule BotArmyLlm.Handlers.ResponseHandlerTest do
         }
       }
 
-      assert :ok = BotArmyLlm.Handlers.ResponseHandler.handle_parse(message)
+      assert :ok = ResponseHandler.handle_parse(message)
     end
 
     test "validates against output schema" do
@@ -60,7 +61,7 @@ defmodule BotArmyLlm.Handlers.ResponseHandlerTest do
         }
       }
 
-      assert :ok = BotArmyLlm.Handlers.ResponseHandler.handle_parse(message)
+      assert :ok = ResponseHandler.handle_parse(message)
     end
 
     test "retries extraction on failure with corrective prompt" do
@@ -92,7 +93,7 @@ defmodule BotArmyLlm.Handlers.ResponseHandlerTest do
          }}
       )
 
-      assert :ok = BotArmyLlm.Handlers.ResponseHandler.handle_parse(message)
+      assert :ok = ResponseHandler.handle_parse(message)
     end
 
     test "publishes error when max_retries exceeded" do
@@ -110,7 +111,7 @@ defmodule BotArmyLlm.Handlers.ResponseHandlerTest do
         }
       }
 
-      assert :ok = BotArmyLlm.Handlers.ResponseHandler.handle_parse(message)
+      assert :ok = ResponseHandler.handle_parse(message)
     end
 
     test "validates required text field" do
@@ -128,7 +129,7 @@ defmodule BotArmyLlm.Handlers.ResponseHandlerTest do
         }
       }
 
-      assert :ok = BotArmyLlm.Handlers.ResponseHandler.handle_parse(message)
+      assert :ok = ResponseHandler.handle_parse(message)
     end
 
     test "works without output_schema" do
@@ -145,7 +146,7 @@ defmodule BotArmyLlm.Handlers.ResponseHandlerTest do
         }
       }
 
-      assert :ok = BotArmyLlm.Handlers.ResponseHandler.handle_parse(message)
+      assert :ok = ResponseHandler.handle_parse(message)
     end
 
     test "handles schema mismatch with retries" do
@@ -177,7 +178,7 @@ defmodule BotArmyLlm.Handlers.ResponseHandlerTest do
          }}
       )
 
-      assert :ok = BotArmyLlm.Handlers.ResponseHandler.handle_parse(message)
+      assert :ok = ResponseHandler.handle_parse(message)
     end
   end
 

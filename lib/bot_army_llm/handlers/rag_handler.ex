@@ -9,6 +9,7 @@ defmodule BotArmyLlm.Handlers.RAGHandler do
   """
 
   require Logger
+  alias BotArmyLlm.NATS.Publisher
   alias BotArmyLlm.{EmbeddingConfig, EventBuilder}
 
   defp vector_store do
@@ -241,7 +242,7 @@ defmodule BotArmyLlm.Handlers.RAGHandler do
 
     event_data = EventBuilder.build("llm.rag.indexed", payload)
 
-    case BotArmyLlm.NATS.Publisher.publish(event_data) do
+    case Publisher.publish(event_data) do
       :ok -> Logger.info("Published RAG indexed event")
       {:error, reason} -> Logger.error("Failed to publish indexed event: #{inspect(reason)}")
     end
@@ -258,7 +259,7 @@ defmodule BotArmyLlm.Handlers.RAGHandler do
 
     event_data = EventBuilder.build("llm.rag.search.result", payload)
 
-    case BotArmyLlm.NATS.Publisher.publish(event_data) do
+    case Publisher.publish(event_data) do
       :ok -> Logger.info("Published RAG search result")
       {:error, reason} -> Logger.error("Failed to publish search result: #{inspect(reason)}")
     end
@@ -274,7 +275,7 @@ defmodule BotArmyLlm.Handlers.RAGHandler do
 
     event_data = EventBuilder.build("llm.rag.deleted", payload)
 
-    case BotArmyLlm.NATS.Publisher.publish(event_data) do
+    case Publisher.publish(event_data) do
       :ok -> Logger.info("Published RAG deleted event")
       {:error, reason} -> Logger.error("Failed to publish deleted event: #{inspect(reason)}")
     end
@@ -298,7 +299,7 @@ defmodule BotArmyLlm.Handlers.RAGHandler do
       }
     }
 
-    case BotArmyLlm.NATS.Publisher.publish(error_event) do
+    case Publisher.publish(error_event) do
       :ok -> Logger.debug("Published error event")
       {:error, err} -> Logger.error("Failed to publish error: #{inspect(err)}")
     end

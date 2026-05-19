@@ -8,6 +8,7 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
   """
 
   require Logger
+  alias BotArmyLlm.NATS.Publisher
 
   alias BotArmyLlm.EventBuilder
 
@@ -291,7 +292,7 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
         "user_id" => user_id
       })
 
-    case BotArmyLlm.NATS.Publisher.publish(event_data) do
+    case Publisher.publish(event_data) do
       :ok -> Logger.debug("Published chain step completed event")
       {:error, reason} -> Logger.error("Failed to publish step event: #{inspect(reason)}")
     end
@@ -316,7 +317,7 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
         "user_id" => user_id
       })
 
-    case BotArmyLlm.NATS.Publisher.publish(event_data) do
+    case Publisher.publish(event_data) do
       :ok -> Logger.debug("Published chain completed event")
       {:error, reason} -> Logger.error("Failed to publish chain event: #{inspect(reason)}")
     end
@@ -341,7 +342,7 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
         "user_id" => user_id
       })
 
-    case BotArmyLlm.NATS.Publisher.publish(event_data) do
+    case Publisher.publish(event_data) do
       :ok -> Logger.debug("Published conversation replied event")
       {:error, reason} -> Logger.error("Failed to publish converse event: #{inspect(reason)}")
     end
@@ -365,7 +366,7 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
       }
     }
 
-    case BotArmyLlm.NATS.Publisher.publish(error_event) do
+    case Publisher.publish(error_event) do
       :ok -> Logger.debug("Published error event")
       {:error, err} -> Logger.error("Failed to publish error: #{inspect(err)}")
     end

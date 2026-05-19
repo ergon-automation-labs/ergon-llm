@@ -23,8 +23,8 @@ defmodule BotArmyLlm.Handlers.SubtaskHandler do
   """
 
   require Logger
-  alias BotArmyRuntime.NATS.Publisher
   alias BotArmyLlm.EventBuilder
+  alias BotArmyRuntime.NATS.Publisher
 
   @doc """
   Handle a dispatcher subtask intent for LLM inference.
@@ -36,9 +36,8 @@ defmodule BotArmyLlm.Handlers.SubtaskHandler do
     decomposition_id = payload["decomposition_id"]
     task_payload = payload["task_payload"] || %{}
 
-    Logger.info("[SubtaskHandler] Processing subtask",
-      subtask_id: subtask_id,
-      decomposition_id: decomposition_id
+    Logger.info(
+      "[SubtaskHandler] Processing subtask #{subtask_id} for decomposition #{decomposition_id}"
     )
 
     case execute_task(task_payload) do
@@ -46,10 +45,7 @@ defmodule BotArmyLlm.Handlers.SubtaskHandler do
         publish_completion(subtask_id, decomposition_id, "completed", result)
 
       {:error, reason} ->
-        Logger.warning("[SubtaskHandler] Task failed",
-          subtask_id: subtask_id,
-          reason: inspect(reason)
-        )
+        Logger.warning("[SubtaskHandler] Task #{subtask_id} failed: #{inspect(reason)}")
 
         publish_completion(subtask_id, decomposition_id, "failed", %{"error" => inspect(reason)})
     end
@@ -60,21 +56,19 @@ defmodule BotArmyLlm.Handlers.SubtaskHandler do
     query = Map.get(task_payload, "query") || Map.get(task_payload, "prompt")
     model = Map.get(task_payload, "model", "claude-opus-4-6")
 
-    cond do
-      is_binary(query) ->
-        # Simplified: just echo back the query as a result
-        # In production, this would call the LLM service
-        {:ok, %{"query" => query, "response" => "Processed: #{String.slice(query, 0, 50)}"}}
-
-      true ->
-        {:error, :missing_query}
+    if is_binary(query) do
+      # Simplified: just echo back the query as a result
+      # In production, this would call the LLM service
+      {:ok, %{"query" => query, "response" => "Processed: #{String.slice(query, 0, 50)}"}}
+    else
+      {:error, :missing_query}
     end
   end
 
   # Private: Publish completion back to dispatcher
   defp publish_completion(subtask_id, decomposition_id, status, result) do
     event_data =
-      EventBuilder.build_event("dispatcher.subtask.completed", %{
+      EventBuilder.build("dispatcher.subtask.completed", %{
         "subtask_id" => subtask_id,
         "decomposition_id" => decomposition_id,
         "status" => status,
@@ -83,9 +77,8 @@ defmodule BotArmyLlm.Handlers.SubtaskHandler do
 
     case Publisher.publish("dispatcher.subtask.completed", event_data) do
       {:ok, _subject} ->
-        Logger.debug("[SubtaskHandler] Published subtask completion",
-          subtask_id: subtask_id,
-          status: status
+        Logger.debug(
+          "[SubtaskHandler] Published subtask completion #{subtask_id} with status #{status}"
         )
 
       {:error, reason} ->

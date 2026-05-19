@@ -1,5 +1,6 @@
 defmodule BotArmyLlm.Handlers.InferenceHandlerTest do
   use ExUnit.Case, async: false
+  alias BotArmyLlm.Handlers.InferenceHandler
   @moduletag :handlers
 
   describe "handle_chain/1" do
@@ -25,7 +26,7 @@ defmodule BotArmyLlm.Handlers.InferenceHandlerTest do
          }}
       )
 
-      assert :ok = BotArmyLlm.Handlers.InferenceHandler.handle_chain(message)
+      assert :ok = InferenceHandler.handle_chain(message)
     end
 
     test "validates required steps field" do
@@ -33,7 +34,7 @@ defmodule BotArmyLlm.Handlers.InferenceHandlerTest do
         valid_chain_message()
         |> put_in(["payload", "steps"], nil)
 
-      assert :ok = BotArmyLlm.Handlers.InferenceHandler.handle_chain(message)
+      assert :ok = InferenceHandler.handle_chain(message)
     end
 
     test "validates required initial_input field" do
@@ -41,7 +42,7 @@ defmodule BotArmyLlm.Handlers.InferenceHandlerTest do
         valid_chain_message()
         |> put_in(["payload", "initial_input"], nil)
 
-      assert :ok = BotArmyLlm.Handlers.InferenceHandler.handle_chain(message)
+      assert :ok = InferenceHandler.handle_chain(message)
     end
 
     test "handles LLM failures gracefully" do
@@ -49,7 +50,7 @@ defmodule BotArmyLlm.Handlers.InferenceHandlerTest do
 
       Process.put({:llm_client_mock, :response}, {:error, :rate_limited})
 
-      assert :ok = BotArmyLlm.Handlers.InferenceHandler.handle_chain(message)
+      assert :ok = InferenceHandler.handle_chain(message)
     end
 
     test "interpolates {input} in step prompts" do
@@ -86,7 +87,7 @@ defmodule BotArmyLlm.Handlers.InferenceHandlerTest do
          }}
       )
 
-      assert :ok = BotArmyLlm.Handlers.InferenceHandler.handle_chain(message)
+      assert :ok = InferenceHandler.handle_chain(message)
     end
   end
 
@@ -143,7 +144,7 @@ defmodule BotArmyLlm.Handlers.InferenceHandlerTest do
          }}
       )
 
-      assert :ok = BotArmyLlm.Handlers.InferenceHandler.handle_converse(message)
+      assert :ok = InferenceHandler.handle_converse(message)
     end
 
     test "validates required message field" do
@@ -151,7 +152,7 @@ defmodule BotArmyLlm.Handlers.InferenceHandlerTest do
         valid_converse_message()
         |> put_in(["payload", "message"], nil)
 
-      assert :ok = BotArmyLlm.Handlers.InferenceHandler.handle_converse(message)
+      assert :ok = InferenceHandler.handle_converse(message)
     end
 
     test "handles LLM failures" do
@@ -159,7 +160,7 @@ defmodule BotArmyLlm.Handlers.InferenceHandlerTest do
 
       Process.put({:llm_client_mock, :response}, {:error, :no_providers_available})
 
-      assert :ok = BotArmyLlm.Handlers.InferenceHandler.handle_converse(message)
+      assert :ok = InferenceHandler.handle_converse(message)
     end
 
     test "creates new conversation when no session_id provided" do
@@ -195,7 +196,7 @@ defmodule BotArmyLlm.Handlers.InferenceHandlerTest do
          }}
       )
 
-      assert :ok = BotArmyLlm.Handlers.InferenceHandler.handle_converse(message)
+      assert :ok = InferenceHandler.handle_converse(message)
     end
   end
 

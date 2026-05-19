@@ -25,6 +25,24 @@ defmodule BotArmyLlm.NATS.Consumer do
   use GenServer
   require Logger
 
+  alias BotArmyCore.NATS.Decoder
+  alias BotArmyLlm.EmbeddingWorkerPool
+
+  alias BotArmyLlm.Handlers.{
+    ClaudeCodeHandler,
+    ConversationHandler,
+    InferenceHandler,
+    PromptHandler,
+    RAGHandler,
+    ResponseHandler,
+    SkillExecuteHandler,
+    SubtaskHandler,
+    VisionHandler
+  }
+
+  alias BotArmyRuntime.Intent.ArmyOpinionVote
+  alias BotArmyRuntime.NATS.Connection
+
   @reconnect_delay_ms 5000
   @version Mix.Project.config()[:version]
   @registry_heartbeat_ms 20_000
@@ -153,9 +171,9 @@ defmodule BotArmyLlm.NATS.Consumer do
 
   @impl true
   def handle_continue(:connect, state) do
-    case GenServer.call(BotArmyRuntime.NATS.Connection, :get_connection, 5000) do
+    case GenServer.call(Connection, :get_connection, 5000) do
       {:ok, conn} ->
-        BotArmyRuntime.NATS.Connection.subscribe_to_status()
+        Connection.subscribe_to_status()
         subscribe_to_topics(conn, state)
 
       {:error, _reason} ->
@@ -292,7 +310,7 @@ defmodule BotArmyLlm.NATS.Consumer do
   end
 
   defp process_message(%{body: body, topic: topic}) do
-    case BotArmyCore.NATS.Decoder.decode(body) do
+    case Decoder.decode(body) do
       {:ok, decoded_message} ->
         route_message(decoded_message)
 
@@ -302,7 +320,7 @@ defmodule BotArmyLlm.NATS.Consumer do
   end
 
   defp decode_message_fallback(body) do
-    case BotArmyCore.NATS.Decoder.decode(body) do
+    case Decoder.decode(body) do
       {:ok, decoded_message} ->
         decoded_message
 
@@ -317,10 +335,10 @@ defmodule BotArmyLlm.NATS.Consumer do
   # Private functions
 
   defp handle_request_reply("llm.claude_code.complete", message, reply_to),
-    do: BotArmyLlm.Handlers.ClaudeCodeHandler.handle_complete(message, reply_to)
+    do: ClaudeCodeHandler.handle_complete(message, reply_to)
 
   defp handle_request_reply("llm.skill.execute", message, reply_to),
-    do: BotArmyLlm.Handlers.SkillExecuteHandler.handle_execute(message, reply_to)
+    do: SkillExecuteHandler.handle_execute(message, reply_to)
 
   defp handle_request_reply("llm.prompt.submit", message, reply_to),
     do: handle_prompt_request_reply(message, reply_to, false)
@@ -343,7 +361,7 @@ defmodule BotArmyLlm.NATS.Consumer do
     do: handle_queue_status(message, reply_to)
 
   defp handle_request_reply("llm.army.opinion.vote", message, reply_to) do
-    vote = BotArmyRuntime.Intent.ArmyOpinionVote.build_reply(:llm, message)
+    vote = ArmyOpinionVote.build_reply(:llm, message)
     publish_reply(reply_to, vote)
   end
 
@@ -709,7 +727,7 @@ defmodule BotArmyLlm.NATS.Consumer do
   defp publish_reply(reply_to, response) do
     case Jason.encode(response) do
       {:ok, body} ->
-        case GenServer.call(BotArmyRuntime.NATS.Connection, :get_connection, 5000) do
+        case GenServer.call(Connection, :get_connection, 5000) do
           {:ok, conn} ->
             Gnat.pub(conn, reply_to, body)
 
@@ -749,47 +767,47 @@ defmodule BotArmyLlm.NATS.Consumer do
     event = message["event"]
 
     if is_binary(event) and String.starts_with?(event, "conv.") do
-      BotArmyLlm.Handlers.ConversationHandler.handle_request(message)
+      ConversationHandler.handle_request(message)
     else
       route_by_event(event, message)
     end
   end
 
   defp route_by_event("llm.prompt.submit", message),
-    do: BotArmyLlm.Handlers.PromptHandler.handle_submit(message)
+    do: PromptHandler.handle_submit(message)
 
   defp route_by_event("llm.skill.prompt.submit", message),
-    do: BotArmyLlm.Handlers.PromptHandler.handle_submit(message)
+    do: PromptHandler.handle_submit(message)
 
   defp route_by_event("llm.inference.chain", message),
-    do: BotArmyLlm.Handlers.InferenceHandler.handle_chain(message)
+    do: InferenceHandler.handle_chain(message)
 
   defp route_by_event("llm.inference.converse", message),
-    do: BotArmyLlm.Handlers.InferenceHandler.handle_converse(message)
+    do: InferenceHandler.handle_converse(message)
 
   defp route_by_event("llm.response.parse", message),
-    do: BotArmyLlm.Handlers.ResponseHandler.handle_parse(message)
+    do: ResponseHandler.handle_parse(message)
 
   defp route_by_event("llm.vision.analyze", message),
-    do: BotArmyLlm.Handlers.VisionHandler.handle_analyze(message)
+    do: VisionHandler.handle_analyze(message)
 
   defp route_by_event("llm.embed.request", message),
-    do: BotArmyLlm.EmbeddingWorkerPool.enqueue(message)
+    do: EmbeddingWorkerPool.enqueue(message)
 
   defp route_by_event("llm.embed.request.bulk", message),
-    do: BotArmyLlm.EmbeddingWorkerPool.enqueue(message)
+    do: EmbeddingWorkerPool.enqueue(message)
 
   defp route_by_event("llm.rag.index", message),
-    do: BotArmyLlm.Handlers.RAGHandler.handle_index(message)
+    do: RAGHandler.handle_index(message)
 
   defp route_by_event("llm.rag.search", message),
-    do: BotArmyLlm.Handlers.RAGHandler.handle_search(message)
+    do: RAGHandler.handle_search(message)
 
   defp route_by_event("llm.rag.delete", message),
-    do: BotArmyLlm.Handlers.RAGHandler.handle_delete(message)
+    do: RAGHandler.handle_delete(message)
 
   defp route_by_event("dispatcher.subtask.intent", message),
-    do: BotArmyLlm.Handlers.SubtaskHandler.handle_subtask_intent(message)
+    do: SubtaskHandler.handle_subtask_intent(message)
 
   defp route_by_event(event, _message) do
     Logger.debug("Unknown LLM event type: #{event}")

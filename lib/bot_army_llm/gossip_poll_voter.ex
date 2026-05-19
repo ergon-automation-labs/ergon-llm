@@ -84,7 +84,7 @@ defmodule BotArmyLlm.GossipPollVoter do
       }
     }
 
-    BotArmyRuntime.NATS.Publisher.publish("gossip.poll.vote", message)
+    Publisher.publish("gossip.poll.vote", message)
   end
 
   defp ensure_table! do

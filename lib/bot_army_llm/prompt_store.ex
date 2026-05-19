@@ -17,6 +17,7 @@ defmodule BotArmyLlm.PromptStore do
   """
 
   use GenServer
+  alias BotArmyLlm.{Prompt, Repo}
   require Logger
 
   @server __MODULE__
@@ -99,7 +100,7 @@ defmodule BotArmyLlm.PromptStore do
     # Gracefully handle database unavailability (e.g., in tests)
     state =
       try do
-        prompts = BotArmyLlm.Repo.all(BotArmyLlm.Schemas.Prompt)
+        prompts = Repo.all(BotArmyLlm.Schemas.Prompt)
 
         Enum.reduce(prompts, %{}, fn prompt, acc ->
           Map.put(acc, prompt.id |> to_string(), schema_to_map(prompt))
@@ -132,7 +133,7 @@ defmodule BotArmyLlm.PromptStore do
         }
       )
 
-    case BotArmyLlm.Repo.insert(changeset) do
+    case Repo.insert(changeset) do
       {:ok, db_prompt} ->
         prompt = schema_to_map(db_prompt)
         new_state = Map.put(state, prompt_id, prompt)
@@ -199,7 +200,7 @@ defmodule BotArmyLlm.PromptStore do
 
   defp perform_update(prompt_id, payload, state) do
     prompt_uuid = Ecto.UUID.cast!(prompt_id)
-    db_prompt = BotArmyLlm.Repo.get(BotArmyLlm.Schemas.Prompt, prompt_uuid)
+    db_prompt = Repo.get(BotArmyLlm.Schemas.Prompt, prompt_uuid)
 
     if db_prompt do
       changeset =
@@ -220,7 +221,7 @@ defmodule BotArmyLlm.PromptStore do
   end
 
   defp handle_update_result(changeset, prompt_id, state) do
-    case BotArmyLlm.Repo.update(changeset) do
+    case Repo.update(changeset) do
       {:ok, updated_db_prompt} ->
         updated_prompt = schema_to_map(updated_db_prompt)
         new_state = Map.put(state, prompt_id, updated_prompt)
@@ -235,7 +236,7 @@ defmodule BotArmyLlm.PromptStore do
 
   defp perform_archive(prompt_id, state) do
     prompt_uuid = Ecto.UUID.cast!(prompt_id)
-    db_prompt = BotArmyLlm.Repo.get(BotArmyLlm.Schemas.Prompt, prompt_uuid)
+    db_prompt = Repo.get(BotArmyLlm.Schemas.Prompt, prompt_uuid)
 
     if db_prompt do
       changeset =
@@ -251,7 +252,7 @@ defmodule BotArmyLlm.PromptStore do
   end
 
   defp handle_archive_result(changeset, prompt_id, state) do
-    case BotArmyLlm.Repo.update(changeset) do
+    case Repo.update(changeset) do
       {:ok, archived_db_prompt} ->
         archived_prompt = schema_to_map(archived_db_prompt)
         new_state = Map.put(state, prompt_id, archived_prompt)

@@ -11,6 +11,7 @@ defmodule BotArmyLlm.EmbeddingWorkerPool do
   - Logs info on pool start with configured max_concurrency.
   """
   use GenServer
+  alias BotArmyLlm.Handlers.EmbeddingHandler
   require Logger
 
   @default_max_concurrency 5
@@ -69,7 +70,7 @@ defmodule BotArmyLlm.EmbeddingWorkerPool do
   defp spawn_embed_task(message, state) do
     Task.start(fn ->
       try do
-        BotArmyLlm.Handlers.EmbeddingHandler.handle_embed(message)
+        EmbeddingHandler.handle_embed(message)
       after
         done()
       end

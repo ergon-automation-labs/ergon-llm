@@ -15,6 +15,7 @@ defmodule BotArmyLlm.Handlers.PromptHandler do
   """
 
   require Logger
+  alias BotArmyLlm.NATS.Publisher
 
   defp repo do
     Application.get_env(:bot_army_llm, :repo, BotArmyLlm.Repo)
@@ -162,7 +163,7 @@ defmodule BotArmyLlm.Handlers.PromptHandler do
       }
     }
 
-    case BotArmyLlm.NATS.Publisher.publish(event_data) do
+    case Publisher.publish(event_data) do
       :ok -> Logger.debug("Published completion event to #{completion_event}")
       {:error, reason} -> Logger.error("Failed to publish completion: #{inspect(reason)}")
     end
@@ -202,7 +203,7 @@ defmodule BotArmyLlm.Handlers.PromptHandler do
       }
     }
 
-    case BotArmyLlm.NATS.Publisher.publish(error_event) do
+    case Publisher.publish(error_event) do
       :ok -> Logger.debug("Published error event")
       {:error, err} -> Logger.error("Failed to publish error: #{inspect(err)}")
     end

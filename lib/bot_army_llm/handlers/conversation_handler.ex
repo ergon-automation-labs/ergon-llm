@@ -15,6 +15,9 @@ defmodule BotArmyLlm.Handlers.ConversationHandler do
   """
 
   require Logger
+  alias BotArmyLlm.NATS.Publisher
+  alias BotArmyRuntime.NATS.Publisher, as: RuntimePublisher
+  alias BotArmyRuntime.NATS.Conversation.Manager, as: ConversationManager
 
   @doc """
   Handle an incoming conversation request directed at the LLM bot.
@@ -68,7 +71,7 @@ defmodule BotArmyLlm.Handlers.ConversationHandler do
 
     case result do
       {:ok, response} ->
-        BotArmyRuntime.NATS.Conversation.Manager.reply(
+        ConversationManager.reply(
           conversation_id,
           "llm",
           %{response: response},
@@ -78,7 +81,7 @@ defmodule BotArmyLlm.Handlers.ConversationHandler do
         )
 
       {:error, reason} ->
-        BotArmyRuntime.NATS.Conversation.Manager.reply(
+        ConversationManager.reply(
           conversation_id,
           "llm",
           %{error: inspect(reason)},
@@ -106,7 +109,7 @@ defmodule BotArmyLlm.Handlers.ConversationHandler do
 
     case result do
       {:ok, response} ->
-        BotArmyRuntime.NATS.Conversation.Manager.reply(
+        ConversationManager.reply(
           conversation_id,
           "llm",
           %{response: response},
@@ -115,7 +118,7 @@ defmodule BotArmyLlm.Handlers.ConversationHandler do
         )
 
       {:error, reason} ->
-        BotArmyRuntime.NATS.Conversation.Manager.reply(
+        ConversationManager.reply(
           conversation_id,
           "llm",
           %{error: inspect(reason)},
@@ -130,7 +133,7 @@ defmodule BotArmyLlm.Handlers.ConversationHandler do
 
     response = "Hey #{from_bot}! 👋 I'm here if you need any text processing."
 
-    BotArmyRuntime.NATS.Conversation.Manager.reply(
+    ConversationManager.reply(
       conversation_id,
       "llm",
       %{response: response},

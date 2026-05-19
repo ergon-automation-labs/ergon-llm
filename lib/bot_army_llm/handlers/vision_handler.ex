@@ -7,6 +7,7 @@ defmodule BotArmyLlm.Handlers.VisionHandler do
   """
 
   require Logger
+  alias BotArmyLlm.NATS.Publisher
 
   alias BotArmyLlm.{EventBuilder, JsonExtractor}
 
@@ -160,7 +161,7 @@ defmodule BotArmyLlm.Handlers.VisionHandler do
 
     event_data = EventBuilder.build("llm.vision.analyzed", payload)
 
-    case BotArmyLlm.NATS.Publisher.publish(event_data) do
+    case Publisher.publish(event_data) do
       :ok -> Logger.debug("Published vision analysis event")
       {:error, reason} -> Logger.error("Failed to publish vision event: #{inspect(reason)}")
     end
@@ -184,7 +185,7 @@ defmodule BotArmyLlm.Handlers.VisionHandler do
       }
     }
 
-    case BotArmyLlm.NATS.Publisher.publish(error_event) do
+    case Publisher.publish(error_event) do
       :ok -> Logger.debug("Published error event")
       {:error, err} -> Logger.error("Failed to publish error: #{inspect(err)}")
     end

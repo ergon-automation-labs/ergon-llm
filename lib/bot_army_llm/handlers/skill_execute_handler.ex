@@ -6,6 +6,7 @@ defmodule BotArmyLlm.Handlers.SkillExecuteHandler do
   """
 
   require Logger
+  alias BotArmyLlm.NATS.Publisher
 
   @skills_subject_prefix "bot.army.skills.command."
   @default_timeout_ms 90_000

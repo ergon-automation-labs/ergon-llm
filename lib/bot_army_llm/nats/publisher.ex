@@ -14,6 +14,8 @@ defmodule BotArmyLlm.NATS.Publisher do
   """
 
   require Logger
+  alias BotArmyRuntime.NATS.Connection
+  alias BotArmyRuntime.NATS.Publisher, as: RuntimePublisher
 
   @doc """
   Publish an event to NATS.
@@ -62,7 +64,7 @@ defmodule BotArmyLlm.NATS.Publisher do
   defp do_publish(subject, body) do
     case Jason.decode(body) do
       {:ok, payload} ->
-        case BotArmyRuntime.NATS.Publisher.publish(subject, payload) do
+        case RuntimePublisher.publish(subject, payload) do
           {:ok, _} -> :ok
           {:error, reason} -> {:error, reason}
         end

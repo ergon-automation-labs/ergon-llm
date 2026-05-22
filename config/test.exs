@@ -16,7 +16,7 @@ config :bot_army_llm, :start_repo,
 config :bot_army_llm, llm_client: BotArmyLlm.LlmClientMock
 
 # Disable NATS connection in tests
-config :bot_army_runtime, :nats_disabled, true
+config :bot_army_library_runtime, :nats_disabled, true
 
 # HTTP proxy off in tests (no Bandit/Finch listeners)
 config :bot_army_llm, :http_proxy,

@@ -28,9 +28,9 @@ config :bot_army_llm, BotArmyLlm.Repo,
   pool_size: 3
 
 # Learning library configuration (uses same database as this bot)
-config :bot_army_learning, ecto_repos: [BotArmyLearning.Repo]
+config :bot_army_library_learning, ecto_repos: [BotArmyLearning.Repo]
 
-config :bot_army_learning, BotArmyLearning.Repo,
+config :bot_army_library_learning, BotArmyLearning.Repo,
   database: db_name,
   hostname:
     System.get_env("BOT_ARMY_LLM_DB_HOST") || System.get_env("DATABASE_HOST", "localhost"),
@@ -56,7 +56,7 @@ end
 nats_host = System.get_env("NATS_HOST") || "localhost"
 nats_port = String.to_integer(System.get_env("NATS_PORT") || "4223")
 
-config :bot_army_runtime, :nats,
+config :bot_army_library_runtime, :nats,
   servers: [{nats_host, nats_port}],
   ping_interval: 30_000,
   max_reconnect_attempts: 10,

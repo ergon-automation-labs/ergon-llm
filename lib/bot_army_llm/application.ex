@@ -44,7 +44,7 @@ defmodule BotArmyLlm.Application do
         {BotArmyLlm.Metrics, []},
 
         # Shared-library outcome tracker — records LLM inference quality
-        {BotArmyLearning.OutcomeTracker, []},
+        {BotArmyLearning.OutcomeTracker, [repo: BotArmyLlm.Repo]},
 
         # Embedding worker pool — bounded concurrency for embed requests
         {BotArmyLlm.EmbeddingWorkerPool, []},

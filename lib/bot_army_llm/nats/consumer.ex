@@ -228,7 +228,8 @@ defmodule BotArmyLlm.NATS.Consumer do
 
     case subs do
       subs when subs != [] and length(subs) == length(subjects) ->
-        BotArmyRuntime.Registry.register("llm", @subjects, @version)
+        deployment_status = Application.get_env(:bot_army_llm, :deployment_status, "deployed")
+        BotArmyRuntime.Registry.register("llm", @subjects, @version, deployment_status)
         Process.send_after(self(), :registry_heartbeat, @registry_heartbeat_ms)
         {:noreply, %{state | subscriptions: subs}}
 

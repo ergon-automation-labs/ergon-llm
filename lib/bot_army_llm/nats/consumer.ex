@@ -569,8 +569,8 @@ defmodule BotArmyLlm.NATS.Consumer do
           request_id,
           "llm.chat_quality",
           model_used,
-          lane,
-          was_successful
+          if(was_successful, do: "success", else: "failure"),
+          :llm_outcome_tracker
         )
       rescue
         _ -> :ok

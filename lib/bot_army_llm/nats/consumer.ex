@@ -443,6 +443,7 @@ defmodule BotArmyLlm.NATS.Consumer do
       model = Map.get(payload, "model", "auto")
       prompt_id = Map.get(payload, "prompt_id", UUID.uuid4())
       reasoning_mode = Map.get(payload, "reasoning_mode")
+      allow_cloud = Map.get(payload, "allow_cloud_when_sensitive", allow_cloud_when_sensitive)
 
       Logger.warning(
         "[PromptHandler] Received message=#{inspect(message)}, payload=#{inspect(payload)}, text_len=#{byte_size(text || "")}"
@@ -459,7 +460,7 @@ defmodule BotArmyLlm.NATS.Consumer do
           else
             llm_client.complete(text,
               model: model,
-              allow_cloud_when_sensitive: allow_cloud_when_sensitive,
+              allow_cloud_when_sensitive: allow_cloud,
               reasoning_mode: reasoning_mode
             )
           end

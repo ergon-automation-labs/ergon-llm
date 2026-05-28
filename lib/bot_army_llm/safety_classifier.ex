@@ -40,14 +40,9 @@ defmodule BotArmyLlm.SafetyClassifier do
         :contains_sensitive
 
       false ->
-        case detect_medium_confidence_secrets(text) do
-          true ->
-            Logger.info("Safety: MEDIUM_CONFIDENCE sensitive pattern, restricting to local")
-            :unknown
-
-          false ->
-            :safe
-        end
+        # Medium confidence checks disabled for now - too many false positives
+        # with legitimate system prompts and LLM orchestration
+        :safe
     end
   end
 

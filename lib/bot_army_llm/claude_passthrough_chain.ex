@@ -244,6 +244,7 @@ defmodule BotArmyLlm.ClaudePassthroughChain do
     model = ollama_fallback_model()
     # Map models that don't support /api/chat to ones that do
     model = map_unsupported_ollama_model(model)
+    Logger.warning("try_ollama: using model=#{model}")
 
     result =
       with {:ok, ollama_messages} <- AnthropicOllamaAdapter.to_ollama_messages(payload),

@@ -454,11 +454,15 @@ defmodule BotArmyLlm.NATS.Consumer do
         try do
           BotArmyLlm.LocalQueueManager.increment()
 
-          llm_client.complete(text,
-            model: model,
-            allow_cloud_when_sensitive: allow_cloud_when_sensitive,
-            reasoning_mode: reasoning_mode
-          )
+          if is_nil(text) or text == "" do
+            {:error, :empty_prompt}
+          else
+            llm_client.complete(text,
+              model: model,
+              allow_cloud_when_sensitive: allow_cloud_when_sensitive,
+              reasoning_mode: reasoning_mode
+            )
+          end
         after
           BotArmyLlm.LocalQueueManager.decrement()
         end

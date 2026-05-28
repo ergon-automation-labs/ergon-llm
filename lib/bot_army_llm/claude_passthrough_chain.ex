@@ -242,6 +242,8 @@ defmodule BotArmyLlm.ClaudePassthroughChain do
 
   defp try_ollama(payload) do
     model = ollama_fallback_model()
+    # Map models that don't support /api/chat to ones that do
+    model = map_unsupported_ollama_model(model)
 
     result =
       with {:ok, ollama_messages} <- AnthropicOllamaAdapter.to_ollama_messages(payload),
@@ -263,6 +265,14 @@ defmodule BotArmyLlm.ClaudePassthroughChain do
   defp ollama_fallback_model do
     System.get_env("OLLAMA_MODEL_CLAUDE_FALLBACK") ||
       System.get_env("OLLAMA_MODEL_MEDIUM", "llama3.1:8b-instruct-q6_K")
+  end
+
+  defp map_unsupported_ollama_model(model) do
+    case model do
+      "ministral-" <> _rest -> "llama3.1:8b-instruct-q6_K"
+      "qwen3" <> _rest -> "llama3.1:8b-instruct-q6_K"
+      other -> other
+    end
   end
 
   defp ollama_chat_completion_raw(url, model, messages, anthropic_payload) do

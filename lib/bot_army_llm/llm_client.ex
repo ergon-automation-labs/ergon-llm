@@ -426,9 +426,17 @@ defmodule BotArmyLlm.LlmClient do
 
   # Provider implementations
 
-  defp call_provider(:ollama, text, complexity, _opts) do
+  defp call_provider(:ollama, text, complexity, opts) do
+    # Use model from opts if provided, otherwise let health checker decide
+    requested_model = Keyword.get(opts, :model)
+
     case health_checker_module().best_ollama_node(complexity) do
-      {:ok, {url, model}} ->
+      {:ok, {url, default_model}} ->
+        model =
+          if is_binary(requested_model) and requested_model != "auto",
+            do: requested_model,
+            else: default_model
+
         case ollama_call(url, model, text) do
           {:ok, completion} -> {:ok, %{completion: completion, model_used: model}}
           {:error, reason} -> {:error, reason}

@@ -262,7 +262,7 @@ defmodule BotArmyLlm.ClaudePassthroughChain do
 
   defp ollama_fallback_model do
     System.get_env("OLLAMA_MODEL_CLAUDE_FALLBACK") ||
-      System.get_env("OLLAMA_MODEL_MEDIUM", "ministral-3:8b")
+      System.get_env("OLLAMA_MODEL_MEDIUM", "llama3.1:8b-instruct-q6_K")
   end
 
   defp ollama_chat_completion_raw(url, model, messages, anthropic_payload) do

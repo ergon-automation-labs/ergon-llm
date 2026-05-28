@@ -297,11 +297,11 @@ defmodule BotArmyLlm.ClaudePassthroughChain do
         {:ok, resp_body}
 
       {:ok, %HTTPoison.Response{status_code: status, body: resp_body}} ->
-        Logger.debug("Ollama error response (#{status}): #{resp_body}")
+        Logger.warning("Ollama HTTP #{status}: #{String.slice(resp_body, 0, 200)}")
         {:error, {:ollama_http_error, status}}
 
       {:error, reason} ->
-        Logger.debug("Ollama connection error: #{inspect(reason)}")
+        Logger.warning("Ollama connection error: #{inspect(reason)}")
         {:error, {:connection_error, reason}}
     end
   end

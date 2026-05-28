@@ -105,16 +105,16 @@ defmodule BotArmyLlm.SafetyClassifier do
   # API Key patterns (very specific to major providers)
   defp detect_api_keys(text_lower) do
     # AWS: AKIA followed by 16 alphanumeric chars
+    # Anthropic: claude-key- or sk-ant-
+    # OpenAI: sk-proj- or sk- followed by reasonable key length
+    # Google Cloud: AIzaSy...
+    # GitHub: ghp_ or github_pat_
+    # Explicit secret/api key markers - api_key high confidence only if value looks like a real key
     String.match?(text_lower, ~r/akia[0-9a-z]{16}/i) ||
-      # Anthropic: claude-key- or sk-ant-
       String.match?(text_lower, ~r/(claude-key-|sk-ant-)[a-z0-9]+/i) ||
-      # OpenAI: sk-proj- or sk- followed by reasonable key length
       String.match?(text_lower, ~r/sk-(proj-|[a-z0-9])[a-z0-9]{15,}/i) ||
-      # Google Cloud: AIzaSy...
       String.match?(text_lower, ~r/aizasy[a-z0-9_-]{20,}/i) ||
-      # GitHub: ghp_ or github_pat_
       String.match?(text_lower, ~r/(ghp_|github_pat_)[a-z0-9_]+/i) ||
-      # Explicit secret/api key markers - api_key high confidence only if value looks like a real key
       String.match?(text_lower, ~r/secret[_-]?key\s*[:=]\s*['"a-z0-9]{3,}/i) ||
       String.match?(text_lower, ~r/api[_-]?key\s*[:=]\s*['"][a-z0-9]+['"]/i)
   end
@@ -123,6 +123,8 @@ defmodule BotArmyLlm.SafetyClassifier do
   defp detect_crypto_keys(text_lower) do
     # PEM format: "-----BEGIN PRIVATE KEY-----", "-----BEGIN RSA PRIVATE KEY-----", etc.
     # Only high-confidence for actual PEM blocks, not just variable declarations
+    # Hex-encoded 256-bit keys (common for crypto) - allow quotes or delimiters
+    # Explicit private_key assignments with values (quoted or unquoted)
     String.contains?(text_lower, [
       "-----begin private key-----",
       "-----begin rsa private key-----",
@@ -131,9 +133,7 @@ defmodule BotArmyLlm.SafetyClassifier do
       "-----begin ec private key-----",
       "-----begin pgp private key block-----"
     ]) ||
-      # Hex-encoded 256-bit keys (common for crypto) - allow quotes or delimiters
       String.match?(text_lower, ~r/[0-9a-f]{64}(?:\s|,|'|"|$)/i) ||
-      # Explicit private_key assignments with values (quoted or unquoted)
       String.match?(text_lower, ~r/private[_-]?key\s*[:=]\s*['"][a-z0-9]{20,}['"]/i) ||
       String.match?(text_lower, ~r/private[_-]?key\s*[:=]\s+[a-z0-9]{6,}/i)
   end
@@ -143,25 +143,25 @@ defmodule BotArmyLlm.SafetyClassifier do
     # Explicit credential patterns
     # Use negative lookbehind to avoid matching prefixed versions (e.g., bearer_token)
     # which should be caught by medium-confidence detector instead
+    # JWT tokens (eyJ... base64 format)
+    # OAuth tokens
+    # Session tokens
     String.match?(text_lower, ~r/(?<![a-z_-])password\s*[:=]\s*['"a-z0-9]/i) ||
       String.match?(text_lower, ~r/(?<![a-z_-])token\s*[:=]\s*['"a-z0-9]/i) ||
       String.match?(text_lower, ~r/bearer\s+[a-z0-9._-]{20,}/i) ||
-      # JWT tokens (eyJ... base64 format)
       String.match?(text_lower, ~r/eyj[a-z0-9_-]{20,}\.[a-z0-9_-]{20,}\.[a-z0-9_-]{20,}/i) ||
-      # OAuth tokens
       String.match?(text_lower, ~r/oauth[_-]?token\s*[:=]/i) ||
-      # Session tokens
       String.match?(text_lower, ~r/session[_-]?(id|token)\s*[:=]/i)
   end
 
   # Financial and payment data
   defp detect_financial_data(text) do
     # Credit card patterns (16 digits, Luhn check not implemented for simplicity)
+    # Bank account patterns
+    # Stripe API keys: sk_live_ or pk_live_
     String.match?(text, ~r/\b(?:\d{4}[-\s]?){3}\d{4}\b/) ||
-      # Bank account patterns
       String.match?(text, ~r/account[_-]?number\s*[:=]/i) ||
       String.match?(text, ~r/routing[_-]?number\s*[:=]/i) ||
-      # Stripe API keys: sk_live_ or pk_live_
       String.match?(text, ~r/(sk_live_|pk_live_)[a-z0-9]{20,}/i)
   end
 
@@ -176,42 +176,56 @@ defmodule BotArmyLlm.SafetyClassifier do
 
     detect_internal_infrastructure(text_lower) ||
       detect_personal_identifiers(text_lower) ||
-      detect_explicit_secret_markers(text_lower) ||
-      detect_personal_work_context(text_lower)
+      detect_explicit_secret_markers(text_lower)
+
+    # Note: detect_personal_work_context disabled - causes false positives
+    # with legitimate system documentation and LLM orchestration prompts
   end
 
   # Detect resume and work-related personal data
   defp detect_personal_work_context(text_lower) do
     # Flag resume/CV content and work history as personal data that should stay local
-    String.match?(text_lower, ~r/(resume|cv|curriculum\s+vitae|professional\s+summary|years?\s+of\s+experience|relevant\s+experience|key\s+achievements?|accomplishments?)/i) ||
-      # Flag when combined with typical job application context
-      (String.match?(text_lower, ~r/(job\s+title|company|employment|role|position|responsibility|achievement|bullet|skill|expertise)/i) &&
-         String.match?(text_lower, ~r/(worked|developed|led|managed|designed|implemented|built|created)/i))
+    # Flag when combined with typical job application context
+    String.match?(
+      text_lower,
+      ~r/(resume|cv|curriculum\s+vitae|professional\s+summary|years?\s+of\s+experience|relevant\s+experience|key\s+achievements?|accomplishments?)/i
+    ) ||
+      (String.match?(
+         text_lower,
+         ~r/(job\s+title|company|employment|role|position|responsibility|achievement|bullet|skill|expertise)/i
+       ) &&
+         String.match?(
+           text_lower,
+           ~r/(worked|developed|led|managed|designed|implemented|built|created)/i
+         ))
   end
 
   # Internal infrastructure patterns
   defp detect_internal_infrastructure(text_lower) do
     # Database URLs
+    # Private IP addresses (10.x.x.x, 172.16.x.x, 192.168.x.x)
+    # Localhost variations
+    # SSH connection strings
+    # Docker secrets format
     String.match?(text_lower, ~r/(postgres|mysql|mongodb):\/\/[a-z0-9:@.-]+/) ||
-      # Private IP addresses (10.x.x.x, 172.16.x.x, 192.168.x.x)
-      String.match?(text_lower, ~r/(?:10|172(?:\.(?:1[6-9]|2\d|3[01]))?|192\.168)(?:\.\d{1,3}){2}/) ||
-      # Localhost variations
+      String.match?(
+        text_lower,
+        ~r/(?:10|172(?:\.(?:1[6-9]|2\d|3[01]))?|192\.168)(?:\.\d{1,3}){2}/
+      ) ||
       String.match?(text_lower, ~r/localhost:[0-9]{4,5}/) ||
-      # SSH connection strings
       String.match?(text_lower, ~r/ssh\s*-[^-]*\s+\w+@[^:\/\s]+/) ||
-      # Docker secrets format
       String.match?(text_lower, ~r/\/run\/secrets\/[a-z_-]+/i)
   end
 
   # Personal identifiers
   defp detect_personal_identifiers(text_lower) do
     # Email with obvious personal/internal patterns
+    # Social security number pattern (XXX-XX-XXXX)
+    # Phone number with international prefix or extension
+    # Passport/ID number patterns
     String.match?(text_lower, ~r/\b[a-z0-9._%+-]+@(internal|corp|private|localhost)[a-z0-9.-]*\b/) ||
-      # Social security number pattern (XXX-XX-XXXX)
       String.match?(text_lower, ~r/\b\d{3}-\d{2}-\d{4}\b/) ||
-      # Phone number with international prefix or extension
       String.match?(text_lower, ~r/\+\d{1,3}\s?\(?\d{3,4}\)?[\s.-]?\d{3,4}[\s.-]?\d{4,5}/) ||
-      # Passport/ID number patterns
       String.match?(text_lower, ~r/passport\s*[:=]|id[_-]?number\s*[:=]/i)
   end
 
@@ -219,12 +233,15 @@ defmodule BotArmyLlm.SafetyClassifier do
   defp detect_explicit_secret_markers(text_lower) do
     # Look for patterns like "secret_key =", "api_key:", etc with = or : nearby
     # Match with both underscore and hyphen variants
-    String.match?(text_lower, ~r/(secret[-_]?key|api[-_]?key|private[-_]?key|encryption[-_]?key|password[-_]?field|password|auth[-_]?token|access[-_]?token|refresh[-_]?token|bearer[-_]?token|client[-_]?secret)\s*[:=]/i) ||
-      # Bare "secret" word with assignment (at start or surrounded by spaces)
+    # Bare "secret" word with assignment (at start or surrounded by spaces)
+    # Bare "secret" word mentioned standalone (medium confidence)
+    # Match "secret" at the start or surrounded by spaces
+    String.match?(
+      text_lower,
+      ~r/(secret[-_]?key|api[-_]?key|private[-_]?key|encryption[-_]?key|password[-_]?field|password|auth[-_]?token|access[-_]?token|refresh[-_]?token|bearer[-_]?token|client[-_]?secret)\s*[:=]/i
+    ) ||
       String.match?(text_lower, ~r/^secret\s*[:=]/i) ||
       String.match?(text_lower, ~r/\s+secret\s*[:=]/i) ||
-      # Bare "secret" word mentioned standalone (medium confidence)
-      # Match "secret" at the start or surrounded by spaces
       (String.match?(text_lower, ~r/(^|\s)secret(\s|$)/i) and String.length(text_lower) < 200)
   end
 

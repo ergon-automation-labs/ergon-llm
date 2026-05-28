@@ -444,8 +444,8 @@ defmodule BotArmyLlm.NATS.Consumer do
       prompt_id = Map.get(payload, "prompt_id", UUID.uuid4())
       reasoning_mode = Map.get(payload, "reasoning_mode")
 
-      Logger.debug(
-        "[PromptHandler] Received message=#{inspect(message)}, payload=#{inspect(payload)}, text=#{inspect(text)}"
+      Logger.warning(
+        "[PromptHandler] Received message=#{inspect(message)}, payload=#{inspect(payload)}, text_len=#{byte_size(text || "")}"
       )
 
       llm_client = Application.get_env(:bot_army_llm, :llm_client, BotArmyLlm.LlmClient)

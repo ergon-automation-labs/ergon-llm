@@ -243,10 +243,20 @@ defmodule BotArmyLlm.ClaudePassthroughChain do
   defp try_ollama(payload) do
     model = ollama_fallback_model()
 
-    with {:ok, ollama_messages} <- AnthropicOllamaAdapter.to_ollama_messages(payload),
-         {:ok, {url, _node_model}} <- BotArmyLlm.OllamaHealthChecker.best_ollama_node(:medium),
-         {:ok, raw_body} <- ollama_chat_completion_raw(url, model, ollama_messages, payload) do
-      AnthropicOllamaAdapter.anthropic_json_from_ollama_chat(raw_body, model)
+    result =
+      with {:ok, ollama_messages} <- AnthropicOllamaAdapter.to_ollama_messages(payload),
+           {:ok, {url, _node_model}} <- BotArmyLlm.OllamaHealthChecker.best_ollama_node(:medium),
+           {:ok, raw_body} <- ollama_chat_completion_raw(url, model, ollama_messages, payload) do
+        AnthropicOllamaAdapter.anthropic_json_from_ollama_chat(raw_body, model)
+      end
+
+    case result do
+      {:error, {:ollama_http_error, status}} ->
+        Logger.warning("Ollama HTTP #{status} - check logs above for response body")
+        {:error, {:http_error, status}}
+
+      other ->
+        other
     end
   end
 

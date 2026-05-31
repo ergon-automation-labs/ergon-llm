@@ -64,8 +64,11 @@ defmodule BotArmyLlm.OllamaHealthChecker do
   @impl true
   def init(_opts) do
     state = build_initial_state()
-    send(self(), :probe)
-    {:ok, state}
+    # Run initial probe synchronously to avoid race where LLM client queries before first probe
+    initial_state = probe_all_nodes(state)
+    # Schedule subsequent probes asynchronously
+    Process.send_after(self(), :probe, @probe_interval_ms)
+    {:ok, initial_state}
   end
 
   @impl true

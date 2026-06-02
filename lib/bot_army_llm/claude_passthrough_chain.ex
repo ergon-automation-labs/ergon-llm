@@ -284,6 +284,7 @@ defmodule BotArmyLlm.ClaudePassthroughChain do
     base = build_ollama_request_body(model, messages, anthropic_payload)
 
     with {:ok, body} <- Jason.encode(base) do
+      Logger.warning("[Ollama] Sending request to #{endpoint}: #{String.slice(body, 0, 300)}")
       make_ollama_request(endpoint, body, headers, timeout_ms)
     end
   rescue

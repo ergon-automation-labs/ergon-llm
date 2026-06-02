@@ -512,28 +512,18 @@ defmodule BotArmyLlm.NATS.Consumer do
     spawn(fn ->
       request_id = Map.get(message, "request_id", UUID.uuid4())
       request_type = Map.get(message, "request_type", "chat")
-      prompt_context = Map.get(message, "prompt_context", %{})
-      prompt = Map.get(prompt_context, "prompt", "")
       lane = lane_for_chat_subject(subject, message)
       reasoning_mode = Map.get(message, "reasoning_mode")
-
-      chat_opts =
-        message
-        |> chat_opts_for_lane(lane)
-        |> Keyword.merge(failed_provider_chat_opts(message, prompt_context))
-        |> Keyword.put(:reasoning_mode, reasoning_mode)
-
-      llm_client = Application.get_env(:bot_army_llm, :llm_client, BotArmyLlm.LlmClient)
 
       started_at = System.monotonic_time(:millisecond)
       record_lane_metric(:record_lane_request, lane)
 
-      result =
-        try do
-          BotArmyLlm.LocalQueueManager.increment()
-          llm_client.complete(prompt, chat_opts)
-        after
-          BotArmyLlm.LocalQueueManager.decrement()
+      # Support both old format (prompt_context.prompt) and new format (system + messages)
+      {result, chat_opts, prompt_text} =
+        if has_anthropic_format?(message) do
+          handle_anthropic_format(message, lane, reasoning_mode)
+        else
+          handle_legacy_format(message, lane, reasoning_mode)
         end
 
       response =
@@ -555,7 +545,7 @@ defmodule BotArmyLlm.NATS.Consumer do
 
           {:error, reason} ->
             maybe_fallback_chat_response(
-              prompt,
+              prompt_text,
               request_id,
               request_type,
               lane,
@@ -668,6 +658,60 @@ defmodule BotArmyLlm.NATS.Consumer do
       value = Map.get(message, Atom.to_string(key), default)
       Keyword.put(acc, key, value)
     end)
+  end
+
+  defp has_anthropic_format?(message) do
+    system = Map.get(message, "system")
+    messages = Map.get(message, "messages")
+    is_binary(system) and is_list(messages)
+  end
+
+  defp handle_anthropic_format(message, lane, reasoning_mode) do
+    llm_client = Application.get_env(:bot_army_llm, :llm_client, BotArmyLlm.LlmClient)
+
+    system = Map.get(message, "system")
+    messages = Map.get(message, "messages")
+
+    chat_opts =
+      message
+      |> chat_opts_for_lane(lane)
+      |> Keyword.merge(failed_provider_chat_opts(message, %{}))
+      |> Keyword.put(:reasoning_mode, reasoning_mode)
+
+    full_messages = [%{"role" => "system", "content" => system}] ++ messages
+
+    result =
+      try do
+        BotArmyLlm.LocalQueueManager.increment()
+        llm_client.complete_messages(full_messages, chat_opts)
+      after
+        BotArmyLlm.LocalQueueManager.decrement()
+      end
+
+    {result, chat_opts, ""}
+  end
+
+  defp handle_legacy_format(message, lane, reasoning_mode) do
+    llm_client = Application.get_env(:bot_army_llm, :llm_client, BotArmyLlm.LlmClient)
+
+    prompt_context = Map.get(message, "prompt_context", %{})
+    prompt = Map.get(prompt_context, "prompt", "")
+
+    chat_opts =
+      message
+      |> chat_opts_for_lane(lane)
+      |> Keyword.merge(failed_provider_chat_opts(message, prompt_context))
+      |> Keyword.put(:reasoning_mode, reasoning_mode)
+
+    result =
+      try do
+        BotArmyLlm.LocalQueueManager.increment()
+        llm_client.complete(prompt, chat_opts)
+      after
+        BotArmyLlm.LocalQueueManager.decrement()
+      end
+
+    {result, chat_opts, prompt}
   end
 
   defp record_lane_metric(:record_lane_request, lane) do

@@ -250,6 +250,7 @@ defmodule BotArmyLlm.ClaudePassthroughChain do
       with {:ok, ollama_messages} <- AnthropicOllamaAdapter.to_ollama_messages(payload),
            {:ok, {url, _node_model}} <- BotArmyLlm.OllamaHealthChecker.best_ollama_node(:medium),
            {:ok, raw_body} <- ollama_chat_completion_raw(url, model, ollama_messages, payload) do
+        Logger.warning("try_ollama: sending to #{url}: messages count=#{length(ollama_messages)}")
         AnthropicOllamaAdapter.anthropic_json_from_ollama_chat(raw_body, model)
       end
 

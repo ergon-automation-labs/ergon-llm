@@ -27,6 +27,7 @@ defmodule BotArmyLlm.NATS.Consumer do
 
   alias BotArmyCore.NATS.Decoder
   alias BotArmyLlm.EmbeddingWorkerPool
+  alias BotArmyRuntime.Registry
 
   alias BotArmyLlm.Handlers.{
     ClaudeCodeHandler,

@@ -26,29 +26,11 @@ config :bot_army_llm, :intent_thresholds, %{
   random_threshold: 0.5
 }
 
+config :logger,
+  level: :info,
+  backends: [:console],
+  default_formatter: {BotArmyRuntime.LoggerFormatter, []}
+
 config :logger, :console,
-  metadata: [
-    :source,
-    :model,
-    :latency_ms,
-    :last_error,
-    :provider,
-    :slug,
-    :subject,
-    :timeout_ms,
-    :reason,
-    :payload,
-    :action,
-    :score,
-    :bot_name,
-    :result,
-    :sample
-  ]
-
-# Database and HTTP proxy: see config/runtime.exs (runtime config, not compile-time — required
-# so OTP releases read BOT_ARMY_LLM_* / DATABASE_* from the host when running migrations).
-
-# Import environment-specific config
-if File.exists?("config/#{Mix.env()}.exs") do
-  import_config "#{Mix.env()}.exs"
-end
+  format: {BotArmyRuntime.LoggerFormatter, []},
+  metadata: [:correlation_id]

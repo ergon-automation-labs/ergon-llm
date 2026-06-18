@@ -32,4 +32,18 @@ config :logger,
 
 config :logger, :console,
   format: "[$time] [$level] $message\n",
-  metadata: [:correlation_id]
+  metadata: [
+    :correlation_id,
+    :source,
+    :provider,
+    :model,
+    :latency_ms,
+    :slug,
+    :subject,
+    :timeout_ms,
+    :reason,
+    :payload,
+    :last_error,
+    :result,
+    :sample
+  ]

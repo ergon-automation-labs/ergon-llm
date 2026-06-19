@@ -25,7 +25,7 @@ config :bot_army_llm, BotArmyLlm.Repo,
   username: System.get_env("BOT_ARMY_LLM_DB_USER") || System.get_env("DATABASE_USER", "postgres"),
   password:
     System.get_env("BOT_ARMY_LLM_DB_PASSWORD") || System.get_env("DATABASE_PASSWORD", "postgres"),
-  pool_size: System.get_env("BOT_POOL_SIZE", "20") |> String.to_integer(),
+  pool_size: System.get_env("BOT_POOL_SIZE", "20") |> String.to_integer()
 
 # Test sets :http_proxy below; do not override here.
 if config_env() != :test do

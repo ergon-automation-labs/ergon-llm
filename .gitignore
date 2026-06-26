@@ -4,6 +4,7 @@
 /.cache/
 /doc/
 erl_crash.dump
+mix.lock
 .env
 .env.local
 .env.*.local
@@ -17,6 +18,9 @@ erl_crash.dump
 .excoveralls.json
 .elixir_ls/
 *.beam
+
+# Build artifacts and crash dumps
 *.crash
 *.tar.gz
 *.tar.xz
+_build_cursor_test/

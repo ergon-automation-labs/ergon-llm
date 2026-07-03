@@ -29,12 +29,27 @@ defmodule BotArmyLlm.LlmClient do
 
   require Logger
 
-  alias BotArmyLlm.{ComplexityScorer, EmbeddingConfig, OllamaHealthChecker, SafetyClassifier}
+  alias BotArmyLlm.{
+    ComplexityScorer,
+    EmbeddingConfig,
+    HttpFallback,
+    OllamaHealthChecker,
+    SafetyClassifier
+  }
 
   # Get health checker module from app config (for testing) or use default
   defp health_checker_module do
     Application.get_env(:bot_army_llm, :ollama_health_checker, OllamaHealthChecker)
   end
+
+  defp anthropic_url,
+    do: System.get_env("ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1/messages")
+
+  defp anthropic_fallback_url,
+    do: System.get_env("ANTHROPIC_FALLBACK_URL", "https://api.anthropic.com/v1/messages")
+
+  defp openrouter_fallback_url,
+    do: System.get_env("OPENROUTER_FALLBACK_URL", "https://openrouter.ai/api/v1/chat/completions")
 
   @doc """
   Complete a prompt using the best available provider.
@@ -471,9 +486,22 @@ defmodule BotArmyLlm.LlmClient do
     extra_headers = [{"HTTP-Referer", "https://github.com/ergon-automation-labs"}]
 
     case {api_key, model} do
-      {nil, _} -> {:error, :provider_not_configured}
-      {_, ""} -> {:error, :model_not_configured}
-      {key, m} -> openai_compatible_call(base_url, key, text, m, opts, extra_headers)
+      {nil, _} ->
+        {:error, :provider_not_configured}
+
+      {_, ""} ->
+        {:error, :model_not_configured}
+
+      {key, m} ->
+        openai_compatible_call(
+          base_url,
+          key,
+          text,
+          m,
+          opts,
+          extra_headers,
+          openrouter_fallback_url()
+        )
     end
   end
 
@@ -564,7 +592,15 @@ defmodule BotArmyLlm.LlmClient do
   end
 
   # OpenAI-compatible API (blackbox.ai, openrouter)
-  defp openai_compatible_call(endpoint, api_key, text, model, opts, extra_headers) do
+  defp openai_compatible_call(
+         endpoint,
+         api_key,
+         text,
+         model,
+         opts,
+         extra_headers,
+         fallback_url \\ nil
+       ) do
     temperature = Keyword.get(opts, :temperature, 0.7)
     max_tokens = Keyword.get(opts, :max_tokens, 1000)
 
@@ -582,7 +618,10 @@ defmodule BotArmyLlm.LlmClient do
         "max_tokens" => max_tokens
       })
 
-    case HTTPoison.post(endpoint, payload, headers, recv_timeout: 60_000, timeout: 60_000) do
+    case HttpFallback.post_with_fallback(endpoint, fallback_url, payload, headers,
+           recv_timeout: 60_000,
+           timeout: 60_000
+         ) do
       {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
         with {:ok, response} <- Jason.decode(body),
              completion when is_binary(completion) <-
@@ -630,7 +669,11 @@ defmodule BotArmyLlm.LlmClient do
         "messages" => [%{"role" => "user", "content" => text}]
       })
 
-    case HTTPoison.post("https://api.anthropic.com/v1/messages", payload, headers,
+    case HttpFallback.post_with_fallback(
+           anthropic_url(),
+           anthropic_fallback_url(),
+           payload,
+           headers,
            recv_timeout: 60_000,
            timeout: 60_000
          ) do
@@ -740,9 +783,22 @@ defmodule BotArmyLlm.LlmClient do
     extra_headers = [{"HTTP-Referer", "https://github.com/ergon-automation-labs"}]
 
     case {api_key, model} do
-      {nil, _} -> {:error, :provider_not_configured}
-      {_, ""} -> {:error, :model_not_configured}
-      {key, m} -> openai_compatible_call_messages(base_url, key, messages, m, opts, extra_headers)
+      {nil, _} ->
+        {:error, :provider_not_configured}
+
+      {_, ""} ->
+        {:error, :model_not_configured}
+
+      {key, m} ->
+        openai_compatible_call_messages(
+          base_url,
+          key,
+          messages,
+          m,
+          opts,
+          extra_headers,
+          openrouter_fallback_url()
+        )
     end
   end
 
@@ -792,7 +848,15 @@ defmodule BotArmyLlm.LlmClient do
     _ -> {:error, :request_failed}
   end
 
-  defp openai_compatible_call_messages(endpoint, api_key, messages, model, opts, extra_headers) do
+  defp openai_compatible_call_messages(
+         endpoint,
+         api_key,
+         messages,
+         model,
+         opts,
+         extra_headers,
+         fallback_url \\ nil
+       ) do
     temperature = Keyword.get(opts, :temperature, 0.7)
     max_tokens = Keyword.get(opts, :max_tokens, 1000)
 
@@ -810,7 +874,10 @@ defmodule BotArmyLlm.LlmClient do
         "max_tokens" => max_tokens
       })
 
-    case HTTPoison.post(endpoint, payload, headers, recv_timeout: 60_000, timeout: 60_000) do
+    case HttpFallback.post_with_fallback(endpoint, fallback_url, payload, headers,
+           recv_timeout: 60_000,
+           timeout: 60_000
+         ) do
       {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
         with {:ok, response} <- Jason.decode(body),
              completion when is_binary(completion) <-
@@ -858,7 +925,11 @@ defmodule BotArmyLlm.LlmClient do
         "messages" => messages
       })
 
-    case HTTPoison.post("https://api.anthropic.com/v1/messages", payload, headers,
+    case HttpFallback.post_with_fallback(
+           anthropic_url(),
+           anthropic_fallback_url(),
+           payload,
+           headers,
            recv_timeout: 60_000,
            timeout: 60_000
          ) do
@@ -1027,7 +1098,11 @@ defmodule BotArmyLlm.LlmClient do
         "messages" => [%{"role" => "user", "content" => content}]
       })
 
-    case HTTPoison.post("https://api.anthropic.com/v1/messages", payload, headers,
+    case HttpFallback.post_with_fallback(
+           anthropic_url(),
+           anthropic_fallback_url(),
+           payload,
+           headers,
            recv_timeout: 60_000,
            timeout: 60_000
          ) do

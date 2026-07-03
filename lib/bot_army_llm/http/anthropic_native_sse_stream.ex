@@ -6,8 +6,10 @@ defmodule BotArmyLlm.Http.AnthropicNativeSseStream do
 
   alias BotArmyLlm.Http.SseUsage
 
-  @anthropic_url "https://api.anthropic.com/v1/messages"
   @receive_timeout 120_000
+
+  defp anthropic_url,
+    do: System.get_env("ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1/messages")
 
   @spec run(Plug.Conn.t(), map(), String.t(), String.t(), integer()) ::
           {:ok, Plug.Conn.t()} | {:error, term()}
@@ -39,7 +41,7 @@ defmodule BotArmyLlm.Http.AnthropicNativeSseStream do
   end
 
   defp run_stream(conn, json, source, event_id, start_ms, model, api_key) do
-    req = Finch.build(:post, @anthropic_url, anthropic_headers(api_key), json)
+    req = Finch.build(:post, anthropic_url(), anthropic_headers(api_key), json)
 
     meta = %{
       source: source,

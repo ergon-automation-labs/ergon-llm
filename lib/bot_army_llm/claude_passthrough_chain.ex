@@ -30,7 +30,8 @@ defmodule BotArmyLlm.ClaudePassthroughChain do
   alias BotArmyLlm.{
     AnthropicMessagesToOpenaiChat,
     AnthropicOllamaAdapter,
-    ChatCompletionToAnthropic
+    ChatCompletionToAnthropic,
+    HttpFallback
   }
 
   @default_chain "openrouter,anthropic,ollama"
@@ -122,18 +123,30 @@ defmodule BotArmyLlm.ClaudePassthroughChain do
     extra = [{"HTTP-Referer", "https://github.com/ergon-automation-labs"}]
 
     case api_key do
-      nil -> {:error, {:provider_not_configured, "OpenRouter"}}
-      "" -> {:error, {:model_not_configured, "OpenRouter"}}
-      key -> chat_completions_passthrough(payload, key, url, extra, model)
+      nil ->
+        {:error, {:provider_not_configured, "OpenRouter"}}
+
+      "" ->
+        {:error, {:model_not_configured, "OpenRouter"}}
+
+      key ->
+        chat_completions_passthrough(payload, key, url, extra, model, openrouter_fallback_url())
     end
   end
 
-  defp chat_completions_passthrough(payload, api_key, url, extra_headers, model) do
+  defp chat_completions_passthrough(
+         payload,
+         api_key,
+         url,
+         extra_headers,
+         model,
+         fallback_url \\ nil
+       ) do
     with {:ok, %{messages: messages, tools: tools}} <-
            AnthropicMessagesToOpenaiChat.to_chat_completion_request(payload),
          body_map <- build_chat_completion_body(model, messages, tools, payload),
          {:ok, json} <- Jason.encode(body_map) do
-      make_chat_completion_request(json, api_key, url, extra_headers, model)
+      make_chat_completion_request(json, api_key, url, extra_headers, model, fallback_url)
     end
   rescue
     _ -> {:error, :request_failed}
@@ -164,13 +177,16 @@ defmodule BotArmyLlm.ClaudePassthroughChain do
     end
   end
 
-  defp make_chat_completion_request(json, api_key, url, extra_headers, model) do
+  defp make_chat_completion_request(json, api_key, url, extra_headers, model, fallback_url \\ nil) do
     headers = [
       {"Content-Type", "application/json"},
       {"Authorization", "Bearer #{api_key}"} | extra_headers
     ]
 
-    case HTTPoison.post(url, json, headers, recv_timeout: 120_000, timeout: 120_000) do
+    case HttpFallback.post_with_fallback(url, fallback_url, json, headers,
+           recv_timeout: 120_000,
+           timeout: 120_000
+         ) do
       {:ok, %HTTPoison.Response{status_code: 200, body: resp}} ->
         ChatCompletionToAnthropic.from_chat_completion_body(resp, model)
 
@@ -206,6 +222,15 @@ defmodule BotArmyLlm.ClaudePassthroughChain do
     end
   end
 
+  defp anthropic_url,
+    do: System.get_env("ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1/messages")
+
+  defp anthropic_fallback_url,
+    do: System.get_env("ANTHROPIC_FALLBACK_URL", "https://api.anthropic.com/v1/messages")
+
+  defp openrouter_fallback_url,
+    do: System.get_env("OPENROUTER_FALLBACK_URL", "https://openrouter.ai/api/v1/chat/completions")
+
   defp anthropic_messages_api_post(api_key, payload) do
     headers = [
       {"Content-Type", "application/json"},
@@ -216,7 +241,11 @@ defmodule BotArmyLlm.ClaudePassthroughChain do
 
     case Jason.encode(payload) do
       {:ok, body} ->
-        case HTTPoison.post("https://api.anthropic.com/v1/messages", body, headers,
+        case HttpFallback.post_with_fallback(
+               anthropic_url(),
+               anthropic_fallback_url(),
+               body,
+               headers,
                recv_timeout: 120_000,
                timeout: 120_000
              ) do

@@ -31,7 +31,8 @@ defmodule BotArmyLlm.ClaudePassthroughChain do
     AnthropicMessagesToOpenaiChat,
     AnthropicOllamaAdapter,
     ChatCompletionToAnthropic,
-    HttpFallback
+    HttpFallback,
+    OllamaWireFormat
   }
 
   @default_chain "openrouter,anthropic,ollama"
@@ -276,11 +277,23 @@ defmodule BotArmyLlm.ClaudePassthroughChain do
     Logger.warning("try_ollama: using model=#{model}")
 
     result =
-      with {:ok, ollama_messages} <- AnthropicOllamaAdapter.to_ollama_messages(payload),
-           {:ok, {url, _node_model}} <- BotArmyLlm.OllamaHealthChecker.best_ollama_node(:medium),
-           {:ok, raw_body} <- ollama_chat_completion_raw(url, model, ollama_messages, payload) do
-        Logger.warning("try_ollama: sending to #{url}: messages count=#{length(ollama_messages)}")
-        AnthropicOllamaAdapter.anthropic_json_from_ollama_chat(raw_body, model)
+      with {:ok, {url, _node_model}} <- BotArmyLlm.OllamaHealthChecker.best_ollama_node(:medium) do
+        if OllamaWireFormat.wire_format() == :openai do
+          Logger.warning(
+            "try_ollama: sending to #{OllamaWireFormat.chat_url()} (openai wire format)"
+          )
+
+          ollama_chat_completion_openai(url, model, payload)
+        else
+          with {:ok, ollama_messages} <- AnthropicOllamaAdapter.to_ollama_messages(payload),
+               {:ok, raw_body} <- ollama_chat_completion_raw(url, model, ollama_messages, payload) do
+            Logger.warning(
+              "try_ollama: sending to #{url}: messages count=#{length(ollama_messages)}"
+            )
+
+            AnthropicOllamaAdapter.anthropic_json_from_ollama_chat(raw_body, model)
+          end
+        end
       end
 
     case result do
@@ -290,6 +303,76 @@ defmodule BotArmyLlm.ClaudePassthroughChain do
 
       other ->
         other
+    end
+  end
+
+  # OpenAI wire format: convert the Anthropic payload to an OpenAI chat request
+  # (supports tools, unlike the native adapter), POST headroom's /v1/chat/completions,
+  # and convert the OpenAI response back to Anthropic JSON. On a hard headroom failure
+  # (5xx / connection error) re-encode to native ollama and retry the real node directly.
+  defp ollama_chat_completion_openai(native_url, model, anthropic_payload) do
+    endpoint = "#{OllamaWireFormat.chat_url()}/v1/chat/completions"
+    headers = [{"Content-Type", "application/json"}]
+    timeout_ms = ollama_timeout_ms()
+
+    with {:ok, %{messages: messages, tools: tools}} <-
+           AnthropicMessagesToOpenaiChat.to_chat_completion_request(anthropic_payload),
+         {:ok, body} <-
+           Jason.encode(build_openai_request_body(model, messages, tools, anthropic_payload)) do
+      Logger.warning(
+        "[Ollama-OpenAI] Sending request to #{endpoint}: #{String.slice(body, 0, 300)}"
+      )
+
+      case HTTPoison.post(endpoint, body, headers, recv_timeout: timeout_ms, timeout: timeout_ms) do
+        {:ok, %HTTPoison.Response{status_code: 200, body: resp_body}} ->
+          ChatCompletionToAnthropic.from_chat_completion_body(resp_body, model)
+
+        result ->
+          if HttpFallback.down?(result) do
+            Logger.warning("[headroom-down] ollama chat fell back to native direct")
+            ollama_chat_completion_native(native_url, model, anthropic_payload)
+          else
+            case result do
+              {:ok, %HTTPoison.Response{status_code: status}} ->
+                {:error, {:ollama_http_error, status}}
+
+              {:error, reason} ->
+                {:error, {:connection_error, reason}}
+            end
+          end
+      end
+    end
+  end
+
+  # Native fallback for the openai branch: re-encode the Anthropic payload to
+  # ollama messages (text-only; tools unsupported, surfaced as the same
+  # :tools_not_supported_on_ollama_fallback error the chain already skips on).
+  defp ollama_chat_completion_native(url, model, anthropic_payload) do
+    with {:ok, ollama_messages} <- AnthropicOllamaAdapter.to_ollama_messages(anthropic_payload),
+         {:ok, raw_body} <-
+           ollama_chat_completion_raw(url, model, ollama_messages, anthropic_payload) do
+      AnthropicOllamaAdapter.anthropic_json_from_ollama_chat(raw_body, model)
+    end
+  end
+
+  defp build_openai_request_body(model, messages, tools, anthropic_payload) do
+    base = %{"model" => model, "messages" => messages, "stream" => false}
+
+    base =
+      case tools do
+        [] -> base
+        list when is_list(list) -> Map.put(base, "tools", list)
+      end
+
+    base =
+      case Map.get(anthropic_payload, "temperature") do
+        t when is_number(t) -> Map.put(base, "temperature", t)
+        _ -> base
+      end
+
+    case Map.get(anthropic_payload, "max_tokens") do
+      n when is_integer(n) and n > 0 -> Map.put(base, "max_tokens", n)
+      _ -> base
     end
   end
 

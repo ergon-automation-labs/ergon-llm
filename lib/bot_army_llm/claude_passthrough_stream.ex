@@ -145,6 +145,10 @@ defmodule BotArmyLlm.ClaudePassthroughStream do
   end
 
   defp dispatch(:ollama, conn, body, source, event_id, start_ms) do
+    # Streaming always uses the native ollama /api/chat NDJSON path, even when
+    # OLLAMA_WIRE_FORMAT=openai. The OpenAI stream module emits a different
+    # event shape and a mid-stream fallback can't unwind a committed chunked
+    # response, so non-streaming only is routed through headroom for now.
     OllamaAnthropicSseStream.run(conn, body, source, event_id, start_ms)
   end
 

@@ -34,6 +34,7 @@ defmodule BotArmyLlm.LlmClient do
     EmbeddingConfig,
     HttpFallback,
     OllamaHealthChecker,
+    OllamaWireFormat,
     SafetyClassifier
   }
 
@@ -561,6 +562,14 @@ defmodule BotArmyLlm.LlmClient do
   end
 
   defp ollama_call(url, model, text) do
+    if OllamaWireFormat.wire_format() == :openai do
+      ollama_call_openai(url, model, text)
+    else
+      ollama_call_native(url, model, text)
+    end
+  end
+
+  defp ollama_call_native(url, model, text) do
     endpoint = "#{url}/api/chat"
     headers = [{"Content-Type", "application/json"}]
     timeout_ms = ollama_timeout_ms()
@@ -586,6 +595,43 @@ defmodule BotArmyLlm.LlmClient do
 
       {:error, reason} ->
         {:error, {:connection_error, reason}}
+    end
+  rescue
+    _ -> {:error, :request_failed}
+  end
+
+  defp ollama_call_openai(url, model, text) do
+    endpoint = "#{OllamaWireFormat.chat_url()}/v1/chat/completions"
+    headers = [{"Content-Type", "application/json"}]
+    timeout_ms = ollama_timeout_ms()
+
+    payload =
+      Jason.encode!(%{
+        "model" => model,
+        "messages" => [%{"role" => "user", "content" => text}],
+        "stream" => false
+      })
+
+    case HTTPoison.post(endpoint, payload, headers, recv_timeout: timeout_ms, timeout: timeout_ms) do
+      {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
+        with {:ok, response} <- Jason.decode(body),
+             completion when is_binary(completion) <-
+               get_in(response, ["choices", Access.at(0), "message", "content"]) do
+          {:ok, completion}
+        else
+          _ -> {:error, :invalid_response_format}
+        end
+
+      result ->
+        if HttpFallback.down?(result) do
+          Logger.warning("[headroom-down] ollama chat fell back to native direct")
+          ollama_call_native(url, model, text)
+        else
+          case result do
+            {:ok, %HTTPoison.Response{status_code: status}} -> {:error, {:http_error, status}}
+            {:error, reason} -> {:error, {:connection_error, reason}}
+          end
+        end
     end
   rescue
     _ -> {:error, :request_failed}
@@ -818,6 +864,14 @@ defmodule BotArmyLlm.LlmClient do
   end
 
   defp ollama_call_messages(url, model, messages) do
+    if OllamaWireFormat.wire_format() == :openai do
+      ollama_call_messages_openai(url, model, messages)
+    else
+      ollama_call_messages_native(url, model, messages)
+    end
+  end
+
+  defp ollama_call_messages_native(url, model, messages) do
     endpoint = "#{url}/api/chat"
     headers = [{"Content-Type", "application/json"}]
     timeout_ms = ollama_timeout_ms()
@@ -843,6 +897,43 @@ defmodule BotArmyLlm.LlmClient do
 
       {:error, reason} ->
         {:error, {:connection_error, reason}}
+    end
+  rescue
+    _ -> {:error, :request_failed}
+  end
+
+  defp ollama_call_messages_openai(url, model, messages) do
+    endpoint = "#{OllamaWireFormat.chat_url()}/v1/chat/completions"
+    headers = [{"Content-Type", "application/json"}]
+    timeout_ms = ollama_timeout_ms()
+
+    payload =
+      Jason.encode!(%{
+        "model" => model,
+        "messages" => messages,
+        "stream" => false
+      })
+
+    case HTTPoison.post(endpoint, payload, headers, recv_timeout: timeout_ms, timeout: timeout_ms) do
+      {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
+        with {:ok, response} <- Jason.decode(body),
+             completion when is_binary(completion) <-
+               get_in(response, ["choices", Access.at(0), "message", "content"]) do
+          {:ok, completion}
+        else
+          _ -> {:error, :invalid_response_format}
+        end
+
+      result ->
+        if HttpFallback.down?(result) do
+          Logger.warning("[headroom-down] ollama chat fell back to native direct")
+          ollama_call_messages_native(url, model, messages)
+        else
+          case result do
+            {:ok, %HTTPoison.Response{status_code: status}} -> {:error, {:http_error, status}}
+            {:error, reason} -> {:error, {:connection_error, reason}}
+          end
+        end
     end
   rescue
     _ -> {:error, :request_failed}

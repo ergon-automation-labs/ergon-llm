@@ -46,4 +46,15 @@ defmodule BotArmyLlm.HttpFallback do
         other
     end
   end
+
+  @doc false
+  # True when a POST result indicates a hard upstream failure (5xx or connection
+  # error) that warrants falling back to a direct provider. 2xx and 4xx are not
+  # "down" — 2xx is success, 4xx is a client-side problem that retrying won't fix.
+  # Used by the ollama wire-format switch to decide when to re-encode and retry
+  # against the native ollama endpoint after a headroom-OpenAI attempt fails.
+  @spec down?({:ok, HTTPoison.Response.t()} | {:error, HTTPoison.Error.t() | term()}) :: boolean()
+  def down?({:ok, %HTTPoison.Response{status_code: sc}}), do: sc >= 500
+  def down?({:error, %HTTPoison.Error{}}), do: true
+  def down?(_), do: false
 end

@@ -44,18 +44,51 @@ defmodule BotArmyLlm.AnthropicMessagesToOpenaiChat do
   end
 
   defp convert_messages(messages, system_str) when is_list(messages) do
+    # Claude Code's SDK sometimes emits role:system messages inside the messages
+    # array (in addition to the top-level system field). OpenAI/Ollama only accept
+    # a single leading system message, so merge any role:system messages into the
+    # system prefix rather than treating them as an unsupported role.
+    {system_msgs, rest} = Enum.split_with(messages, &(&1["role"] == "system"))
+
+    extra_system =
+      system_msgs
+      |> Enum.map(&system_message_text/1)
+      |> Enum.reject(&(&1 in [nil, ""]))
+      |> Enum.join("\n")
+
+    combined_system =
+      case {system_str, extra_system} do
+        {nil, ""} -> nil
+        {nil, e} -> e
+        {s, ""} -> s
+        {s, e} -> s <> "\n" <> e
+      end
+
     prefix =
-      if is_binary(system_str) and system_str != "" do
-        [%{"role" => "system", "content" => system_str}]
+      if is_binary(combined_system) and combined_system != "" do
+        [%{"role" => "system", "content" => combined_system}]
       else
         []
       end
 
-    case do_convert_messages(messages, []) do
-      {:ok, rest} -> {:ok, prefix ++ rest}
+    case do_convert_messages(rest, []) do
+      {:ok, converted} -> {:ok, prefix ++ converted}
       {:error, _} = e -> e
     end
   end
+
+  defp system_message_text(%{"content" => c}) when is_binary(c), do: c
+
+  defp system_message_text(%{"content" => parts}) when is_list(parts) do
+    parts
+    |> Enum.flat_map(fn
+      %{"type" => "text", "text" => t} when is_binary(t) -> [t]
+      _ -> []
+    end)
+    |> Enum.join("\n")
+  end
+
+  defp system_message_text(_), do: nil
 
   defp do_convert_messages([], acc), do: {:ok, acc}
 

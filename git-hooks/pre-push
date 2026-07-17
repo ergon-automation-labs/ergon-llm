@@ -56,7 +56,7 @@ if [[ $push_to_main -eq 1 ]]; then
   TEST_LOG="/tmp/.pre-push-test-$$.log"
 
   # Start all checks in parallel
-  "$MIX_BIN" compile >"$COMPILE_LOG" 2>&1 &
+  "$MIX_BIN" compile --all-deps >"$COMPILE_LOG" 2>&1 &
   COMPILE_PID=$!
 
   "$MIX_BIN" credo --strict >"$CREDO_LOG" 2>&1 &

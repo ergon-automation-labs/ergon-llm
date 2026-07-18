@@ -1,7 +1,7 @@
 SCRIPTS_DIRECTORY ?= $(abspath $(CURDIR)/../scripts)
 MIX ?= /Users/abby/.local/share/mise/shims/mix
 
-.PHONY: test-handlers test-stores test-nats test-integration test-full setup help deps run test credo dialyzer coverage check format clean release publish-release setup-hooks setup-db reset-db logs logs-tail logs-errors push-and-publish sync-release-version pre-push-cleanup
+.PHONY: test-handlers test-stores test-nats test-integration test-full setup help deps run test credo dialyzer coverage check format clean release publish-release setup-hooks setup-db reset-db logs logs-tail logs-errors git-push push-and-publish sync-release-version pre-push-cleanup
 
 help:
 	@echo "BotArmyLlm - LLM Bot"
@@ -206,38 +206,14 @@ pre-push-cleanup:
 	fi
 	@echo "✓ Ready to push"
 
-push-and-publish:
-	@BOT_NAME=llm; \
-	LOG_FILE="/tmp/.push-and-publish-$${BOT_NAME}-$$-$$(date +%s).log"; \
-	echo "📋 Logging to: $$LOG_FILE" && \
-	echo "=== PUSH AND PUBLISH PIPELINE ===" > "$${LOG_FILE}" && \
-	echo "Timestamp: $$(date)" >> "$${LOG_FILE}" && \
-	echo "Bot: $${BOT_NAME}" >> "$${LOG_FILE}" && \
-	echo "" >> "$${LOG_FILE}" && \
-	echo "Step 1: Clean up pre-push artifacts" >> "$${LOG_FILE}" && \
-	$(MAKE) pre-push-cleanup >> "$${LOG_FILE}" 2>&1 && \
-	echo "Step 2: git push (with pre-push validation)" >> "$${LOG_FILE}" && \
-	if git push >> "$${LOG_FILE}" 2>&1; then \
-		echo "✅ Push succeeded" && \
-		echo "Step 3: make publish-release" >> "$${LOG_FILE}" && \
-		if $(MAKE) publish-release >> "$${LOG_FILE}" 2>&1; then \
-			echo "✅ Publish succeeded" && \
-			echo "" >> "$${LOG_FILE}" && \
-			echo "✅ PIPELINE COMPLETE" >> "$${LOG_FILE}"; \
-		else \
-			echo "❌ Publish failed (see log)" && \
-			echo "❌ PIPELINE FAILED at publish-release" >> "$${LOG_FILE}"; \
-			tail -30 "$${LOG_FILE}"; \
-			exit 1; \
-		fi; \
-	else \
-		echo "❌ Push failed (see log)" && \
-		echo "❌ PIPELINE FAILED at git push" >> "$${LOG_FILE}"; \
-		tail -30 "$${LOG_FILE}"; \
-		exit 1; \
-	fi && \
-	echo "📋 Full log: $$LOG_FILE"
+git-push: pre-push-cleanup
+t@BOT_NAME=llm; \
+tLOG_FILE="/tmp/git-push-$${BOT_NAME}-$$(date +%s).log"; \
+techo "Pushing to origin/main and logging to $$LOG_FILE..."; \
+tgit push 2>&1 | tee "$$LOG_FILE"; \
+techo "✓ Log saved: $$LOG_FILE"
 
+push-and-publish: git-push publish-release
 logs:
 	@echo "Last 100 lines of llm_proxy logs:"
 	@echo "=================================="

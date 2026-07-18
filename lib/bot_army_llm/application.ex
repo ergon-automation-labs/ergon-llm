@@ -28,7 +28,7 @@ defmodule BotArmyLlm.Application do
         {BotArmyLlm.CircuitBreaker, :openrouter},
         {BotArmyLlm.CircuitBreaker, :anthropic},
 
-        # Note: BotArmyRuntime.NATS.Connection is started by BotArmyRuntime.Application supervisor.
+        # Note: BotArmyLibraryRuntime.NATS.Connection is started by BotArmyLibraryRuntime.Application supervisor.
         # Do not start it here - it's already managed by the runtime library.
 
         # Prompt storage (in-memory + Ecto persistence)
@@ -44,7 +44,7 @@ defmodule BotArmyLlm.Application do
         {BotArmyLlm.Metrics, []},
 
         # Shared-library outcome tracker — records LLM inference quality
-        {BotArmyLearning.OutcomeTracker, [repo: BotArmyLlm.Repo, name: :llm_outcome_tracker]},
+        {BotArmyLibraryLearning.OutcomeTracker, [repo: BotArmyLlm.Repo, name: :llm_outcome_tracker]},
 
         # Embedding worker pool — bounded concurrency for embed requests
         {BotArmyLlm.EmbeddingWorkerPool, []},
@@ -59,14 +59,14 @@ defmodule BotArmyLlm.Application do
         {BotArmyLlm.LocalQueueManager, []},
 
         # Veto listener — vetoes GTD remind during active LLM conversations
-        {BotArmyRuntime.Intent.VetoListener,
+        {BotArmyLibraryRuntime.Intent.VetoListener,
          rules: [
            [bot: "gtd", action: "remind", custom: &BotArmyLlm.VetoRules.veto_remind_during_chat/1]
          ],
          bot_name: "llm"},
         # Intent evaluator — proactive summarization when context warrants it
         {BotArmyLlm.IntentEvaluator, []},
-        # NATS message consumer (depends on BotArmyRuntime.NATS.Connection being available)
+        # NATS message consumer (depends on BotArmyLibraryRuntime.NATS.Connection being available)
         # Not started in tests to avoid connecting to real NATS
         {BotArmyLlm.NATS.Consumer, []}
       ]
@@ -100,7 +100,7 @@ defmodule BotArmyLlm.Application do
     if @env == :test do
       Enum.reject(children, fn
         {BotArmyLlm.NATS.Consumer, []} -> true
-        {BotArmyRuntime.Intent.VetoListener, _} -> true
+        {BotArmyLibraryRuntime.Intent.VetoListener, _} -> true
         {BotArmyLlm.IntentEvaluator, []} -> true
         _ -> false
       end)

@@ -5,9 +5,9 @@ defmodule BotArmyLlm.IntentEvaluator do
 
   require Logger
 
-  alias BotArmyRuntime.Intent.AccumulatedContext
-  alias BotArmyRuntime.Intent.Publisher
-  alias BotArmyRuntime.Intent.ThresholdModel
+  alias BotArmyLibraryRuntime.Intent.AccumulatedContext
+  alias BotArmyLibraryRuntime.Intent.Publisher
+  alias BotArmyLibraryRuntime.Intent.ThresholdModel
 
   @bot_name "llm"
   @evaluate_interval_ms 5 * 60 * 1000

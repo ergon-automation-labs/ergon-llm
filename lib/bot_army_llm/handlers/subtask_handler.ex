@@ -24,7 +24,7 @@ defmodule BotArmyLlm.Handlers.SubtaskHandler do
 
   require Logger
   alias BotArmyLlm.EventBuilder
-  alias BotArmyRuntime.NATS.Publisher
+  alias BotArmyLibraryRuntime.NATS.Publisher
 
   @doc """
   Handle a dispatcher subtask intent for LLM inference.

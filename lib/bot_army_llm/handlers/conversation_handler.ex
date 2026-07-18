@@ -16,8 +16,8 @@ defmodule BotArmyLlm.Handlers.ConversationHandler do
 
   require Logger
   alias BotArmyLlm.NATS.Publisher
-  alias BotArmyRuntime.NATS.Conversation.Manager, as: ConversationManager
-  alias BotArmyRuntime.NATS.Publisher, as: RuntimePublisher
+  alias BotArmyLibraryRuntime.NATS.Conversation.Manager, as: ConversationManager
+  alias BotArmyLibraryRuntime.NATS.Publisher, as: RuntimePublisher
 
   @doc """
   Handle an incoming conversation request directed at the LLM bot.

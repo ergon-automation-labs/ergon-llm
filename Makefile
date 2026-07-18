@@ -65,8 +65,20 @@ reset-db:
 init:
 	@if [ ! -d .git ]; then git init; echo "Git initialized."; else echo "Git already initialized."; fi
 
+compile:
+	@LOG_FILE="/tmp/compile-llm-$$(date +%s).log"; \
+	echo "Compiling llm and logging to $$LOG_FILE..."; \
+	$(MIX) compile 2>&1 | tee "$$LOG_FILE"; \
+	echo "✓ Compilation log: $$LOG_FILE"
+
 deps:
 	$(MIX) deps.get
+
+compile:
+	@LOG_FILE="/tmp/compile-llm-$$(date +%s).log"; \
+	echo "Compiling llm and logging to $$LOG_FILE..."; \
+	$(MIX) compile 2>&1 | tee "$$LOG_FILE"; \
+	echo "✓ Compilation log: $$LOG_FILE"
 
 run:
 	$(MIX) run --no-halt
@@ -228,3 +240,19 @@ logs-errors:
 	@grep -E '\[error\]|\[warning\]' /var/log/bot_army/llm_proxy.log 2>/dev/null | tail -50 | grc --config=conf.bot_army_elixir cat || echo "No errors found or log file not accessible"
 
 # Test pre-push hook workflow - v0.5.6
+
+
+
+
+
+
+
+
+.PHONY: bump-version
+
+bump-version:
+	@if [ -z "$(BUMP)" ]; then echo "Usage: make bump-version BUMP=major|minor|patch"; exit 1; fi
+	@OLD=$$(grep 'version:' mix.exs | head -1 | sed -E 's/.*version: "([^"]+)".*/\1/'); \
+	bash $(SCRIPTS_DIRECTORY)/bump_version.sh mix.exs $(BUMP) > /dev/null; \
+	NEW=$$(grep 'version:' mix.exs | head -1 | sed -E 's/.*version: "([^"]+)".*/\1/'); \
+	echo "✓ Bumped: $$OLD → $$NEW"

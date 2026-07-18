@@ -59,7 +59,7 @@ defmodule BotArmyLlm.Handlers.SkillExecuteHandler do
       "payload" => %{"text" => payload_text}
     }
 
-    case BotArmyRuntime.NATS.Publisher.request(
+    case BotArmyLibraryRuntime.NATS.Publisher.request(
            subject,
            envelope,
            timeout_ms: timeout_ms,
@@ -140,7 +140,7 @@ defmodule BotArmyLlm.Handlers.SkillExecuteHandler do
   defp format_reason(other), do: inspect(other)
 
   defp publish_reply(reply_to, response) do
-    with {:ok, conn} <- GenServer.call(BotArmyRuntime.NATS.Connection, :get_connection, 5000),
+    with {:ok, conn} <- GenServer.call(BotArmyLibraryRuntime.NATS.Connection, :get_connection, 5000),
          {:ok, body} <- Jason.encode(response) do
       Gnat.pub(conn, reply_to, body)
     else

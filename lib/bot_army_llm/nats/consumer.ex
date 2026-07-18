@@ -5,7 +5,7 @@ defmodule BotArmyLlm.NATS.Consumer do
   Subscribes to NATS subjects matching LLM message patterns:
   - `llm.prompt.*` - Prompt-related events
 
-  Messages are decoded using BotArmyCore.NATS.Decoder and routed to
+  Messages are decoded using BotArmyLibraryCore.NATS.Decoder and routed to
   appropriate handlers based on the event type.
 
   ## Features
@@ -25,9 +25,9 @@ defmodule BotArmyLlm.NATS.Consumer do
   use GenServer
   require Logger
 
-  alias BotArmyCore.NATS.Decoder
+  alias BotArmyLibraryCore.NATS.Decoder
   alias BotArmyLlm.EmbeddingWorkerPool
-  alias BotArmyRuntime.Registry
+  alias BotArmyLibraryRuntime.Registry
 
   alias BotArmyLlm.Handlers.{
     ClaudeCodeHandler,
@@ -41,8 +41,8 @@ defmodule BotArmyLlm.NATS.Consumer do
     VisionHandler
   }
 
-  alias BotArmyRuntime.Intent.ArmyOpinionVote
-  alias BotArmyRuntime.NATS.Connection
+  alias BotArmyLibraryRuntime.Intent.ArmyOpinionVote
+  alias BotArmyLibraryRuntime.NATS.Connection
 
   @reconnect_delay_ms 5000
   @version Mix.Project.config()[:version]
@@ -230,7 +230,7 @@ defmodule BotArmyLlm.NATS.Consumer do
     case subs do
       subs when subs != [] and length(subs) == length(subjects) ->
         deployment_status = Application.get_env(:bot_army_llm, :deployment_status, "deployed")
-        BotArmyRuntime.Registry.register("llm", @subjects, @version, deployment_status)
+        BotArmyLibraryRuntime.Registry.register("llm", @subjects, @version, deployment_status)
         Process.send_after(self(), :registry_heartbeat, @registry_heartbeat_ms)
         {:noreply, %{state | subscriptions: subs}}
 
@@ -254,7 +254,7 @@ defmodule BotArmyLlm.NATS.Consumer do
 
   @impl true
   def handle_info({:msg, msg}, state) do
-    BotArmyRuntime.Tracing.with_consumer_span(msg.topic, Map.get(msg, :headers, []), fn ->
+    BotArmyLibraryRuntime.Tracing.with_consumer_span(msg.topic, Map.get(msg, :headers, []), fn ->
       Logger.debug(
         "Received NATS message on subject: #{msg.topic}, has_reply_to: #{msg.reply_to != nil}"
       )
@@ -287,7 +287,7 @@ defmodule BotArmyLlm.NATS.Consumer do
   @impl true
   def handle_info(:registry_heartbeat, state) do
     if state.subscriptions != [] do
-      BotArmyRuntime.Registry.register("llm", @subjects, @version)
+      BotArmyLibraryRuntime.Registry.register("llm", @subjects, @version)
       BotArmyLlm.GossipPollVoter.maybe_vote_on_heartbeat()
       Process.send_after(self(), :registry_heartbeat, @registry_heartbeat_ms)
     end
@@ -566,7 +566,7 @@ defmodule BotArmyLlm.NATS.Consumer do
 
         model_used = Map.get(response, "model_used", "auto")
 
-        BotArmyLearning.OutcomeTracker.record(
+        BotArmyLibraryLearning.OutcomeTracker.record(
           request_id,
           "llm.chat_quality",
           model_used,

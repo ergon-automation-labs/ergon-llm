@@ -73,7 +73,7 @@ defmodule BotArmyLlm.GossipPollVoter do
       "schema_version" => "1.0",
       "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601(),
       "source" => "bot_army_llm",
-      "tenant_id" => BotArmyRuntime.Tenant.default_tenant_id(),
+      "tenant_id" => BotArmyLibraryRuntime.Tenant.default_tenant_id(),
       "conversation_id" => poll_id,
       "payload" => %{
         "poll_id" => poll_id,
@@ -149,7 +149,7 @@ defmodule BotArmyLlm.GossipPollVoter do
   end
 
   defp choose_priority_vote(options, context_snapshot) do
-    BotArmyRuntime.GossipPollAffinity.choose_priority_vote(
+    BotArmyLibraryRuntime.GossipPollAffinity.choose_priority_vote(
       options,
       context_snapshot,
       :llm,

@@ -37,7 +37,7 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
   - `llm.error` on failure
   """
   def handle_chain(message) do
-    %{tenant_id: tenant_id, user_id: user_id} = BotArmyCore.Tenant.extract_context(message)
+    %{tenant_id: tenant_id, user_id: user_id} = BotArmyLibraryCore.Tenant.extract_context(message)
     event_id = message["event_id"]
     payload = message["payload"]
 
@@ -71,7 +71,7 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
   - `llm.error` on failure
   """
   def handle_converse(message) do
-    %{tenant_id: tenant_id, user_id: user_id} = BotArmyCore.Tenant.extract_context(message)
+    %{tenant_id: tenant_id, user_id: user_id} = BotArmyLibraryCore.Tenant.extract_context(message)
     event_id = message["event_id"]
     payload = message["payload"]
 

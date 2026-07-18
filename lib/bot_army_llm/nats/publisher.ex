@@ -14,8 +14,8 @@ defmodule BotArmyLlm.NATS.Publisher do
   """
 
   require Logger
-  alias BotArmyRuntime.NATS.Connection
-  alias BotArmyRuntime.NATS.Publisher, as: RuntimePublisher
+  alias BotArmyLibraryRuntime.NATS.Connection
+  alias BotArmyLibraryRuntime.NATS.Publisher, as: RuntimePublisher
 
   @doc """
   Publish an event to NATS.

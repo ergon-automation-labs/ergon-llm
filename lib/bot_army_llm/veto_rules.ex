@@ -1,7 +1,7 @@
 defmodule BotArmyLlm.VetoRules do
   @moduledoc false
 
-  alias BotArmyRuntime.Intent.AccumulatedContext
+  alias BotArmyLibraryRuntime.Intent.AccumulatedContext
 
   @doc """
   Veto GTD remind intents during active LLM conversations.

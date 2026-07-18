@@ -20,7 +20,7 @@ defmodule BotArmyLlm.Handlers.ClaudeCodeHandler do
   Replies to `reply_to` with the raw Anthropic API response JSON.
   """
   def handle_complete(message, reply_to) do
-    %{tenant_id: tenant_id, user_id: user_id} = BotArmyCore.Tenant.extract_context(message)
+    %{tenant_id: tenant_id, user_id: user_id} = BotArmyLibraryCore.Tenant.extract_context(message)
     event_id = message["event_id"]
     payload = message["payload"]
 
@@ -79,7 +79,7 @@ defmodule BotArmyLlm.Handlers.ClaudeCodeHandler do
   end
 
   defp publish_reply(reply_to, response_body) do
-    case GenServer.call(BotArmyRuntime.NATS.Connection, :get_connection, 5000) do
+    case GenServer.call(BotArmyLibraryRuntime.NATS.Connection, :get_connection, 5000) do
       {:ok, conn} ->
         Gnat.pub(conn, reply_to, response_body)
 
@@ -100,7 +100,7 @@ defmodule BotArmyLlm.Handlers.ClaudeCodeHandler do
         "user_id" => user_id
       })
 
-    case GenServer.call(BotArmyRuntime.NATS.Connection, :get_connection, 5000) do
+    case GenServer.call(BotArmyLibraryRuntime.NATS.Connection, :get_connection, 5000) do
       {:ok, conn} ->
         Gnat.pub(conn, reply_to, error_body)
 

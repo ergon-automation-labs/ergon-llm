@@ -11,6 +11,7 @@ defmodule BotArmyLlm.Application do
   use Application
 
   @env Mix.env()
+  @version Mix.Project.config()[:version]
 
   @impl true
   def start(_type, _args) do
@@ -74,6 +75,7 @@ defmodule BotArmyLlm.Application do
       |> maybe_exclude_consumer()
       |> maybe_exclude_pulse_publisher()
       |> maybe_http_proxy_children()
+      |> maybe_add_health_responder()
 
     opts = [strategy: :one_for_one, name: BotArmyLlm.Supervisor]
     {:ok, pid} = Supervisor.start_link(children, opts)
@@ -87,6 +89,18 @@ defmodule BotArmyLlm.Application do
   end
 
   # Skip Repo in test unless BOT_ARMY_LLM_TEST_REPO=1 (avoids Postgrex errors when DB is missing)
+  defp maybe_add_health_responder(children) do
+    if @env == :test do
+      children
+    else
+      children ++
+        [
+          {BotArmyLibraryRuntime.Health.Responder,
+           [bot_name: :llm, repo: BotArmyLlm.Repo, version: @version]}
+        ]
+    end
+  end
+
   defp maybe_exclude_repo(children) do
     if Application.get_env(:bot_army_llm, :start_repo, true) do
       children

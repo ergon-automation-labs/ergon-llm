@@ -164,7 +164,11 @@ defmodule BotArmyLlm.NATS.Consumer do
     state = %{
       subscriptions: [],
       reconnect_attempt: 0,
-      opts: opts
+      opts: opts,
+      connection: nil,
+      # LeaderElection announces the real role shortly after startup; defaulting
+      # to standby means a not-yet-elected node never answers business traffic.
+      role: :standby
     }
 
     {:ok, state, {:continue, :connect}}
@@ -175,11 +179,53 @@ defmodule BotArmyLlm.NATS.Consumer do
     case GenServer.call(Connection, :get_connection, 5000) do
       {:ok, conn} ->
         Connection.subscribe_to_status()
-        subscribe_to_topics(conn, state)
+        state = %{state | connection: conn}
+
+        if state.role == :primary do
+          subscribe_to_topics(conn, state)
+        else
+          Logger.info("LLM consumer standby — not subscribing to business subjects")
+          {:noreply, register_with_role(%{state | subscriptions: []})}
+        end
 
       {:error, _reason} ->
         handle_connection_unavailable(state)
     end
+  end
+
+  @doc """
+  Called by `BotArmyLibraryRuntime.LeaderElection`'s `on_role_change` callback.
+  """
+  def leader_role_changed(role) when role in [:primary, :standby] do
+    GenServer.cast(__MODULE__, {:leader_role_changed, role})
+  end
+
+  @impl true
+  def handle_cast({:leader_role_changed, :primary}, %{connection: nil} = state) do
+    Logger.warning(
+      "LLM consumer designated PRIMARY, but NATS not connected yet — will subscribe once connected"
+    )
+
+    {:noreply, %{state | role: :primary}}
+  end
+
+  def handle_cast({:leader_role_changed, :primary}, %{subscriptions: []} = state) do
+    Logger.warning("LLM consumer becoming PRIMARY — subscribing to business subjects")
+    subscribe_to_topics(state.connection, %{state | role: :primary})
+  end
+
+  def handle_cast({:leader_role_changed, :primary}, state) do
+    {:noreply, %{state | role: :primary}}
+  end
+
+  def handle_cast({:leader_role_changed, :standby}, state) do
+    Logger.warning("LLM consumer becoming STANDBY — unsubscribing from business subjects")
+
+    if state.connection do
+      Enum.each(state.subscriptions, &Gnat.unsub(state.connection, &1))
+    end
+
+    {:noreply, register_with_role(%{state | role: :standby, subscriptions: []})}
   end
 
   defp subscribe_to_topics(conn, state) do
@@ -229,16 +275,28 @@ defmodule BotArmyLlm.NATS.Consumer do
 
     case subs do
       subs when subs != [] and length(subs) == length(subjects) ->
-        deployment_status = Application.get_env(:bot_army_llm, :deployment_status, "deployed")
-        BotArmyLibraryRuntime.Registry.register("llm", @subjects, @version, deployment_status)
-        Process.send_after(self(), :registry_heartbeat, @registry_heartbeat_ms)
-        {:noreply, %{state | subscriptions: subs}}
+        {:noreply, register_with_role(%{state | subscriptions: subs})}
 
       _ ->
         Logger.error("Failed to subscribe to all LLM topics")
         Process.send_after(self(), :reconnect, @reconnect_delay_ms)
         {:noreply, state}
     end
+  end
+
+  # Registers with the fleet Registry, reflecting the current role in
+  # deployment_status so a standby node is visible but clearly not serving.
+  defp register_with_role(state) do
+    deployment_status =
+      if state.role == :primary do
+        Application.get_env(:bot_army_llm, :deployment_status, "deployed")
+      else
+        "standby"
+      end
+
+    BotArmyLibraryRuntime.Registry.register("llm", @subjects, @version, deployment_status)
+    Process.send_after(self(), :registry_heartbeat, @registry_heartbeat_ms)
+    state
   end
 
   defp handle_connection_unavailable(state) do
@@ -286,13 +344,8 @@ defmodule BotArmyLlm.NATS.Consumer do
 
   @impl true
   def handle_info(:registry_heartbeat, state) do
-    if state.subscriptions != [] do
-      BotArmyLibraryRuntime.Registry.register("llm", @subjects, @version)
-      BotArmyLlm.GossipPollVoter.maybe_vote_on_heartbeat()
-      Process.send_after(self(), :registry_heartbeat, @registry_heartbeat_ms)
-    end
-
-    {:noreply, state}
+    if state.role == :primary, do: BotArmyLlm.GossipPollVoter.maybe_vote_on_heartbeat()
+    {:noreply, register_with_role(state)}
   end
 
   defp process_message(%{topic: "gossip.poll.broadcast", body: body}) do

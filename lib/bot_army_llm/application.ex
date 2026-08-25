@@ -15,6 +15,11 @@ defmodule BotArmyLlm.Application do
 
   @impl true
   def start(_type, _args) do
+    # Load configuration from Salt-deployed config file (not env vars)
+    # This fixes macOS launchd environment variable pass-through limitation
+    config_data = BotArmyLibraryRuntime.ConfigLoader.load_config()
+    Application.put_env(:bot_army_library_runtime, :config_data, config_data)
+
     children =
       [
         # Database connection (optional in test when :start_repo is false — see config/test.exs)
@@ -73,8 +78,9 @@ defmodule BotArmyLlm.Application do
         # while the consumer is still connecting (not yet subscribed either way).
         {BotArmyLibraryRuntime.LeaderElection,
          service: "llm",
-         node_name: System.get_env("NODE_NAME", "unknown"),
-         default_role: BotArmyLibraryRuntime.LeaderElection.role_from_env("LLM_NODE_ROLE"),
+         node_name: BotArmyLibraryRuntime.ConfigLoader.get("NODE_NAME", "unknown"),
+         default_role:
+           parse_role(BotArmyLibraryRuntime.ConfigLoader.get("LLM_NODE_ROLE", "primary")),
          on_role_change: {BotArmyLlm.NATS.Consumer, :leader_role_changed, []}},
         # NATS message consumer (depends on BotArmyLibraryRuntime.NATS.Connection being available)
         # Not started in tests to avoid connecting to real NATS
@@ -168,4 +174,8 @@ defmodule BotArmyLlm.Application do
       children
     end
   end
+
+  defp parse_role("standby"), do: :standby
+  defp parse_role("primary"), do: :primary
+  defp parse_role(_), do: :primary
 end

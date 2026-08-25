@@ -1,7 +1,7 @@
 SCRIPTS_DIRECTORY ?= $(abspath $(CURDIR)/../scripts)
 MIX ?= /Users/abby/.local/share/mise/shims/mix
 
-.PHONY: test-handlers test-stores test-nats test-integration test-full setup help deps run test credo dialyzer coverage check format clean release publish-release setup-hooks setup-db reset-db logs logs-tail logs-errors git-push push-and-publish sync-release-version pre-push-cleanup
+.PHONY: test-handlers test-stores test-nats test-integration test-full setup help deps run test dialyzer coverage check format clean release publish-release setup-hooks setup-db reset-db logs logs-tail logs-errors push-and-publish sync-release-version
 
 help:
 	@echo "BotArmyLlm - LLM Bot"
@@ -65,7 +65,7 @@ reset-db:
 init:
 	@if [ ! -d .git ]; then git init; echo "Git initialized."; else echo "Git already initialized."; fi
 
-compile:
+_compile-impl:
 	@LOG_FILE="/tmp/compile-llm-$$(date +%s).log"; \
 	echo "Compiling llm and logging to $$LOG_FILE..."; \
 	$(MIX) compile 2>&1 | tee "$$LOG_FILE"; \
@@ -73,12 +73,6 @@ compile:
 
 deps:
 	$(MIX) deps.get
-
-compile:
-	@LOG_FILE="/tmp/compile-llm-$$(date +%s).log"; \
-	echo "Compiling llm and logging to $$LOG_FILE..."; \
-	$(MIX) compile 2>&1 | tee "$$LOG_FILE"; \
-	echo "✓ Compilation log: $$LOG_FILE"
 
 run:
 	$(MIX) run --no-halt
@@ -104,13 +98,6 @@ test-integration:
 
 test-full:
 	$(MIX) test --include integration --include nats_live --trace
-
-credo:
-	@BOT_NAME=llm; \
-	LOG_FILE="/tmp/credo-$${BOT_NAME}-$$(date +%s).log"; \
-	echo "Running credo and logging to $$LOG_FILE..."; \
-	$(MIX) credo --only warning 2>&1 | tee "$$LOG_FILE"; \
-	echo "✓ Credo log: $$LOG_FILE"
 
 dialyzer: deps
 	$(MIX) dialyzer
@@ -211,37 +198,6 @@ publish-release:
 	echo "✓ Publish-release log: $$LOG_FILE"; \
 	} 2>&1 | tee "$$LOG_FILE"
 
-pre-push-cleanup:
-	@echo "🧹 Cleaning up pre-push artifacts..."
-	@if git diff --quiet git-hooks/pre-push; then \
-		echo "✓ No hook changes"; \
-	else \
-		echo "📋 Staging hook changes..."; \
-		git add git-hooks/pre-push git-hooks/post-push; \
-		git commit -m "chore: sync hooks" || true; \
-	fi
-	@if git diff --quiet mix.lock; then \
-		echo "✓ No lock file changes"; \
-	else \
-		echo "📋 Staging lock file changes..."; \
-		git add mix.lock; \
-		git commit -m "chore: lock file updates from pre-push validation" || true; \
-	fi
-	@echo "✓ Ready to push"
-push: test compile credo pre-push-cleanup
-	@echo "✅ All validations passed"
-	@echo "$$(date +%s)" > .push-validated
-	@echo "✓ Proof-of-validation created"
-	@$(MAKE) git-push
-
-
-git-push: pre-push-cleanup
-	@BOT_NAME=llm; \
-	LOG_FILE="/tmp/git-push-$${BOT_NAME}-$$(date +%s).log"; \
-	echo "Pushing to origin/main and logging to $$LOG_FILE..."; \
-	git push 2>&1 | tee "$$LOG_FILE"; \
-	echo "✓ Log saved: $$LOG_FILE"
-
 push-and-publish: git-push publish-release
 logs:
 	@echo "Last 100 lines of llm_proxy logs:"
@@ -265,11 +221,12 @@ logs-errors:
 
 
 
-.PHONY: bump-version
 
-bump-version:
-	@if [ -z "$(BUMP)" ]; then echo "Usage: make bump-version BUMP=major|minor|patch"; exit 1; fi
-	@OLD=$$(grep 'version:' mix.exs | head -1 | sed -E 's/.*version: "([^"]+)".*/\1/'); \
-	bash $(SCRIPTS_DIRECTORY)/bump_version.sh mix.exs $(BUMP) > /dev/null; \
-	NEW=$$(grep 'version:' mix.exs | head -1 | sed -E 's/.*version: "([^"]+)".*/\1/'); \
-	echo "✓ Bumped: $$OLD → $$NEW"
+# Shared targets (push, credo, pre-push-cleanup, bump-version, git-push).
+# Defined once in bot_army_infra so they cannot drift per repo.
+BOT_ARMY_COMMON_MK := $(abspath $(CURDIR)/../bot_army_infra/make/common.mk)
+ifeq ($(wildcard $(BOT_ARMY_COMMON_MK)),)
+$(warning bot_army_infra not found at $(BOT_ARMY_COMMON_MK) - shared targets unavailable)
+else
+include $(BOT_ARMY_COMMON_MK)
+endif

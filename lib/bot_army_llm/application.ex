@@ -45,7 +45,8 @@ defmodule BotArmyLlm.Application do
         {BotArmyLlm.Metrics, []},
 
         # Shared-library outcome tracker — records LLM inference quality
-        {BotArmyLibraryLearning.OutcomeTracker, [repo: BotArmyLlm.Repo, name: :llm_outcome_tracker]},
+        {BotArmyLibraryLearning.OutcomeTracker,
+         [repo: BotArmyLlm.Repo, name: :llm_outcome_tracker]},
 
         # Embedding worker pool — bounded concurrency for embed requests
         {BotArmyLlm.EmbeddingWorkerPool, []},
@@ -67,6 +68,14 @@ defmodule BotArmyLlm.Application do
          bot_name: "llm"},
         # Intent evaluator — proactive summarization when context warrants it
         {BotArmyLlm.IntentEvaluator, []},
+        # Leader/standby election for dual-node (air + mini) deployment — must
+        # start before the consumer so its first on_role_change call lands
+        # while the consumer is still connecting (not yet subscribed either way).
+        {BotArmyLibraryRuntime.LeaderElection,
+         service: "llm",
+         node_name: System.get_env("NODE_NAME", "unknown"),
+         default_role: BotArmyLibraryRuntime.LeaderElection.role_from_env("LLM_NODE_ROLE"),
+         on_role_change: {BotArmyLlm.NATS.Consumer, :leader_role_changed, []}},
         # NATS message consumer (depends on BotArmyLibraryRuntime.NATS.Connection being available)
         # Not started in tests to avoid connecting to real NATS
         {BotArmyLlm.NATS.Consumer, []}
@@ -109,13 +118,14 @@ defmodule BotArmyLlm.Application do
     end
   end
 
-  # Exclude Consumer + VetoListener + IntentEvaluator in tests to avoid connecting to real NATS
+  # Exclude Consumer + VetoListener + IntentEvaluator + LeaderElection in tests to avoid connecting to real NATS
   defp maybe_exclude_consumer(children) do
     if @env == :test do
       Enum.reject(children, fn
         {BotArmyLlm.NATS.Consumer, []} -> true
         {BotArmyLibraryRuntime.Intent.VetoListener, _} -> true
         {BotArmyLlm.IntentEvaluator, []} -> true
+        {BotArmyLibraryRuntime.LeaderElection, _} -> true
         _ -> false
       end)
     else

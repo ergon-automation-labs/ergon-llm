@@ -35,7 +35,7 @@ if config_env() != :test do
   nats_host = BotArmyLibraryRuntime.ConfigLoader.get("NATS_HOST", "localhost")
 
   nats_port =
-    BotArmyLibraryRuntime.ConfigLoader.get("NATS_PORT", "4223") |> String.to_integer()
+    BotArmyLibraryRuntime.ConfigLoader.get("NATS_PORT", "4222") |> String.to_integer()
 
   config :bot_army_library_runtime, :nats,
     servers: [{nats_host, nats_port}],

@@ -6,7 +6,7 @@ if config_env() != :test do
   alias BotArmyLibraryRuntime.Ecto.RuntimeDbConfig
 
   db_config =
-    RuntimeDbConfig.resolve("BOT_ARMY_LLM", database: "ergon_llm", port: 30003)
+    RuntimeDbConfig.resolve("BOT_ARMY_LLM", database: "ergon_llm", port: 30006)
 
   config :bot_army_llm,
          BotArmyLlm.Repo,

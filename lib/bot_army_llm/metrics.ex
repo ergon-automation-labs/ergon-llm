@@ -29,10 +29,21 @@ defmodule BotArmyLlm.Metrics do
     GenServer.cast(__MODULE__, {:record_error, event_type, error_type})
   end
 
-  @doc "Record a provider call with latency"
+  @doc "Record a provider call with latency, tokens, and cost"
   def record_provider_call(provider, latency_ms)
       when is_binary(provider) and is_integer(latency_ms) do
     GenServer.cast(__MODULE__, {:record_provider_call, provider, latency_ms})
+  end
+
+  @doc "Record tokens and cost for a provider request"
+  def record_tokens_and_cost(provider, model, tokens_input, tokens_output, cost_usd)
+      when is_binary(provider) and (is_binary(model) or is_nil(model)) and
+             is_integer(tokens_input) and is_integer(tokens_output) and
+             (is_number(cost_usd) or is_nil(cost_usd)) do
+    GenServer.cast(
+      __MODULE__,
+      {:record_tokens_and_cost, provider, model, tokens_input, tokens_output, cost_usd}
+    )
   end
 
   @doc "Record a provider fallback event"
@@ -98,6 +109,9 @@ defmodule BotArmyLlm.Metrics do
       lane_latencies: %{},
       intent_requests: %{},
       intent_latencies: %{},
+      provider_tokens_input: %{},
+      provider_tokens_output: %{},
+      provider_costs: %{},
       rag_indexed: 0,
       rag_searched: 0,
       started_at: DateTime.utc_now()
@@ -149,6 +163,36 @@ defmodule BotArmyLlm.Metrics do
 
   def handle_cast(:record_rag_search, state) do
     {:noreply, %{state | rag_searched: state.rag_searched + 1}}
+  end
+
+  def handle_cast(
+        {:record_tokens_and_cost, provider, model, tokens_in, tokens_out, cost_usd},
+        state
+      ) do
+    # Track cumulative tokens per provider
+    tokens_in_map =
+      Map.update(state.provider_tokens_input, provider, tokens_in, &(&1 + tokens_in))
+
+    tokens_out_map =
+      Map.update(state.provider_tokens_output, provider, tokens_out, &(&1 + tokens_out))
+
+    # Track cumulative cost per provider
+    costs_map =
+      if is_nil(cost_usd) do
+        state.provider_costs
+      else
+        Map.update(state.provider_costs, provider, Decimal.new(cost_usd), fn existing ->
+          Decimal.add(existing, Decimal.new(cost_usd))
+        end)
+      end
+
+    {:noreply,
+     %{
+       state
+       | provider_tokens_input: tokens_in_map,
+         provider_tokens_output: tokens_out_map,
+         provider_costs: costs_map
+     }}
   end
 
   def handle_cast({:record_lane_request, lane}, state) do
@@ -222,6 +266,10 @@ defmodule BotArmyLlm.Metrics do
       provider_errors: state.provider_errors,
       provider_fallbacks: state.provider_fallbacks,
       latency_percentiles: compute_percentiles(state.latencies),
+      provider_tokens_input: state.provider_tokens_input,
+      provider_tokens_output: state.provider_tokens_output,
+      provider_costs:
+        state.provider_costs |> Enum.map(fn {k, v} -> {k, Decimal.to_string(v)} end) |> Map.new(),
       lane_requests: state.lane_requests,
       lane_latency_percentiles: compute_percentiles(state.lane_latencies),
       intent_requests: state.intent_requests,

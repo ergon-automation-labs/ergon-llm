@@ -44,13 +44,25 @@ defmodule BotArmyLlm.LlmClient do
   end
 
   defp anthropic_url,
-    do: System.get_env("ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1/messages")
+    do:
+      BotArmyLibraryRuntime.ConfigLoader.get(
+        "ANTHROPIC_BASE_URL",
+        "https://api.anthropic.com/v1/messages"
+      )
 
   defp anthropic_fallback_url,
-    do: System.get_env("ANTHROPIC_FALLBACK_URL", "https://api.anthropic.com/v1/messages")
+    do:
+      BotArmyLibraryRuntime.ConfigLoader.get(
+        "ANTHROPIC_FALLBACK_URL",
+        "https://api.anthropic.com/v1/messages"
+      )
 
   defp openrouter_fallback_url,
-    do: System.get_env("OPENROUTER_FALLBACK_URL", "https://openrouter.ai/api/v1/chat/completions")
+    do:
+      BotArmyLibraryRuntime.ConfigLoader.get(
+        "OPENROUTER_FALLBACK_URL",
+        "https://openrouter.ai/api/v1/chat/completions"
+      )
 
   @doc """
   Complete a prompt using the best available provider.
@@ -476,7 +488,7 @@ defmodule BotArmyLlm.LlmClient do
   end
 
   defp call_provider(:openrouter, text, complexity, opts) do
-    api_key = System.get_env("OPENROUTER_API_KEY")
+    api_key = BotArmyLibraryRuntime.ConfigLoader.get("OPENROUTER_API_KEY")
 
     base_url =
       System.get_env("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1/chat/completions")
@@ -520,36 +532,43 @@ defmodule BotArmyLlm.LlmClient do
   # Model selection per provider + complexity
 
   defp cloud_model(:blackbox, :light),
-    do: System.get_env("BLACKBOX_MODEL_LIGHT", "qwen/qwen3-14b:free")
+    do: BotArmyLibraryRuntime.ConfigLoader.get("BLACKBOX_MODEL_LIGHT", "qwen/qwen3-14b:free")
 
   defp cloud_model(:blackbox, :medium),
-    do: System.get_env("BLACKBOX_MODEL_MEDIUM", "qwen/qwen3-32b:free")
+    do: BotArmyLibraryRuntime.ConfigLoader.get("BLACKBOX_MODEL_MEDIUM", "qwen/qwen3-32b:free")
 
   defp cloud_model(:blackbox, :heavy),
-    do: System.get_env("BLACKBOX_MODEL_HEAVY", "qwen/qwen3-235b-a22b:free")
+    do:
+      BotArmyLibraryRuntime.ConfigLoader.get("BLACKBOX_MODEL_HEAVY", "qwen/qwen3-235b-a22b:free")
 
   defp cloud_model(:openrouter, :light),
-    do: System.get_env("OPENROUTER_MODEL_LIGHT", "qwen/qwen3-4b:free")
+    do: BotArmyLibraryRuntime.ConfigLoader.get("OPENROUTER_MODEL_LIGHT", "qwen/qwen3-4b:free")
 
   defp cloud_model(:openrouter, :medium),
-    do: System.get_env("OPENROUTER_MODEL_MEDIUM", "qwen/qwen3-32b:free")
+    do: BotArmyLibraryRuntime.ConfigLoader.get("OPENROUTER_MODEL_MEDIUM", "qwen/qwen3-32b:free")
 
   defp cloud_model(:openrouter, :heavy),
-    do: System.get_env("OPENROUTER_MODEL_HEAVY", "qwen/qwen3-235b-a22b-2507")
+    do:
+      BotArmyLibraryRuntime.ConfigLoader.get(
+        "OPENROUTER_MODEL_HEAVY",
+        "qwen/qwen3-235b-a22b-2507"
+      )
 
   defp cloud_model(:anthropic, :light),
-    do: System.get_env("ANTHROPIC_MODEL_LIGHT", "claude-3-5-haiku-latest")
+    do: BotArmyLibraryRuntime.ConfigLoader.get("ANTHROPIC_MODEL_LIGHT", "claude-3-5-haiku-latest")
 
   defp cloud_model(:anthropic, :medium),
-    do: System.get_env("ANTHROPIC_MODEL_MEDIUM", "claude-3-5-sonnet-latest")
+    do:
+      BotArmyLibraryRuntime.ConfigLoader.get("ANTHROPIC_MODEL_MEDIUM", "claude-3-5-sonnet-latest")
 
   defp cloud_model(:anthropic, :heavy),
-    do: System.get_env("ANTHROPIC_MODEL_HEAVY", "claude-3-5-sonnet-latest")
+    do:
+      BotArmyLibraryRuntime.ConfigLoader.get("ANTHROPIC_MODEL_HEAVY", "claude-3-5-sonnet-latest")
 
   # HTTP implementations
 
   defp ollama_timeout_ms do
-    parse_timeout_ms(System.get_env("OLLAMA_TIMEOUT_MS"), 15_000)
+    parse_timeout_ms(BotArmyLibraryRuntime.ConfigLoader.get("OLLAMA_TIMEOUT_MS"), 15_000)
   end
 
   defp parse_timeout_ms(nil, default), do: default
@@ -820,7 +839,7 @@ defmodule BotArmyLlm.LlmClient do
   end
 
   defp call_provider_messages(:openrouter, messages, complexity, opts) do
-    api_key = System.get_env("OPENROUTER_API_KEY")
+    api_key = BotArmyLibraryRuntime.ConfigLoader.get("OPENROUTER_API_KEY")
 
     base_url =
       System.get_env("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1/chat/completions")
@@ -1076,7 +1095,7 @@ defmodule BotArmyLlm.LlmClient do
   defp call_vision_provider(:ollama_vision, image_data, _image_url, prompt, _opts) do
     case health_checker_module().best_ollama_node(:heavy) do
       {:ok, {url, _}} ->
-        model = System.get_env("OLLAMA_VISION_MODEL", "llava:latest")
+        model = BotArmyLibraryRuntime.ConfigLoader.get("OLLAMA_VISION_MODEL", "llava:latest")
 
         case ollama_vision_call(url, model, image_data, prompt) do
           {:ok, analysis} -> {:ok, %{completion: analysis, model_used: model}}
@@ -1089,8 +1108,10 @@ defmodule BotArmyLlm.LlmClient do
   end
 
   defp call_vision_provider(:anthropic_vision, image_data, _image_url, prompt, opts) do
-    api_key = System.get_env("ANTHROPIC_API_KEY")
-    model = System.get_env("ANTHROPIC_MODEL_HEAVY", "claude-3-5-sonnet-latest")
+    api_key = BotArmyLibraryRuntime.ConfigLoader.get("ANTHROPIC_API_KEY")
+
+    model =
+      BotArmyLibraryRuntime.ConfigLoader.get("ANTHROPIC_MODEL_HEAVY", "claude-3-5-sonnet-latest")
 
     case api_key do
       nil -> {:error, :provider_not_configured}
@@ -1099,8 +1120,10 @@ defmodule BotArmyLlm.LlmClient do
   end
 
   defp call_vision_provider(:openrouter_vision, image_data, image_url, prompt, opts) do
-    api_key = System.get_env("OPENROUTER_API_KEY")
-    model = System.get_env("OPENROUTER_VISION_MODEL", "openai/gpt-4-vision")
+    api_key = BotArmyLibraryRuntime.ConfigLoader.get("OPENROUTER_API_KEY")
+
+    model =
+      BotArmyLibraryRuntime.ConfigLoader.get("OPENROUTER_VISION_MODEL", "openai/gpt-4-vision")
 
     case api_key do
       nil -> {:error, :provider_not_configured}
@@ -1382,7 +1405,7 @@ defmodule BotArmyLlm.LlmClient do
   end
 
   defp call_embed_provider(:openrouter_embed, text, model) do
-    api_key = System.get_env("OPENROUTER_API_KEY")
+    api_key = BotArmyLibraryRuntime.ConfigLoader.get("OPENROUTER_API_KEY")
 
     case api_key do
       nil -> {:error, :provider_not_configured}

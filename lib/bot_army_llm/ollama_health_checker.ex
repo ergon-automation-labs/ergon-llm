@@ -23,7 +23,7 @@ defmodule BotArmyLlm.OllamaHealthChecker do
   require Logger
 
   @probe_interval_ms 60_000
-  @probe_timeout_ms 10_000
+  @probe_timeout_ms 120_000
   @prometheus_url "http://localhost:30090"
 
   # Public API
@@ -116,8 +116,13 @@ defmodule BotArmyLlm.OllamaHealthChecker do
 
   @impl true
   def handle_call(:load_acceptable?, _from, state) do
-    mem_threshold = System.get_env("OLLAMA_HIGH_MEMORY_THRESHOLD", "0.80") |> String.to_float()
-    cpu_threshold = System.get_env("OLLAMA_HIGH_CPU_THRESHOLD", "0.80") |> String.to_float()
+    mem_threshold =
+      BotArmyLibraryRuntime.ConfigLoader.get("OLLAMA_HIGH_MEMORY_THRESHOLD", "0.80")
+      |> String.to_float()
+
+    cpu_threshold =
+      BotArmyLibraryRuntime.ConfigLoader.get("OLLAMA_HIGH_CPU_THRESHOLD", "0.80")
+      |> String.to_float()
 
     acceptable =
       state.nodes
@@ -137,7 +142,7 @@ defmodule BotArmyLlm.OllamaHealthChecker do
     %{
       nodes: %{
         air: %{
-          url: System.get_env("OLLAMA_URL", "http://localhost:11434"),
+          url: BotArmyLibraryRuntime.ConfigLoader.get("OLLAMA_URL", "http://127.0.0.1:11434"),
           latency_ms: nil,
           last_probe_at: nil,
           healthy: false,
@@ -146,7 +151,7 @@ defmodule BotArmyLlm.OllamaHealthChecker do
           enabled: true
         },
         mini: %{
-          url: System.get_env("OLLAMA_MINI_URL", ""),
+          url: BotArmyLibraryRuntime.ConfigLoader.get("OLLAMA_MINI_URL", ""),
           latency_ms: nil,
           last_probe_at: nil,
           healthy: false,
@@ -155,10 +160,9 @@ defmodule BotArmyLlm.OllamaHealthChecker do
           enabled: true
         }
       },
-      probe_model: System.get_env("OLLAMA_PROBE_MODEL", "gemma3:1b"),
+      probe_model: BotArmyLibraryRuntime.ConfigLoader.get("OLLAMA_PROBE_MODEL", "gemma3:1b"),
       degraded_latency_ms:
-        "OLLAMA_DEGRADED_LATENCY_MS"
-        |> System.get_env("8000")
+        BotArmyLibraryRuntime.ConfigLoader.get("OLLAMA_DEGRADED_LATENCY_MS", "8000")
         |> String.to_integer()
     }
   end
@@ -291,7 +295,12 @@ defmodule BotArmyLlm.OllamaHealthChecker do
     _ -> nil
   end
 
-  defp local_model_for(:light), do: System.get_env("OLLAMA_MODEL_LIGHT", "ministral-3:3b")
-  defp local_model_for(:medium), do: System.get_env("OLLAMA_MODEL_MEDIUM", "ministral-3:8b")
-  defp local_model_for(:heavy), do: System.get_env("OLLAMA_MODEL_HEAVY", "ministral-3:8b")
+  defp local_model_for(:light),
+    do: BotArmyLibraryRuntime.ConfigLoader.get("OLLAMA_MODEL_LIGHT", "ministral-3:3b")
+
+  defp local_model_for(:medium),
+    do: BotArmyLibraryRuntime.ConfigLoader.get("OLLAMA_MODEL_MEDIUM", "ministral-3:8b")
+
+  defp local_model_for(:heavy),
+    do: BotArmyLibraryRuntime.ConfigLoader.get("OLLAMA_MODEL_HEAVY", "ministral-3:8b")
 end

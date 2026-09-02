@@ -10,7 +10,8 @@ defmodule BotArmyLlm.OllamaWireFormat do
 
   @spec wire_format() :: :native | :openai
   def wire_format do
-    case System.get_env("OLLAMA_WIRE_FORMAT", "native") |> String.downcase() do
+    case BotArmyLibraryRuntime.ConfigLoader.get("OLLAMA_WIRE_FORMAT", "native")
+         |> String.downcase() do
       "openai" -> :openai
       _ -> :native
     end
@@ -21,12 +22,15 @@ defmodule BotArmyLlm.OllamaWireFormat do
   # when OLLAMA_CHAT_URL is unset, so the openai branch is a no-op wire change unless
   # OLLAMA_CHAT_URL points at headroom (e.g. http://127.0.0.1:8790).
   def chat_url do
-    System.get_env("OLLAMA_CHAT_URL", System.get_env("OLLAMA_URL", "http://localhost:11434"))
+    BotArmyLibraryRuntime.ConfigLoader.get(
+      "OLLAMA_CHAT_URL",
+      BotArmyLibraryRuntime.ConfigLoader.get("OLLAMA_URL", "http://localhost:11434")
+    )
   end
 
   @doc false
   # Native ollama node URL, used for the direct fallback when headroom is down.
   def ollama_url do
-    System.get_env("OLLAMA_URL", "http://localhost:11434")
+    BotArmyLibraryRuntime.ConfigLoader.get("OLLAMA_URL", "http://localhost:11434")
   end
 end

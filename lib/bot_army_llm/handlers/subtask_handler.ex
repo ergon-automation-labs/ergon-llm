@@ -75,7 +75,7 @@ defmodule BotArmyLlm.Handlers.SubtaskHandler do
         "result" => result
       })
 
-    case Publisher.publish("dispatcher.subtask.completed", event_data) do
+    case BotArmyLibraryRuntime.NATS.Publisher.publish("dispatcher.subtask.completed", event_data) do
       {:ok, _subject} ->
         Logger.debug(
           "[SubtaskHandler] Published subtask completion #{subtask_id} with status #{status}"

@@ -525,6 +525,20 @@ defmodule BotArmyLlm.NATS.Consumer do
       response =
         case result do
           {:ok, resp} ->
+            # Record tokens and cost for metrics
+            if Process.whereis(BotArmyLlm.Metrics) do
+              tokens_in = Map.get(resp, :tokens_input, 0)
+              tokens_out = Map.get(resp, :tokens_output, 0)
+              # Cost calculation would go here if we had pricing data in this process
+              BotArmyLlm.Metrics.record_tokens_and_cost(
+                Atom.to_string(resp.provider),
+                resp.model_used,
+                tokens_in,
+                tokens_out,
+                nil
+              )
+            end
+
             %{
               "completion" => resp.completion,
               "model" => resp.model_used,

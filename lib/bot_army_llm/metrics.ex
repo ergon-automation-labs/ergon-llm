@@ -82,6 +82,25 @@ defmodule BotArmyLlm.Metrics do
     GenServer.cast(__MODULE__, {:record_intent_latency, intent, latency_ms})
   end
 
+  @doc "Record LLM unavailability event (when request couldn't be processed)"
+  def record_unavailability(tenant_id, reason, provider \\ nil) when is_binary(reason) do
+    # Async publish to SRE bot for persistence
+    spawn(fn ->
+      try do
+        alias BotArmyLlm.NATS.Publisher
+
+        Publisher.publish("sre.metrics.llm_unavailability", %{
+          "tenant_id" => tenant_id,
+          "reason" => reason,
+          "provider" => provider,
+          "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601()
+        })
+      rescue
+        e -> Logger.error("Failed to publish unavailability event: #{inspect(e)}")
+      end
+    end)
+  end
+
   @doc "Get current metrics summary"
   def get_summary do
     GenServer.call(__MODULE__, :get_summary)
@@ -239,6 +258,9 @@ defmodule BotArmyLlm.Metrics do
       lane_latencies: %{},
       intent_requests: %{},
       intent_latencies: %{},
+      provider_tokens_input: %{},
+      provider_tokens_output: %{},
+      provider_costs: %{},
       rag_indexed: 0,
       rag_searched: 0,
       started_at: DateTime.utc_now()

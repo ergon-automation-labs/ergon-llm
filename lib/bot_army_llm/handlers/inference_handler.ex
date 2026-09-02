@@ -9,8 +9,8 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
 
   require Logger
   alias BotArmyLlm.NATS.Publisher
-
   alias BotArmyLlm.EventBuilder
+  alias BotArmyLlm.Inference.{Chain, Conversation}
 
   @doc """
   Handle chained inference requests.
@@ -129,157 +129,55 @@ defmodule BotArmyLlm.Handlers.InferenceHandler do
 
     Logger.debug("Starting chain #{chain_id} with #{length(steps)} steps")
 
-    result =
-      Enum.reduce_while(steps, {:ok, initial_input, []}, fn step, {:ok, input, step_results} ->
-        case execute_step(input, step, model_override) do
-          {:ok, output} ->
-            step_result = %{
-              "name" => Map.get(step, "name", "step_#{length(step_results) + 1}"),
-              "output" => output
-            }
+    BotArmyLlm.LocalQueueManager.increment()
 
-            publish_step_completed(chain_id, step, output, event_id, tenant_id, user_id)
-            {:cont, {:ok, output, step_results ++ [step_result]}}
+    case Chain.execute(initial_input, steps, model_override) do
+      {:ok, step_results} ->
+        BotArmyLlm.LocalQueueManager.decrement()
+        
+        # Publish step completions based on the results
+        Enum.with_index(step_results, fn result, index ->
+          step = Enum.at(steps, index)
+          publish_step_completed(chain_id, step, result["output"], event_id, tenant_id, user_id)
+        end) |> Enum.to_list()
 
-          {:error, reason} ->
-            Logger.error("Chain #{chain_id} step failed: #{inspect(reason)}")
-            {:halt, {:error, reason}}
-        end
-      end)
-
-    case result do
-      {:ok, _final_output, step_results} ->
         publish_chain_completed(chain_id, step_results, metadata, event_id, tenant_id, user_id)
 
       {:error, reason} ->
+        BotArmyLlm.LocalQueueManager.decrement()
+        Logger.error("Chain #{chain_id} failed: #{inspect(reason)}")
         publish_error(event_id, reason, "Chain execution failed", tenant_id, user_id)
     end
   end
 
-  defp execute_step(input, step, model_override) do
-    prompt_template = step["prompt"]
-    model = model_override || Map.get(step, "model", "auto")
-
-    # Interpolate {input} in the prompt template
-    prompt = String.replace(prompt_template, "{input}", input)
-
-    Logger.debug("Executing step: #{String.slice(prompt, 0, 50)}...")
-
-    llm_client = Application.get_env(:bot_army_llm, :llm_client, BotArmyLlm.LlmClient)
-
-    BotArmyLlm.LocalQueueManager.increment()
-
-    case llm_client.complete(prompt, model: model) do
-      {:ok, result} ->
-        BotArmyLlm.LocalQueueManager.decrement()
-        {:ok, result.completion}
-
-      {:error, reason} ->
-        BotArmyLlm.LocalQueueManager.decrement()
-        {:error, reason}
-    end
-  end
+  # Removed legacy private functions moved to domain modules.
+  # execute_step, get_or_create_conversation, handle_converse_llm_call are now in BotArmyLlm.Inference.*
+  
 
   defp process_converse(payload, event_id, _original_message, tenant_id, user_id) do
     session_id = Map.get(payload, "session_id")
     user_message = payload["message"]
     model_override = Map.get(payload, "model")
 
-    conversation_store =
-      Application.get_env(
-        :bot_army_llm,
-        :conversation_store,
-        BotArmyLlm.ConversationStore
-      )
-
-    llm_client = Application.get_env(:bot_army_llm, :llm_client, BotArmyLlm.LlmClient)
-
-    {final_session_id, conversation} =
-      get_or_create_conversation(
-        session_id,
-        model_override,
-        tenant_id,
-        user_id,
-        conversation_store
-      )
-
-    handle_converse_llm_call(
-      conversation,
-      final_session_id,
-      user_message,
-      model_override,
-      llm_client,
-      conversation_store,
-      %{"event_id" => event_id, "tenant_id" => tenant_id, "user_id" => user_id}
-    )
-  end
-
-  defp get_or_create_conversation(nil, model_override, tenant_id, user_id, conversation_store) do
-    case conversation_store.create(%{
-           "model" => model_override || "auto",
-           "tenant_id" => tenant_id,
-           "user_id" => user_id
-         }) do
-      {:ok, sid, conv} ->
-        {sid, conv}
-
-      {:error, _reason} ->
-        {UUID.uuid4(), %{"messages" => [], "model" => model_override || "auto"}}
-    end
-  end
-
-  defp get_or_create_conversation(sid, model_override, _tenant_id, _user_id, conversation_store) do
-    case conversation_store.get_session(sid) do
-      {:ok, conv} -> {sid, conv}
-      {:error, _reason} -> {sid, %{"messages" => [], "model" => model_override || "auto"}}
-    end
-  end
-
-  defp handle_converse_llm_call(
-         conversation,
-         final_session_id,
-         user_message,
-         model_override,
-         llm_client,
-         conversation_store,
-         context
-       ) do
-    messages = conversation["messages"] ++ [%{"role" => "user", "content" => user_message}]
-    event_id = context["event_id"]
-    tenant_id = context["tenant_id"]
-    user_id = context["user_id"]
-
     BotArmyLlm.LocalQueueManager.increment()
 
-    case llm_client.complete_messages(messages,
-           model: model_override || conversation["model"] || "auto"
-         ) do
-      {:ok, response} ->
+    case Conversation.process_turn(session_id, user_message, model_override, tenant_id, user_id) do
+      {:ok, %{session_id: final_sid, reply: reply, updated_conversation: conv}} ->
         BotArmyLlm.LocalQueueManager.decrement()
-        assistant_message = %{"role" => "assistant", "content" => response.completion}
-
-        case conversation_store.append_message(final_session_id, assistant_message) do
-          {:ok, updated_conversation} ->
-            publish_converse_replied(
-              final_session_id,
-              response.completion,
-              updated_conversation,
-              event_id,
-              tenant_id,
-              user_id
-            )
-
-          {:error, reason} ->
-            Logger.error("Failed to save conversation: #{inspect(reason)}")
-            publish_error(event_id, reason, "Failed to save conversation", tenant_id, user_id)
-        end
+        publish_converse_replied(final_sid, reply, conv, event_id, tenant_id, user_id)
 
       {:error, reason} ->
         BotArmyLlm.LocalQueueManager.decrement()
-        Logger.error("LLM call failed: #{inspect(reason)}")
+        Logger.error("Conversation turn failed: #{inspect(reason)}")
         publish_error(event_id, reason, "LLM inference failed", tenant_id, user_id)
     end
   end
+
+  
+
+  
+
+  
 
   defp publish_step_completed(chain_id, step, output, triggered_by_event_id, tenant_id, user_id) do
     event_data =

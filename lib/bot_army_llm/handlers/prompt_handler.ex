@@ -16,6 +16,7 @@ defmodule BotArmyLlm.Handlers.PromptHandler do
 
   require Logger
   alias BotArmyLlm.NATS.Publisher
+  alias BotArmyLlm.Metrics
 
   defp repo do
     Application.get_env(:bot_army_llm, :repo, BotArmyLlm.Repo)
@@ -55,6 +56,9 @@ defmodule BotArmyLlm.Handlers.PromptHandler do
 
           {:error, reason} ->
             Logger.error("LLM call failed: #{inspect(reason)}")
+            # Record unavailability event for observability
+            reason_str = classify_error_reason(reason)
+            Metrics.record_unavailability(tenant_id, reason_str)
             publish_error(event_id, reason, "LLM inference failed", tenant_id, user_id)
         end
 
@@ -211,5 +215,61 @@ defmodule BotArmyLlm.Handlers.PromptHandler do
 
   defp get_node_name do
     node() |> Atom.to_string()
+  end
+
+  @doc """
+  Classify error reason for unavailability tracking.
+  Maps various error types to standardized unavailability reasons.
+  """
+  defp classify_error_reason(reason) do
+    case reason do
+      :circuit_breaker_open ->
+        "circuit_breaker_open"
+
+      :rate_limited ->
+        "rate_limited"
+
+      :provider_down ->
+        "provider_down"
+
+      :timeout ->
+        "timeout"
+
+      {:timeout, _} ->
+        "timeout"
+
+      :auth_failed ->
+        "auth_failed"
+
+      {:auth_error, _} ->
+        "auth_failed"
+
+      :quota_exceeded ->
+        "quota_exceeded"
+
+      {:quota_error, _} ->
+        "quota_exceeded"
+
+      {:http_error, code} when is_integer(code) ->
+        cond do
+          code >= 500 -> "provider_error"
+          code == 429 -> "rate_limited"
+          code == 401 or code == 403 -> "auth_failed"
+          true -> "http_error_#{code}"
+        end
+
+      {:error, msg} when is_binary(msg) ->
+        cond do
+          String.contains?(msg, "circuit") -> "circuit_breaker_open"
+          String.contains?(msg, "rate") -> "rate_limited"
+          String.contains?(msg, "timeout") -> "timeout"
+          String.contains?(msg, "auth") -> "auth_failed"
+          String.contains?(msg, "quota") -> "quota_exceeded"
+          true -> "unknown_error"
+        end
+
+      other ->
+        "unknown_error"
+    end
   end
 end

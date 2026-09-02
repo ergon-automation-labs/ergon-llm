@@ -36,6 +36,7 @@ defmodule BotArmyLlm.Http.Router do
   require Logger
 
   alias BotArmyLlm.Http.AnthropicMessagesProxy
+  alias BotArmyLlm.Proxy.StreamManager
 
   plug :verify_token
   plug Plug.Logger
@@ -70,7 +71,11 @@ defmodule BotArmyLlm.Http.Router do
 
     case validate_messages_body(body) do
       :ok ->
-        AnthropicMessagesProxy.handle(conn, body, source)
+        if Map.get(body, "stream") == true do
+          StreamManager.proxy_stream(conn, body, source)
+        else
+          AnthropicMessagesProxy.handle(conn, body, source)
+        end
 
       {:error, reason} ->
         err =

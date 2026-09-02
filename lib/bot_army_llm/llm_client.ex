@@ -35,6 +35,7 @@ defmodule BotArmyLlm.LlmClient do
     HttpFallback,
     OllamaHealthChecker,
     OllamaWireFormat,
+    RoutingEngine,
     SafetyClassifier
   }
 
@@ -81,6 +82,16 @@ defmodule BotArmyLlm.LlmClient do
     complexity = ComplexityScorer.score(text)
     allow_cloud_when_sensitive = Keyword.get(opts, :allow_cloud_when_sensitive, false)
 
+    # Determine the routed model based on complexity
+    capability = 
+      case complexity do
+        :heavy -> "high-reasoning"
+        :medium -> "general"
+        :light -> "fast_cheap"
+      end
+
+    {routed_model, _source} = RoutingEngine.route(capability, Keyword.get(opts, :model))
+
     # Check for sensitive data before routing
     providers =
       if SafetyClassifier.safe_for_cloud?(text) or allow_cloud_when_sensitive do
@@ -93,13 +104,15 @@ defmodule BotArmyLlm.LlmClient do
       |> drop_failed_providers(opts)
 
     Logger.debug(
-      "LLM routing: complexity=#{complexity}, chain=#{inspect(providers)}, safety_checked=true"
+      "LLM routing: complexity=#{complexity}, routed_model=#{routed_model}, chain=#{inspect(providers)}, safety_checked=true"
     )
 
     case try_providers(providers, text, complexity, opts) do
       {:ok, result} ->
         latency = System.monotonic_time(:millisecond) - start_time
-        {:ok, Map.put(result, :latency_ms, latency)}
+        # Ensure we use the routed model if no specific model was returned by the provider
+        final_result = Map.put(result, :model_used, result.model_used || routed_model)
+        {:ok, Map.put(final_result, :latency_ms, latency)}
 
       {:error, reason} ->
         {:error, reason}
@@ -183,6 +196,16 @@ defmodule BotArmyLlm.LlmClient do
         _ -> :medium
       end
 
+    # Determine the routed model based on complexity
+    capability = 
+      case complexity do
+        :heavy -> "high-reasoning"
+        :medium -> "general"
+        :light -> "fast_cheap"
+      end
+
+    {routed_model, _source} = RoutingEngine.route(capability, Keyword.get(opts, :model))
+
     # Check all messages for sensitive data
     messages_text = Enum.map_join(messages, " ", & &1["content"])
 
@@ -201,13 +224,15 @@ defmodule BotArmyLlm.LlmClient do
       |> drop_failed_providers(opts)
 
     Logger.debug(
-      "LLM routing (messages): complexity=#{complexity}, chain=#{inspect(providers)}, safety_checked=true"
+      "LLM routing (messages): complexity=#{complexity}, routed_model=#{routed_model}, chain=#{inspect(providers)}, safety_checked=true"
     )
 
     case try_providers_messages(providers, messages, complexity, opts) do
       {:ok, result} ->
         latency = System.monotonic_time(:millisecond) - start_time
-        {:ok, Map.put(result, :latency_ms, latency)}
+        # Ensure we use the routed model if no specific model was returned by the provider
+        final_result = Map.put(result, :model_used, result.model_used || routed_model)
+        {:ok, Map.put(final_result, :latency_ms, latency)}
 
       {:error, reason} ->
         {:error, reason}

@@ -17,7 +17,7 @@ ENV MIX_ENV=prod
 ENV NATS_SERVERS=nats://nats:4222
 ENV DATABASE_URL=postgres://postgres:postgres@postgres:5432/bot_army_prod
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --start-period=10s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8888/health || exit 1
 
 CMD ["llm_proxy", "start"]

@@ -188,12 +188,20 @@ publish-release:
 	echo "✓ Release published to GitHub"; \
 	$(MAKE) sync-release-version; \
 	echo ""; \
-	echo "Publishing deploy.release.requested to NATS..."; \
+	echo "Publishing deploy.release.requested to the deploy pipeline (prod bus)..."; \
 	BOT_NAME=$$(basename $$(pwd) | sed 's/bot_army_//'); \
 	REPO_SLUG=$$(git config --get remote.origin.url | sed 's/.*\///; s/\.git$$//'); \
-	NATS_SERVERS=$${NATS_SERVERS:-nats://localhost:4222}; \
-	nats --server "$$NATS_SERVERS" pub deploy.release.requested "$$(jq -n --arg bot "$${BOT_NAME}" --arg repo "$$REPO_SLUG" --arg version "$$VERSION" --arg tag "v$$VERSION" '{bot: $$bot, repo: $$repo, version: $$version, release_tag: $$tag}')" || { echo "⚠️  NATS publish failed (is NATS running?)"; }; \
-	echo "✓ Deploy event published (deploy_pipeline_bot will pick it up)"; \
+	TARGET_NODE=$${TARGET:-air}; \
+	REQUEST_ID="publish-release-$$(date +%s)-$$RANDOM"; \
+	DEPLOY_SUBJECT="deploy.release.requested.$${TARGET_NODE}"; \
+	ENVELOPE=$$(jq -n \
+		--arg eid "$$(uuidgen | tr 'A-Z' 'a-z')" \
+		--arg ts "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+		--arg node "$$(hostname -s)" \
+		--arg payload "$$(jq -n --arg bot "$$BOT_NAME" --arg repo "$$REPO_SLUG" --arg version "$$VERSION" --arg tag "v$$VERSION" --arg target "$$TARGET_NODE" --arg request_id "$$REQUEST_ID" '{bot: $$bot, repo: $$repo, version: $$version, tag: $$tag, release_tag: $$tag, target: $$target, request_id: $$request_id}')" \
+		'{event_id: $$eid, event: "deploy.release.requested", schema_version: "1.0", timestamp: $$ts, source: "publish_release", source_node: $$node, triggered_by: "user", payload: ($$payload | fromjson)}'); \
+	NATS_ENV=production bash "$$(SCRIPTS_DIRECTORY)/../bot_army_infra/salt/common/files/nats_publish.sh" "$$DEPLOY_SUBJECT" "$$ENVELOPE" || { echo "⚠️  NATS publish failed (is the prod bus up on 4222?)"; }; \
+	echo "✓ Deploy event published (subject $$DEPLOY_SUBJECT, job $$REQUEST_ID — pipeline validates the envelope)"; \
 	echo ""; \
 	echo "✓ Publish-release log: $$LOG_FILE"; \
 	} 2>&1 | tee "$$LOG_FILE"

@@ -5,6 +5,11 @@ import Config
 if config_env() != :test do
   alias BotArmyLibraryRuntime.Ecto.RuntimeDbConfig
 
+  # Pre-load ConfigLoader to ensure database port is loaded from config file
+  # This avoids the timing issue where System.get_env() doesn't see launchd env vars
+  config_data = BotArmyLibraryRuntime.ConfigLoader.load_config()
+  Application.put_env(:bot_army_library_runtime, :config_data, config_data)
+
   db_config =
     RuntimeDbConfig.resolve("BOT_ARMY_LLM", database: "ergon_llm", port: 30006)
 

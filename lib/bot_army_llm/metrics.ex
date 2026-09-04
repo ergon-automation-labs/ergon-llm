@@ -87,7 +87,12 @@ defmodule BotArmyLlm.Metrics do
     # Async publish to SRE bot for persistence
     spawn(fn ->
       try do
-        alias BotArmyLlm.NATS.Publisher
+        # Runtime publisher owns publish(subject, payload) — the bot-local
+        # BotArmyLlm.NATS.Publisher only has publish/1 (event maps), so the
+        # old alias raised UndefinedFunctionError (publish/2) and the event
+        # was silently dropped in the rescue. Same contract class as the
+        # 2026-09-03 gtd phantom-remote-call incident.
+        alias BotArmyLibraryRuntime.NATS.Publisher
 
         Publisher.publish("sre.metrics.llm_unavailability", %{
           "tenant_id" => tenant_id,

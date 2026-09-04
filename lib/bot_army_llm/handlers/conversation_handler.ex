@@ -150,7 +150,12 @@ defmodule BotArmyLlm.Handlers.ConversationHandler do
   defp call_llm(text, _hint) when not is_binary(text), do: {:error, "text must be a string"}
 
   defp call_llm(text, hint) do
-    case BotArmy.LLMProxy.request(text, hint: hint, timeout: 30_000) do
+    # Canonical client pattern (consumer.ex/claude_code_handler.ex) — the old
+    # BotArmy.LLMProxy module never existed anywhere in the fleet, so
+    # summarize/classify/ask raised UndefinedFunctionError at runtime.
+    llm_client = Application.get_env(:bot_army_llm, :llm_client, BotArmyLlm.LlmClient)
+
+    case llm_client.complete(text, hint: hint, timeout: 30_000) do
       {:ok, response} -> {:ok, response}
       {:error, reason} -> {:error, reason}
     end

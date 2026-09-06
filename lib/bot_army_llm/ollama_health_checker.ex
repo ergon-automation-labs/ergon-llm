@@ -11,7 +11,7 @@ defmodule BotArmyLlm.OllamaHealthChecker do
   - :heavy complexity always returns {:error, :skip_local} to force cloud routing
 
   ## Env vars
-    OLLAMA_URL              - Air node Ollama URL (default: http://localhost:11434)
+    OLLAMA_URL              - Air node Ollama URL (fallback: OLLAMA_BASE_URL; default: http://localhost:11434)
     OLLAMA_MINI_URL         - Mini node Ollama URL (empty = not configured)
     OLLAMA_PROBE_MODEL      - Model for health probes (default: gemma3:1b)
     OLLAMA_MODEL_LIGHT      - Model for light tasks (default: ministral-3:3b)
@@ -142,7 +142,14 @@ defmodule BotArmyLlm.OllamaHealthChecker do
     %{
       nodes: %{
         air: %{
-          url: BotArmyLibraryRuntime.ConfigLoader.get("OLLAMA_URL", "http://127.0.0.1:11434"),
+          # P10 (2026-09-06, Docker fleet test): the starter ships the generic
+          # OLLAMA_BASE_URL (http://ollama:11434) while this bot historically
+          # reads OLLAMA_URL — the mismatch left all LLM routing pointed at
+          # localhost:11434 (refused). Accept either dialect.
+          url: BotArmyLibraryRuntime.ConfigLoader.get(
+                "OLLAMA_URL",
+                BotArmyLibraryRuntime.ConfigLoader.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+              ),
           latency_ms: nil,
           last_probe_at: nil,
           healthy: false,

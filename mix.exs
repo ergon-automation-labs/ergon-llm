@@ -4,11 +4,15 @@ defmodule BotArmyLlm.MixProject do
   def project do
     [
       app: :bot_army_llm,
-      version: "0.9.4",
+      version: "0.9.5",
       elixir: "~> 1.14",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
+      default_release: :llm_bot,
       releases: [
+        llm_bot: [
+          applications: [bot_army_llm: :permanent]
+        ],
         llm_proxy: [
           applications: [bot_army_llm: :permanent]
         ]

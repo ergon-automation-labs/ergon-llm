@@ -33,13 +33,17 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
   alias BotArmyLlm.Services.UserPreferences
   alias BotArmyLlm.Services.EngagementTracker
   alias BotArmyLlm.Services.LearningAnalyzer
+  alias BotArmyLlm.Services.AdaptivePreferenceManager
   alias BotArmyLibraryRuntime.NATS.Publisher
 
   def handle_narrative_request(message, reply_to) do
     task_id = message["task_id"]
     force = message["force"] || false
     user_id = message["user_id"] || "abby"
-    voice_key = message["voice_key"] || :disappointed_narrator
+    voice_key_requested = message["voice_key"] || :disappointed_narrator
+
+    # Check for voice improvements from engagement data
+    {voice_key, voice_suggestion} = apply_voice_improvements(user_id, voice_key_requested)
 
     Logger.info(
       "Narrative request for task #{task_id}, force=#{force}, user=#{user_id}, voice=#{voice_key}"
@@ -333,6 +337,18 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
     DateTime.utc_now()
     |> DateTime.add(12 * 3600, :second)
     |> DateTime.to_iso8601()
+  end
+
+  defp apply_voice_improvements(user_id, requested_voice_key) do
+    current_prefs = UserPreferences.set_voice(UserPreferences.default(), requested_voice_key)
+
+    case AdaptivePreferenceManager.check_and_apply_updates(user_id, current_prefs) do
+      {:ok, updated_prefs, suggestion} ->
+        {updated_prefs.voice_key, suggestion}
+
+      {:error, _reason} ->
+        {requested_voice_key, nil}
+    end
   end
 
   defp publish_engagement_event(event) do

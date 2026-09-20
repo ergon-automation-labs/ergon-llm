@@ -128,4 +128,16 @@ defmodule BotArmyLlm.Services.UserPreferences do
         :error
     end
   end
+
+  @doc """
+  Get human-readable name for a voice key.
+  """
+  @spec voice_name(atom()) :: String.t()
+  def voice_name(:disappointed_narrator), do: "Disappointed Narrator"
+  def voice_name(:cheerleader), do: "Cheerleader"
+  def voice_name(:drill_sergeant), do: "Drill Sergeant"
+  def voice_name(:gentle_guide), do: "Gentle Guide"
+  def voice_name(:mythic_oracle), do: "Mythic Oracle"
+  def voice_name(:custom), do: "Custom Voice"
+  def voice_name(key), do: "#{key}"
 end

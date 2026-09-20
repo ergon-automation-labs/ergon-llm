@@ -87,7 +87,11 @@ defmodule BotArmyLlm.Application do
          on_role_change: {BotArmyLlm.NATS.Consumer, :leader_role_changed, []}},
         # NATS message consumer (depends on BotArmyLibraryRuntime.NATS.Connection being available)
         # Not started in tests to avoid connecting to real NATS
-        {BotArmyLlm.NATS.Consumer, []}
+        {BotArmyLlm.NATS.Consumer, []},
+
+        # Engagement event consumer (stores narrative events for learning)
+        # Not started in tests to avoid connecting to real NATS
+        {BotArmyLlm.NATS.EngagementConsumer, []}
       ]
       |> maybe_exclude_repo()
       |> maybe_exclude_consumer()
@@ -127,11 +131,12 @@ defmodule BotArmyLlm.Application do
     end
   end
 
-  # Exclude Consumer + VetoListener + IntentEvaluator + LeaderElection in tests to avoid connecting to real NATS
+  # Exclude Consumer + VetoListener + IntentEvaluator + LeaderElection + EngagementConsumer in tests to avoid connecting to real NATS
   defp maybe_exclude_consumer(children) do
     if @env == :test do
       Enum.reject(children, fn
         {BotArmyLlm.NATS.Consumer, []} -> true
+        {BotArmyLlm.NATS.EngagementConsumer, []} -> true
         {BotArmyLibraryRuntime.Intent.VetoListener, _} -> true
         {BotArmyLlm.IntentEvaluator, []} -> true
         {BotArmyLibraryRuntime.LeaderElection, _} -> true

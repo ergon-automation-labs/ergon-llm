@@ -21,6 +21,7 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
   alias BotArmyLlm.Services.NarrativeCache
   alias BotArmyLlm.Services.GtdBridgeClient
   alias BotArmyLlm.Services.NarrativeLlm
+  alias BotArmyLlm.Services.ImageLibrary
   alias BotArmyLibraryRuntime.NATS.Publisher
 
   def handle_narrative_request(message, reply_to) do
@@ -32,8 +33,16 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
 
     case generate_or_fetch_narrative(task_id, user_id, force) do
       {:ok, narrative, generated_by} ->
+        emotional_frame = narrative["emotional_frame"] || "neutral"
+        image_urls = ImageLibrary.images_for_frame(emotional_frame)
+
         response = %{
           "narrative" => narrative,
+          "images" => %{
+            "emotional_frame" => emotional_frame,
+            "urls" => image_urls,
+            "current_index" => 0
+          },
           "metadata" => %{
             "generated_by" => generated_by,
             "model" => "claude-opus-5",

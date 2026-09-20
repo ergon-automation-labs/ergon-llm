@@ -33,6 +33,7 @@ defmodule BotArmyLlm.NATS.Consumer do
     ClaudeCodeHandler,
     ConversationHandler,
     InferenceHandler,
+    NarrativeHandler,
     PromptHandler,
     RAGHandler,
     ResponseHandler,
@@ -146,6 +147,11 @@ defmodule BotArmyLlm.NATS.Consumer do
       subject: "dispatcher.subtask.intent.bot_army_llm",
       type: :subscribe,
       description: "Dispatcher subtask intent (Phase 2: autonomous execution)"
+    },
+    %{
+      subject: "bridge.narrative.refresh",
+      type: :request_reply,
+      description: "Nova narrative generation request"
     }
   ]
 
@@ -257,7 +263,8 @@ defmodule BotArmyLlm.NATS.Consumer do
       "conv.mailbox.llm",
       "conv.followup.>",
       "gossip.poll.broadcast",
-      "llm.army.opinion.vote"
+      "llm.army.opinion.vote",
+      "bridge.narrative.refresh"
     ]
 
     subs =
@@ -419,6 +426,9 @@ defmodule BotArmyLlm.NATS.Consumer do
     vote = ArmyOpinionVote.build_reply(:llm, message)
     publish_reply(reply_to, vote)
   end
+
+  defp handle_request_reply("bridge.narrative.refresh", message, reply_to),
+    do: NarrativeHandler.handle_narrative_request(message, reply_to)
 
   defp handle_request_reply(subject, _message, _reply_to) do
     Logger.debug("Unknown request/reply subject: #{subject}")

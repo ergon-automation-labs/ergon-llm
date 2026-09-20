@@ -49,6 +49,9 @@ defmodule BotArmyLlm.Application do
         # Metrics collection (in-memory counters and percentiles)
         {BotArmyLlm.Metrics, []},
 
+        # Nova narrative cache (in-memory, per-task caching for story generation)
+        {BotArmyLlm.Services.NarrativeCache, []},
+
         # Shared-library outcome tracker — records LLM inference quality
         {BotArmyLibraryLearning.OutcomeTracker,
          [repo: BotArmyLlm.Repo, name: :llm_outcome_tracker]},

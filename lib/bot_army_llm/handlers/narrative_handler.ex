@@ -24,6 +24,7 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
   alias BotArmyLlm.Services.ImageLibrary
   alias BotArmyLlm.Services.QuestTypeClassifier
   alias BotArmyLlm.Services.QuestDifficulty
+  alias BotArmyLlm.Services.ReflectionPrompts
   alias BotArmyLibraryRuntime.NATS.Publisher
 
   def handle_narrative_request(message, reply_to) do
@@ -41,6 +42,15 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
         difficulty = QuestDifficulty.calculate(task)
         max_hp = QuestDifficulty.difficulty_to_hp(difficulty)
 
+        energy_level = Map.get(task, "energy_level", 5)
+
+        reflection_prompts =
+          if quest_type == :reflection do
+            ReflectionPrompts.get_prompt_rotation(energy_level, emotional_frame, 5)
+          else
+            []
+          end
+
         response = %{
           "narrative" => narrative,
           "quest_type" => quest_type,
@@ -52,7 +62,8 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
           "quest_metadata" => quest_metadata,
           "mechanics" => %{
             "difficulty" => difficulty,
-            "max_hp" => max_hp
+            "max_hp" => max_hp,
+            "reflection_prompts" => reflection_prompts
           },
           "metadata" => %{
             "generated_by" => generated_by,

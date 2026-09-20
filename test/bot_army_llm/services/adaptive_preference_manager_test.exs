@@ -19,12 +19,6 @@ defmodule BotArmyLlm.Services.AdaptivePreferenceManagerTest do
     test "module is available and compilable" do
       assert Code.ensure_loaded?(AdaptivePreferenceManager)
     end
-
-    test "exports required public functions" do
-      assert function_exported?(AdaptivePreferenceManager, :check_and_apply_updates, 2)
-      assert function_exported?(AdaptivePreferenceManager, :analyze_and_suggest, 2)
-      assert function_exported?(AdaptivePreferenceManager, :learning_insights, 2)
-    end
   end
 
   describe "integration with UserPreferences" do

@@ -29,22 +29,28 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
   alias BotArmyLlm.Services.BossAntagonist
   alias BotArmyLlm.Services.AllianceSystem
   alias BotArmyLlm.Services.CreationCanvas
+  alias BotArmyLlm.Services.VoicePreset
+  alias BotArmyLlm.Services.UserPreferences
   alias BotArmyLibraryRuntime.NATS.Publisher
 
   def handle_narrative_request(message, reply_to) do
     task_id = message["task_id"]
     force = message["force"] || false
     user_id = message["user_id"] || "abby"
+    voice_key = message["voice_key"] || :disappointed_narrator
 
-    Logger.info("Narrative request for task #{task_id}, force=#{force}, user=#{user_id}")
+    Logger.info(
+      "Narrative request for task #{task_id}, force=#{force}, user=#{user_id}, voice=#{voice_key}"
+    )
 
-    case generate_or_fetch_narrative(task_id, user_id, force) do
-      {:ok, narrative, generated_by, quest_type, task} ->
+    case generate_or_fetch_narrative(task_id, user_id, force, voice_key) do
+      {:ok, narrative, generated_by, quest_type, task, voice_key} ->
         emotional_frame = narrative["emotional_frame"] || "neutral"
         image_urls = ImageLibrary.images_for_frame(emotional_frame)
         quest_metadata = QuestTypeClassifier.metadata(quest_type)
         difficulty = QuestDifficulty.calculate(task)
         max_hp = QuestDifficulty.difficulty_to_hp(difficulty)
+        voice = VoicePreset.get_preset(voice_key)
 
         energy_level = Map.get(task, "energy_level", 5)
 
@@ -123,6 +129,15 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
           "antagonist" => %{
             "taunt" => antagonist_taunt
           },
+          "voice" => %{
+            "key" => to_string(voice.key),
+            "name" => voice.name,
+            "warmth" => voice.warmth,
+            "sharpness" => voice.sharpness,
+            "humor" => voice.humor,
+            "challenge" => voice.challenge,
+            "support" => voice.support
+          },
           "metadata" => %{
             "generated_by" => generated_by,
             "model" => "claude-opus-5",
@@ -146,7 +161,7 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
     end
   end
 
-  defp generate_or_fetch_narrative(task_id, user_id, force) do
+  defp generate_or_fetch_narrative(task_id, user_id, force, voice_key) do
     with {:ok, task} <- fetch_task(task_id, user_id),
          {:ok, project} <- fetch_project(task, user_id),
          task_context <- GtdBridgeClient.build_task_context(task, project, user_id),
@@ -154,16 +169,16 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
          quest_type <- classify_quest(task) do
       if force do
         Logger.info("Force refresh: generating new narrative for task #{task_id}")
-        generate_narrative(task_context, input_hash, user_id, quest_type, task)
+        generate_narrative(task_context, input_hash, user_id, quest_type, task, voice_key)
       else
         case NarrativeCache.get_cached(task_id, input_hash) do
           {:hit, cached_narrative} ->
             Logger.info("Cache hit for task #{task_id}")
-            {:ok, cached_narrative, "cached", quest_type, task}
+            {:ok, cached_narrative, "cached", quest_type, task, voice_key}
 
           {:miss, reason} ->
             Logger.info("Cache miss for task #{task_id} (#{reason})")
-            generate_narrative(task_context, input_hash, user_id, quest_type, task)
+            generate_narrative(task_context, input_hash, user_id, quest_type, task, voice_key)
         end
       end
     else
@@ -204,12 +219,14 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
     end
   end
 
-  defp generate_narrative(task_context, input_hash, _user_id, quest_type, task) do
+  defp generate_narrative(task_context, input_hash, _user_id, quest_type, task, voice_key) do
     Logger.info(
-      "Generating new narrative for task #{task_context["task_id"]} (type: #{quest_type})"
+      "Generating new narrative for task #{task_context["task_id"]} (type: #{quest_type}, voice: #{voice_key})"
     )
 
-    case NarrativeLlm.generate_narrative(task_context, quest_type) do
+    voice = VoicePreset.get_preset(voice_key)
+
+    case NarrativeLlm.generate_narrative(task_context, quest_type, voice) do
       {:ok, narrative} ->
         Logger.info("Narrative generated successfully")
 

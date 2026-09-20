@@ -9,6 +9,7 @@ defmodule BotArmyLlm.Services.NarrativeLlm do
   require Logger
   alias BotArmyLlm.ClaudePassthroughChain
   alias BotArmyLlm.Prompts.NovaTemplate
+  alias BotArmyLlm.Services.VoicePreset
 
   @timeout_ms 10_000
   @max_tokens 500
@@ -22,14 +23,21 @@ defmodule BotArmyLlm.Services.NarrativeLlm do
   - beat_next
   - emotional_frame
   """
-  def generate_narrative(task_context, quest_type \\ :combat) do
+  def generate_narrative(task_context, quest_type \\ :combat, voice \\ nil) do
     prompt = NovaTemplate.build_prompt(task_context, quest_type)
     system_prompt = NovaTemplate.system_prompt(quest_type)
+
+    final_system_prompt =
+      if voice do
+        system_prompt <> "\n\n" <> VoicePreset.voice_modifier(voice)
+      else
+        system_prompt
+      end
 
     request = %{
       "model" => "claude-opus-5",
       "max_tokens" => @max_tokens,
-      "system" => system_prompt,
+      "system" => final_system_prompt,
       "messages" => [
         %{
           "role" => "user",

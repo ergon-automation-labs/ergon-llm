@@ -20,6 +20,7 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
   require Logger
   alias BotArmyLlm.Services.NarrativeCache
   alias BotArmyLlm.Services.GtdBridgeClient
+  alias BotArmyLlm.Services.NarrativeLlm
   alias BotArmyLibraryRuntime.NATS.Publisher
 
   def handle_narrative_request(message, reply_to) do
@@ -116,34 +117,50 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
   defp generate_narrative(task_context, input_hash, _user_id) do
     Logger.info("Generating new narrative for task #{task_context["task_id"]}")
 
-    # Phase 2: Generate mock narrative
-    # Phase 3: Replace with actual LLM call
-    narrative = %{
-      "quest_title" => generate_quest_title(task_context),
-      "scene_flavor" => generate_scene_flavor(task_context),
-      "beat_next" => generate_beat_next(task_context),
-      "emotional_frame" => select_emotional_frame(task_context)
-    }
+    case NarrativeLlm.generate_narrative(task_context) do
+      {:ok, narrative} ->
+        Logger.info("Narrative generated successfully")
 
-    # Cache it
-    NarrativeCache.put_cached(
-      task_context["task_id"],
-      narrative,
-      task_context,
-      input_hash
-    )
+        # Cache it
+        NarrativeCache.put_cached(
+          task_context["task_id"],
+          narrative,
+          task_context,
+          input_hash
+        )
 
-    {:ok, narrative, "llm_bot"}
+        {:ok, narrative, "llm_bot"}
+
+      {:error, reason} ->
+        Logger.error("LLM generation failed: #{inspect(reason)}")
+
+        # Fallback to template-based generation
+        Logger.info("Falling back to template generation")
+
+        narrative = %{
+          "quest_title" => generate_fallback_quest_title(task_context),
+          "scene_flavor" => generate_fallback_scene_flavor(task_context),
+          "beat_next" => "Begin with one small action.",
+          "emotional_frame" => select_emotional_frame(task_context)
+        }
+
+        NarrativeCache.put_cached(
+          task_context["task_id"],
+          narrative,
+          task_context,
+          input_hash
+        )
+
+        {:ok, narrative, "fallback"}
+    end
   end
 
-  # Phase 2: Template-based generation (placeholder for actual LLM)
-  # These will be replaced with LLM calls in Phase 3
-
-  defp generate_quest_title(context) do
+  # Fallback template-based generation when LLM fails
+  defp generate_fallback_quest_title(context) do
     "#{context["task_title"]} awaits"
   end
 
-  defp generate_scene_flavor(context) do
+  defp generate_fallback_scene_flavor(context) do
     energy = context["energy_level"]
     time = context["time_of_day"]
 
@@ -160,10 +177,6 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
       _ ->
         "The world waits. Your next step is there, ready."
     end
-  end
-
-  defp generate_beat_next(_context) do
-    "Begin with one small action."
   end
 
   defp select_emotional_frame(context) do

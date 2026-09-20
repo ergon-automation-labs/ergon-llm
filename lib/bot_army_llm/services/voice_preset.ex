@@ -12,6 +12,8 @@ defmodule BotArmyLlm.Services.VoicePreset do
           | :drill_sergeant
           | :gentle_guide
           | :mythic_oracle
+          | :commanding_authority
+          | :nurturing_aftercare
           | :custom
 
   @type voice :: %{
@@ -35,7 +37,9 @@ defmodule BotArmyLlm.Services.VoicePreset do
       cheerleader(),
       drill_sergeant(),
       gentle_guide(),
-      mythic_oracle()
+      mythic_oracle(),
+      commanding_authority(),
+      nurturing_aftercare()
     ]
   end
 
@@ -48,6 +52,8 @@ defmodule BotArmyLlm.Services.VoicePreset do
   def get_preset(:drill_sergeant), do: drill_sergeant()
   def get_preset(:gentle_guide), do: gentle_guide()
   def get_preset(:mythic_oracle), do: mythic_oracle()
+  def get_preset(:commanding_authority), do: commanding_authority()
+  def get_preset(:nurturing_aftercare), do: nurturing_aftercare()
   def get_preset(:custom), do: custom()
   def get_preset(_), do: disappointed_narrator()
 
@@ -94,6 +100,20 @@ defmodule BotArmyLlm.Services.VoicePreset do
         You frame quests as mythic: not just tasks, but trials that shape who they become.
         """
 
+      :commanding_authority ->
+        """
+        You are clear, direct, and unapologetic. You hold boundaries. This is non-negotiable.
+        You speak with authority and respect strength. No coddling, no excuses. You demand excellence because they can deliver it.
+        You are firm but fair. You command respect through clarity and follow-through.
+        """
+
+      :nurturing_aftercare ->
+        """
+        You are warm, affirming, and gentle. You celebrate the act of showing up. You validate struggle.
+        Your tone is soft but steady. You provide the care someone needs after pushing hard.
+        You know that recovery is part of the work. You make space for gentleness. You affirm their worth.
+        """
+
       :custom ->
         """
         You are Nova. You have been customized to match this user's preferences.
@@ -111,6 +131,8 @@ defmodule BotArmyLlm.Services.VoicePreset do
   def voice_name(:drill_sergeant), do: "Drill Sergeant"
   def voice_name(:gentle_guide), do: "Gentle Guide"
   def voice_name(:mythic_oracle), do: "Mythic Oracle"
+  def voice_name(:commanding_authority), do: "Commanding Authority"
+  def voice_name(:nurturing_aftercare), do: "Nurturing Aftercare"
   def voice_name(:custom), do: "Custom"
   def voice_name(_), do: "Unknown"
 
@@ -132,6 +154,12 @@ defmodule BotArmyLlm.Services.VoicePreset do
 
   def voice_description(:mythic_oracle),
     do: "Mysterious, poetic, sees the epic. Frames quests as trials that shape you."
+
+  def voice_description(:commanding_authority),
+    do: "Direct, clear, unapologetic. Holds boundaries and demands excellence."
+
+  def voice_description(:nurturing_aftercare),
+    do: "Warm, affirming, gentle. Celebrates showing up and validates the work."
 
   def voice_description(:custom), do: "Your custom Nova, tuned to your preferences."
 
@@ -199,6 +227,32 @@ defmodule BotArmyLlm.Services.VoicePreset do
       humor: 2,
       challenge: 6,
       support: 4
+    }
+  end
+
+  defp commanding_authority do
+    %{
+      key: :commanding_authority,
+      name: "Commanding Authority",
+      description: voice_description(:commanding_authority),
+      warmth: 3,
+      sharpness: 10,
+      humor: 2,
+      challenge: 10,
+      support: 2
+    }
+  end
+
+  defp nurturing_aftercare do
+    %{
+      key: :nurturing_aftercare,
+      name: "Nurturing Aftercare",
+      description: voice_description(:nurturing_aftercare),
+      warmth: 10,
+      sharpness: 1,
+      humor: 5,
+      challenge: 1,
+      support: 10
     }
   end
 

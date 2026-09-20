@@ -8,7 +8,7 @@ defmodule BotArmyLlm.Services.VoicePresetTest do
     test "returns all preset voices" do
       presets = VoicePreset.all_presets()
       assert is_list(presets)
-      assert length(presets) == 5
+      assert length(presets) == 7
     end
 
     test "each preset has required fields" do

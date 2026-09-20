@@ -28,6 +28,7 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
   alias BotArmyLlm.Services.MaintenanceRitual
   alias BotArmyLlm.Services.BossAntagonist
   alias BotArmyLlm.Services.AllianceSystem
+  alias BotArmyLlm.Services.CreationCanvas
   alias BotArmyLibraryRuntime.NATS.Publisher
 
   def handle_narrative_request(message, reply_to) do
@@ -77,6 +78,21 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
             %{}
           end
 
+        creation_data =
+          if quest_type == :creation do
+            canvas = CreationCanvas.canvas_from_task(task)
+
+            %{
+              "canvas" => canvas,
+              "stage_phrase" => CreationCanvas.stage_phrase(canvas["stage"]),
+              "maker_presence" => CreationCanvas.maker_presence(canvas),
+              "celebration" => CreationCanvas.creation_celebration(canvas),
+              "progress" => CreationCanvas.progress_journey(canvas["stage"])
+            }
+          else
+            %{}
+          end
+
         cumulative_difficulty = difficulty * 5
 
         antagonist_taunt =
@@ -101,7 +117,8 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
             "max_hp" => max_hp,
             "reflection_prompts" => reflection_prompts,
             "ritual" => ritual_metadata,
-            "alliance" => alliance_data
+            "alliance" => alliance_data,
+            "creation" => creation_data
           },
           "antagonist" => %{
             "taunt" => antagonist_taunt

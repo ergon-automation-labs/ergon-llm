@@ -22,6 +22,7 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
   alias BotArmyLlm.Services.GtdBridgeClient
   alias BotArmyLlm.Services.NarrativeLlm
   alias BotArmyLlm.Services.ImageLibrary
+  alias BotArmyLlm.Services.QuestTypeClassifier
   alias BotArmyLibraryRuntime.NATS.Publisher
 
   def handle_narrative_request(message, reply_to) do
@@ -32,17 +33,20 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
     Logger.info("Narrative request for task #{task_id}, force=#{force}, user=#{user_id}")
 
     case generate_or_fetch_narrative(task_id, user_id, force) do
-      {:ok, narrative, generated_by} ->
+      {:ok, narrative, generated_by, quest_type} ->
         emotional_frame = narrative["emotional_frame"] || "neutral"
         image_urls = ImageLibrary.images_for_frame(emotional_frame)
+        quest_metadata = QuestTypeClassifier.metadata(quest_type)
 
         response = %{
           "narrative" => narrative,
+          "quest_type" => quest_type,
           "images" => %{
             "emotional_frame" => emotional_frame,
             "urls" => image_urls,
             "current_index" => 0
           },
+          "quest_metadata" => quest_metadata,
           "metadata" => %{
             "generated_by" => generated_by,
             "model" => "claude-opus-5",
@@ -70,19 +74,20 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
     with {:ok, task} <- fetch_task(task_id, user_id),
          {:ok, project} <- fetch_project(task, user_id),
          task_context <- GtdBridgeClient.build_task_context(task, project, user_id),
-         input_hash <- GtdBridgeClient.calculate_input_hash(task_context) do
+         input_hash <- GtdBridgeClient.calculate_input_hash(task_context),
+         quest_type <- classify_quest(task) do
       if force do
         Logger.info("Force refresh: generating new narrative for task #{task_id}")
-        generate_narrative(task_context, input_hash, user_id)
+        generate_narrative(task_context, input_hash, user_id, quest_type)
       else
         case NarrativeCache.get_cached(task_id, input_hash) do
           {:hit, cached_narrative} ->
             Logger.info("Cache hit for task #{task_id}")
-            {:ok, cached_narrative, "cached"}
+            {:ok, cached_narrative, "cached", quest_type}
 
           {:miss, reason} ->
             Logger.info("Cache miss for task #{task_id} (#{reason})")
-            generate_narrative(task_context, input_hash, user_id)
+            generate_narrative(task_context, input_hash, user_id, quest_type)
         end
       end
     else
@@ -123,10 +128,12 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
     end
   end
 
-  defp generate_narrative(task_context, input_hash, _user_id) do
-    Logger.info("Generating new narrative for task #{task_context["task_id"]}")
+  defp generate_narrative(task_context, input_hash, _user_id, quest_type) do
+    Logger.info(
+      "Generating new narrative for task #{task_context["task_id"]} (type: #{quest_type})"
+    )
 
-    case NarrativeLlm.generate_narrative(task_context) do
+    case NarrativeLlm.generate_narrative(task_context, quest_type) do
       {:ok, narrative} ->
         Logger.info("Narrative generated successfully")
 
@@ -138,7 +145,7 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
           input_hash
         )
 
-        {:ok, narrative, "llm_bot"}
+        {:ok, narrative, "llm_bot", quest_type}
 
       {:error, reason} ->
         Logger.error("LLM generation failed: #{inspect(reason)}")
@@ -160,8 +167,16 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
           input_hash
         )
 
-        {:ok, narrative, "fallback"}
+        {:ok, narrative, "fallback", quest_type}
     end
+  end
+
+  defp classify_quest(task) do
+    title = task["title"] || ""
+    description = task["description"]
+    tags = task["tags"] || []
+
+    QuestTypeClassifier.classify(title, description, tags)
   end
 
   # Fallback template-based generation when LLM fails

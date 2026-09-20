@@ -22,13 +22,14 @@ defmodule BotArmyLlm.Services.NarrativeLlm do
   - beat_next
   - emotional_frame
   """
-  def generate_narrative(task_context) do
-    prompt = NovaTemplate.build_prompt(task_context)
+  def generate_narrative(task_context, quest_type \\ :combat) do
+    prompt = NovaTemplate.build_prompt(task_context, quest_type)
+    system_prompt = NovaTemplate.system_prompt(quest_type)
 
     request = %{
       "model" => "claude-opus-5",
       "max_tokens" => @max_tokens,
-      "system" => NovaTemplate.system_prompt(),
+      "system" => system_prompt,
       "messages" => [
         %{
           "role" => "user",

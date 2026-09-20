@@ -23,12 +23,41 @@ defmodule BotArmyLlm.Prompts.NovaTemplate do
   Output ONLY valid JSON with these exact keys, no markdown code blocks.
   """
 
-  def system_prompt, do: @system_prompt
+  def system_prompt(quest_type \\ :combat) do
+    base = @system_prompt
 
-  def build_prompt(task_context) do
+    type_guidance =
+      case quest_type do
+        :combat ->
+          "The task is a boss fight. Describe an enemy matching the challenge level. Make it vivid and visceral."
+
+        :reflection ->
+          "The task is introspection. Frame it as dialogue with a wise guide. No failure possible—only discovery."
+
+        :maintenance ->
+          "The task is ritual. Frame it as daily devotion, keeping the light alive. Simple. Necessary. Eternal."
+
+        :exploration ->
+          "The task is discovery. Frame the unknown as exciting. The outcome is learning, not success/failure."
+
+        :collaboration ->
+          "The task involves others. Frame it as bringing allies together. Emphasize connection over completion."
+
+        :creation ->
+          "The task is making something new. Frame it as crafting from raw materials. The journey matters more than the destination."
+
+        _ ->
+          ""
+      end
+
+    base <> "\n\nQuest Type: #{quest_type}\n" <> type_guidance
+  end
+
+  def build_prompt(task_context, quest_type \\ :combat) do
     """
     Task: #{task_context.task_title}
     Project: #{task_context.project_name} - #{task_context.project_goal}
+    Quest Type: #{quest_type}
 
     Context:
     - Time: #{task_context.time_of_day} (#{task_context.hour}:00)
@@ -36,6 +65,7 @@ defmodule BotArmyLlm.Prompts.NovaTemplate do
     - Streak: #{streak_description(task_context.streak)}
 
     Generate narrative as JSON with keys: quest_title, scene_flavor, beat_next, emotional_frame.
+    Frame this as a #{quest_type} quest (use the system prompt guidance).
     """
   end
 

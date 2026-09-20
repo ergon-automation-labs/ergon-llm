@@ -26,6 +26,7 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
   alias BotArmyLlm.Services.QuestDifficulty
   alias BotArmyLlm.Services.ReflectionPrompts
   alias BotArmyLlm.Services.MaintenanceRitual
+  alias BotArmyLlm.Services.BossAntagonist
   alias BotArmyLibraryRuntime.NATS.Publisher
 
   def handle_narrative_request(message, reply_to) do
@@ -59,6 +60,16 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
             %{}
           end
 
+        cumulative_difficulty = difficulty * 5
+
+        antagonist_taunt =
+          BossAntagonist.taunt_for_completion(
+            to_string(quest_type),
+            difficulty,
+            energy_level,
+            cumulative_difficulty
+          )
+
         response = %{
           "narrative" => narrative,
           "quest_type" => quest_type,
@@ -73,6 +84,9 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
             "max_hp" => max_hp,
             "reflection_prompts" => reflection_prompts,
             "ritual" => ritual_metadata
+          },
+          "antagonist" => %{
+            "taunt" => antagonist_taunt
           },
           "metadata" => %{
             "generated_by" => generated_by,

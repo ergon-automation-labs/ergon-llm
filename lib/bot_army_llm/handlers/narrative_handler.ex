@@ -27,6 +27,7 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
   alias BotArmyLlm.Services.ReflectionPrompts
   alias BotArmyLlm.Services.MaintenanceRitual
   alias BotArmyLlm.Services.BossAntagonist
+  alias BotArmyLlm.Services.AllianceSystem
   alias BotArmyLibraryRuntime.NATS.Publisher
 
   def handle_narrative_request(message, reply_to) do
@@ -60,6 +61,22 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
             %{}
           end
 
+        alliance_data =
+          if quest_type == :collaboration do
+            allies = AllianceSystem.allies_from_task(task)
+
+            %{
+              "allies" => allies,
+              "allies_formatted" => AllianceSystem.format_allies(allies),
+              "combined_strength" => AllianceSystem.combined_strength(allies),
+              "morale" => AllianceSystem.morale(allies),
+              "morale_phrase" => AllianceSystem.morale_phrase(AllianceSystem.morale(allies)),
+              "prompts" => AllianceSystem.collaboration_prompts(allies)
+            }
+          else
+            %{}
+          end
+
         cumulative_difficulty = difficulty * 5
 
         antagonist_taunt =
@@ -83,7 +100,8 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
             "difficulty" => difficulty,
             "max_hp" => max_hp,
             "reflection_prompts" => reflection_prompts,
-            "ritual" => ritual_metadata
+            "ritual" => ritual_metadata,
+            "alliance" => alliance_data
           },
           "antagonist" => %{
             "taunt" => antagonist_taunt

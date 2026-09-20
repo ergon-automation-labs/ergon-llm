@@ -31,6 +31,8 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
   alias BotArmyLlm.Services.CreationCanvas
   alias BotArmyLlm.Services.VoicePreset
   alias BotArmyLlm.Services.UserPreferences
+  alias BotArmyLlm.Services.EngagementTracker
+  alias BotArmyLlm.Services.LearningAnalyzer
   alias BotArmyLibraryRuntime.NATS.Publisher
 
   def handle_narrative_request(message, reply_to) do
@@ -109,6 +111,17 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
             cumulative_difficulty
           )
 
+        engagement_event =
+          EngagementTracker.narrative_shown(
+            to_string(task_id),
+            to_string(user_id),
+            voice_key,
+            emotional_frame,
+            quest_type
+          )
+
+        publish_engagement_event(engagement_event)
+
         response = %{
           "narrative" => narrative,
           "quest_type" => quest_type,
@@ -143,6 +156,11 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
             "model" => "claude-opus-5",
             "cached_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
             "valid_until" => valid_until()
+          },
+          "engagement" => %{
+            "event_type" => "narrative_shown",
+            "event_id" => engagement_event.task_id,
+            "recorded_at" => engagement_event.timestamp |> DateTime.to_iso8601()
           }
         }
 
@@ -315,6 +333,19 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
     DateTime.utc_now()
     |> DateTime.add(12 * 3600, :second)
     |> DateTime.to_iso8601()
+  end
+
+  defp publish_engagement_event(event) do
+    subject = "events.narrative.shown"
+
+    case EngagementTracker.encode(event) do
+      json ->
+        Publisher.publish(subject, json)
+        Logger.debug("Published engagement event to #{subject}")
+
+      {:error, reason} ->
+        Logger.error("Failed to encode engagement event: #{inspect(reason)}")
+    end
   end
 
   defp publish_reply(reply_to, response) do

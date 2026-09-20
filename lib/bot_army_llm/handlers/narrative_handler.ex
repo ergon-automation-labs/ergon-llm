@@ -34,10 +34,12 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
     Logger.info("Narrative request for task #{task_id}, force=#{force}, user=#{user_id}")
 
     case generate_or_fetch_narrative(task_id, user_id, force) do
-      {:ok, narrative, generated_by, quest_type} ->
+      {:ok, narrative, generated_by, quest_type, task} ->
         emotional_frame = narrative["emotional_frame"] || "neutral"
         image_urls = ImageLibrary.images_for_frame(emotional_frame)
         quest_metadata = QuestTypeClassifier.metadata(quest_type)
+        difficulty = QuestDifficulty.calculate(task)
+        max_hp = QuestDifficulty.difficulty_to_hp(difficulty)
 
         response = %{
           "narrative" => narrative,
@@ -48,6 +50,10 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
             "current_index" => 0
           },
           "quest_metadata" => quest_metadata,
+          "mechanics" => %{
+            "difficulty" => difficulty,
+            "max_hp" => max_hp
+          },
           "metadata" => %{
             "generated_by" => generated_by,
             "model" => "claude-opus-5",
@@ -79,16 +85,16 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
          quest_type <- classify_quest(task) do
       if force do
         Logger.info("Force refresh: generating new narrative for task #{task_id}")
-        generate_narrative(task_context, input_hash, user_id, quest_type)
+        generate_narrative(task_context, input_hash, user_id, quest_type, task)
       else
         case NarrativeCache.get_cached(task_id, input_hash) do
           {:hit, cached_narrative} ->
             Logger.info("Cache hit for task #{task_id}")
-            {:ok, cached_narrative, "cached", quest_type}
+            {:ok, cached_narrative, "cached", quest_type, task}
 
           {:miss, reason} ->
             Logger.info("Cache miss for task #{task_id} (#{reason})")
-            generate_narrative(task_context, input_hash, user_id, quest_type)
+            generate_narrative(task_context, input_hash, user_id, quest_type, task)
         end
       end
     else
@@ -129,7 +135,7 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
     end
   end
 
-  defp generate_narrative(task_context, input_hash, _user_id, quest_type) do
+  defp generate_narrative(task_context, input_hash, _user_id, quest_type, task) do
     Logger.info(
       "Generating new narrative for task #{task_context["task_id"]} (type: #{quest_type})"
     )
@@ -146,7 +152,7 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
           input_hash
         )
 
-        {:ok, narrative, "llm_bot", quest_type}
+        {:ok, narrative, "llm_bot", quest_type, task}
 
       {:error, reason} ->
         Logger.error("LLM generation failed: #{inspect(reason)}")
@@ -168,7 +174,7 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
           input_hash
         )
 
-        {:ok, narrative, "fallback", quest_type}
+        {:ok, narrative, "fallback", quest_type, task}
     end
   end
 

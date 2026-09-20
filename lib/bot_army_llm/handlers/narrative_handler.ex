@@ -23,6 +23,7 @@ defmodule BotArmyLlm.Handlers.NarrativeHandler do
   alias BotArmyLlm.Services.NarrativeLlm
   alias BotArmyLlm.Services.ImageLibrary
   alias BotArmyLlm.Services.QuestTypeClassifier
+  alias BotArmyLlm.Services.QuestDifficulty
   alias BotArmyLibraryRuntime.NATS.Publisher
 
   def handle_narrative_request(message, reply_to) do

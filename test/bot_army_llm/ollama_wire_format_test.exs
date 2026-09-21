@@ -1,5 +1,8 @@
 defmodule BotArmyLlm.OllamaWireFormatTest do
-  use ExUnit.Case, async: true
+  # NOT async: this file mutates global state (OLLAMA_WIRE_FORMAT, the
+  # :ollama_health_checker app env). As async: true it raced every other test
+  # that reads those, intermittently breaking model/node routing assertions.
+  use ExUnit.Case, async: false
   @moduletag :client
 
   import ExUnit.CaptureLog
@@ -15,6 +18,7 @@ defmodule BotArmyLlm.OllamaWireFormatTest do
 
     Application.put_env(:bot_army_llm, :provider_chain, [:ollama])
     Application.put_env(:bot_army_llm, :ollama_health_checker, __MODULE__.StubChecker)
+    force_ollama_circuit_closed()
 
     on_exit(fn ->
       if prev_chain == nil do
@@ -31,6 +35,25 @@ defmodule BotArmyLlm.OllamaWireFormatTest do
     end)
 
     :ok
+  end
+
+  # CircuitBreaker.record_success/1 cannot close an :open circuit (only a
+  # half-open probe can), and 5 accumulated failures elsewhere in the suite are
+  # enough to open :ollama and silently skip these tests' :gen_tcp servers.
+  defp force_ollama_circuit_closed do
+    case Registry.lookup(BotArmyLlm.CircuitBreakerRegistry, :ollama) do
+      [{pid, _}] ->
+        :sys.replace_state(pid, fn state ->
+          state
+          |> Map.put(:circuit_state, :closed)
+          |> Map.put(:failures, 0)
+          |> Map.put(:opened_at, nil)
+          |> Map.put(:cooldown_until, nil)
+        end)
+
+      _other ->
+        :ok
+    end
   end
 
   defmodule StubChecker do

@@ -38,7 +38,9 @@ defmodule BotArmyLlm.NATS.EngagementConsumer do
 
   @impl true
   def handle_continue(:subscribe, state) do
-    case Connection.conn() do
+    # Connection.conn/0 does not exist in BotArmyLibraryRuntime.NATS.Connection —
+    # this path always raised, so the consumer never subscribed to anything.
+    case GenServer.call(Connection, :get_connection, 5_000) do
       {:ok, conn} ->
         Logger.info("Subscribing to engagement event subjects: #{inspect(@subjects)}")
 

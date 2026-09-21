@@ -717,6 +717,11 @@ defmodule BotArmyLlm.NATS.Consumer do
 
   defp normalize_failed_provider_name(_), do: ""
 
+  # Per-request routing controls that must survive from payload to provider opts.
+  # "model" was silently dropped on this path while llm.prompt.submit honored it,
+  # and "ollama_node" is what makes an explicit-only node (mini) addressable.
+  @chat_passthrough [{"model", :model}, {"ollama_node", :ollama_node}]
+
   defp chat_opts_for_lane(message, lane) do
     # Tiered defaults keep foreground traffic snappy and background traffic cheaper.
     # Explicit caller options still win when present.
@@ -732,11 +737,28 @@ defmodule BotArmyLlm.NATS.Consumer do
           [temperature: 0.5, max_tokens: 700, allow_cloud_when_sensitive: false]
       end
 
-    Enum.reduce(defaults, [], fn {key, default}, acc ->
-      value = Map.get(message, Atom.to_string(key), default)
-      Keyword.put(acc, key, value)
+    lane_opts =
+      Enum.reduce(defaults, [], fn {key, default}, acc ->
+        value = Map.get(message, Atom.to_string(key), default)
+        Keyword.put(acc, key, value)
+      end)
+
+    Enum.reduce(@chat_passthrough, lane_opts, fn {payload_key, opt_key}, acc ->
+      case message |> Map.get(payload_key) |> trimmed_string() do
+        nil -> acc
+        value -> Keyword.put(acc, opt_key, value)
+      end
     end)
   end
+
+  defp trimmed_string(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      other -> other
+    end
+  end
+
+  defp trimmed_string(_value), do: nil
 
   defp has_anthropic_format?(message) do
     system = Map.get(message, "system")

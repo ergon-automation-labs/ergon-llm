@@ -425,6 +425,126 @@ defmodule BotArmyLlm.OllamaHealthCheckerTest do
     end
   end
 
+  describe "best_ollama_node/2 (explicit node pinning)" do
+    # Mini holds models air does not (baytout3/qwen3.5-uncensored:27B) and must
+    # never win implicit latency routing.
+    defp pinned_state do
+      %{
+        nodes: %{
+          air: %{
+            url: "http://air:11434",
+            latency_ms: 10,
+            last_probe_at: DateTime.utc_now(),
+            healthy: true,
+            memory_pressure: 0.1,
+            cpu_load: 0.1,
+            enabled: true,
+            explicit_only: false,
+            default_model: nil,
+            probe_model: nil
+          },
+          mini: %{
+            url: "http://mini:11434",
+            latency_ms: 9_000,
+            last_probe_at: DateTime.utc_now(),
+            healthy: true,
+            memory_pressure: 0.2,
+            cpu_load: 0.2,
+            enabled: true,
+            explicit_only: true,
+            default_model: "baytout3/qwen3.5-uncensored:27B",
+            probe_model: "lfm2.5:latest"
+          }
+        },
+        probe_model: "gemma3:1b",
+        degraded_latency_ms: 8000
+      }
+    end
+
+    test "a named node wins over a faster node and keeps its own model" do
+      with_state(pinned_state(), fn ->
+        assert {:ok, {"http://mini:11434", "baytout3/qwen3.5-uncensored:27B"}} =
+                 OllamaHealthChecker.best_ollama_node(:light, "mini")
+
+        # atom form is equivalent
+        assert {:ok, {"http://mini:11434", "baytout3/qwen3.5-uncensored:27B"}} =
+                 OllamaHealthChecker.best_ollama_node(:light, :mini)
+      end)
+    end
+
+    test "implicit routing skips explicit-only nodes" do
+      with_state(pinned_state(), fn ->
+        assert {:ok, {"http://air:11434", _model}} = OllamaHealthChecker.best_ollama_node(:light)
+
+        assert {:ok, {"http://air:11434", _model}} =
+                 OllamaHealthChecker.best_ollama_node(:light, nil)
+
+        assert {:ok, {"http://air:11434", _model}} =
+                 OllamaHealthChecker.best_ollama_node(:light, "")
+
+        assert {:ok, {"http://air:11434", _model}} =
+                 OllamaHealthChecker.best_ollama_node(:light, "auto")
+      end)
+    end
+
+    test "an explicit-only node that is the only healthy node yields no implicit route" do
+      state = pinned_state()
+      state = put_in(state.nodes.air.healthy, false)
+
+      with_state(state, fn ->
+        assert {:error, :no_healthy_nodes} = OllamaHealthChecker.best_ollama_node(:light)
+      end)
+    end
+
+    test "a named node without a url reports node_not_configured" do
+      state = pinned_state()
+      state = put_in(state.nodes.mini.url, "")
+
+      with_state(state, fn ->
+        assert {:error, {:node_not_configured, "mini"}} =
+                 OllamaHealthChecker.best_ollama_node(:light, "mini")
+      end)
+    end
+
+    test "a named unhealthy node reports node_unhealthy" do
+      state = pinned_state()
+      state = put_in(state.nodes.mini.healthy, false)
+
+      with_state(state, fn ->
+        assert {:error, {:node_unhealthy, "mini"}} =
+                 OllamaHealthChecker.best_ollama_node(:light, "mini")
+      end)
+    end
+
+    test "an unknown node name reports unknown_node" do
+      with_state(pinned_state(), fn ->
+        assert {:error, {:unknown_node, "nope"}} =
+                 OllamaHealthChecker.best_ollama_node(:light, "nope")
+      end)
+    end
+
+    test "a named node without a default model falls back to complexity tiers" do
+      state = pinned_state()
+      state = put_in(state.nodes.mini.default_model, nil)
+
+      with_state(state, fn ->
+        assert {:ok, {"http://mini:11434", model}} =
+                 OllamaHealthChecker.best_ollama_node(:light, "mini")
+
+        assert is_binary(model)
+      end)
+    end
+
+    test "node_status exposes explicit_only" do
+      with_state(pinned_state(), fn ->
+        status = OllamaHealthChecker.node_status()
+
+        assert %{explicit_only: false} = Enum.find(status, &(&1.name == :air))
+        assert %{explicit_only: true} = Enum.find(status, &(&1.name == :mini))
+      end)
+    end
+  end
+
   # Helper to temporarily replace GenServer state
   defp with_state(new_state, func) do
     # Start the health checker if not running

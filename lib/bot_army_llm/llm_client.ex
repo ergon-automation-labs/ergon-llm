@@ -44,6 +44,33 @@ defmodule BotArmyLlm.LlmClient do
     Application.get_env(:bot_army_llm, :ollama_health_checker, OllamaHealthChecker)
   end
 
+  # Per-request node targeting. Callers (and test doubles) that predate node
+  # pinning implement only best_ollama_node/1, so route to /2 only when a node
+  # was actually named.
+  defp best_ollama_node_for(complexity, opts) do
+    case requested_node(opts) do
+      nil -> health_checker_module().best_ollama_node(complexity)
+      node -> health_checker_module().best_ollama_node(complexity, node)
+    end
+  end
+
+  defp requested_node(opts) do
+    case Keyword.get(opts, :ollama_node) do
+      value when is_binary(value) ->
+        case String.trim(value) do
+          "" -> nil
+          "auto" -> nil
+          other -> other
+        end
+
+      value when is_atom(value) and not is_nil(value) ->
+        Atom.to_string(value)
+
+      _other ->
+        nil
+    end
+  end
+
   defp anthropic_url,
     do:
       BotArmyLibraryRuntime.ConfigLoader.get(
@@ -83,7 +110,7 @@ defmodule BotArmyLlm.LlmClient do
     allow_cloud_when_sensitive = Keyword.get(opts, :allow_cloud_when_sensitive, false)
 
     # Determine the routed model based on complexity
-    capability = 
+    capability =
       case complexity do
         :heavy -> "high-reasoning"
         :medium -> "general"
@@ -197,7 +224,7 @@ defmodule BotArmyLlm.LlmClient do
       end
 
     # Determine the routed model based on complexity
-    capability = 
+    capability =
       case complexity do
         :heavy -> "high-reasoning"
         :medium -> "general"
@@ -483,7 +510,7 @@ defmodule BotArmyLlm.LlmClient do
     # Use model from opts if provided, otherwise let health checker decide
     requested_model = Keyword.get(opts, :model)
 
-    case health_checker_module().best_ollama_node(complexity) do
+    case best_ollama_node_for(complexity, opts) do
       {:ok, {url, default_model}} ->
         model =
           if is_binary(requested_model) and requested_model != "auto",
@@ -838,9 +865,19 @@ defmodule BotArmyLlm.LlmClient do
     end
   end
 
-  defp call_provider_messages(:ollama, messages, _complexity, _opts) do
-    case health_checker_module().best_ollama_node(:medium) do
-      {:ok, {url, model}} ->
+  defp call_provider_messages(:ollama, messages, complexity, opts) do
+    # Mirrors call_provider/4 — the multi-turn path used by llm.request.chat was
+    # pinned to :medium and dropped opts[:model] entirely, so a caller could not
+    # choose a model or a node on the chat path.
+    requested_model = Keyword.get(opts, :model)
+
+    case best_ollama_node_for(complexity, opts) do
+      {:ok, {url, default_model}} ->
+        model =
+          if is_binary(requested_model) and requested_model != "auto",
+            do: requested_model,
+            else: default_model
+
         case ollama_call_messages(url, model, messages) do
           {:ok, completion} -> {:ok, %{completion: completion, model_used: model}}
           {:error, reason} -> {:error, reason}

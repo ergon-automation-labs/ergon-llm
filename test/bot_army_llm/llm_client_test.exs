@@ -435,6 +435,193 @@ defmodule BotArmyLlm.LlmClientTest do
     end
   end
 
+  describe "per-request node + model pinning" do
+    setup do
+      # allow?/1 is fail-open only when its process is gone. An :open circuit
+      # (5 accumulated failures anywhere in the suite) silently skips :ollama and
+      # would make these assertions vacuous.
+      force_ollama_circuit_closed()
+      previous = Application.get_env(:bot_army_llm, :ollama_health_checker)
+
+      on_exit(fn ->
+        force_ollama_circuit_closed()
+        Application.delete_env(:bot_army_llm, :ollama_health_checker)
+        if previous, do: Application.put_env(:bot_army_llm, :ollama_health_checker, previous)
+      end)
+
+      :ok
+    end
+
+    test "complete_messages/2 sends the pinned model to the pinned node" do
+      # Regression: the multi-turn path (llm.request.chat) ignored opts[:model]
+      # and hardcoded :medium, so a caller could not pick a model or a node.
+      defmodule PinnedNodeChecker do
+        def load_acceptable?, do: true
+
+        def best_ollama_node(_complexity, "mini"),
+          do: {:ok, {Process.get(:capture_url), "ministral-3:8b"}}
+
+        def best_ollama_node(_complexity, other), do: {:error, {:unknown_node, other}}
+        def best_ollama_node(_complexity), do: {:error, :no_healthy_nodes}
+        def node_status, do: []
+      end
+
+      {port, _server} = start_capture_server()
+      Process.put(:capture_url, "http://127.0.0.1:#{port}")
+      Application.put_env(:bot_army_llm, :ollama_health_checker, PinnedNodeChecker)
+
+      result =
+        LlmClient.complete_messages(
+          [%{"role" => "user", "content" => "write me a short story"}],
+          model: "baytout3/qwen3.5-uncensored:27B",
+          ollama_node: "mini",
+          failed_providers: ["blackbox", "openrouter", "anthropic"],
+          temperature: 0.9,
+          max_tokens: 40
+        )
+
+      assert {:ok, %{completion: "pinned reply", model_used: "baytout3/qwen3.5-uncensored:27B"}} =
+               result
+
+      assert_receive {:captured_request, request}, 2_000
+      assert request =~ "POST /api/chat"
+      assert request =~ "baytout3/qwen3.5-uncensored:27B"
+      refute request =~ "ministral-3:8b"
+    end
+
+    test "complete/2 routes a named node without needing best_ollama_node/2" do
+      # Callers written before node pinning implement only /1; an implicit
+      # request must still work for them.
+      defmodule LegacyOnlyChecker do
+        def load_acceptable?, do: true
+
+        def best_ollama_node(_complexity),
+          do: {:ok, {Process.get(:capture_url), "ministral-3:8b"}}
+
+        def node_status, do: []
+      end
+
+      {port, _server} = start_capture_server()
+      Process.put(:capture_url, "http://127.0.0.1:#{port}")
+      Application.put_env(:bot_army_llm, :ollama_health_checker, LegacyOnlyChecker)
+
+      assert {:ok, %{completion: "pinned reply"}} =
+               LlmClient.complete("hello there",
+                 failed_providers: ["blackbox", "openrouter", "anthropic"]
+               )
+
+      assert_receive {:captured_request, request}, 2_000
+      assert request =~ "POST /api/chat"
+    end
+
+    test "an unknown pinned node fails loudly instead of falling back" do
+      defmodule UnknownNodeChecker do
+        def load_acceptable?, do: true
+        def best_ollama_node(_complexity, node), do: {:error, {:unknown_node, node}}
+        def best_ollama_node(_complexity), do: {:error, :no_healthy_nodes}
+        def node_status, do: []
+      end
+
+      Application.put_env(:bot_army_llm, :ollama_health_checker, UnknownNodeChecker)
+
+      assert {:error, _reason} =
+               LlmClient.complete_messages(
+                 [%{"role" => "user", "content" => "hello"}],
+                 model: "whatever:1b",
+                 ollama_node: "nope",
+                 failed_providers: ["blackbox", "openrouter", "anthropic"]
+               )
+
+      # An unmatched pin must never be quietly served by some other node.
+      refute_receive {:captured_request, _request}, 300
+    end
+  end
+
+  # CircuitBreaker.record_success/1 cannot close an :open circuit (only a
+  # half-open probe can), so reach in and reset it.
+  defp force_ollama_circuit_closed do
+    case Registry.lookup(BotArmyLlm.CircuitBreakerRegistry, :ollama) do
+      [{pid, _}] ->
+        :sys.replace_state(pid, fn state ->
+          state
+          |> Map.put(:circuit_state, :closed)
+          |> Map.put(:failures, 0)
+          |> Map.put(:opened_at, nil)
+          |> Map.put(:cooldown_until, nil)
+        end)
+
+      _other ->
+        :ok
+    end
+  end
+
+  # Minimal one-shot HTTP server: captures the first request line + body so a
+  # test can assert what actually went on the wire to the pinned node.
+  defp start_capture_server do
+    {:ok, listen} = :gen_tcp.listen(0, [:binary, packet: :raw, active: false, reuseaddr: true])
+    {:ok, port} = :inet.port(listen)
+    parent = self()
+
+    pid =
+      spawn_link(fn -> capture_loop(listen, parent) end)
+
+    {port, pid}
+  end
+
+  defp capture_loop(listen, parent) do
+    case :gen_tcp.accept(listen, 5_000) do
+      {:ok, sock} ->
+        request = read_request(sock, "")
+        send(parent, {:captured_request, request})
+
+        body =
+          Jason.encode!(%{
+            "message" => %{"role" => "assistant", "content" => "pinned reply"},
+            "done" => true
+          })
+
+        :gen_tcp.send(
+          sock,
+          "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: #{byte_size(body)}\r\nconnection: close\r\n\r\n" <>
+            body
+        )
+
+        :gen_tcp.close(sock)
+        capture_loop(listen, parent)
+
+      {:error, _reason} ->
+        :ok
+    end
+  end
+
+  defp read_request(sock, acc) do
+    case :gen_tcp.recv(sock, 0, 5_000) do
+      {:ok, chunk} ->
+        acc = acc <> chunk
+
+        if request_complete?(acc),
+          do: acc,
+          else: read_request(sock, acc)
+
+      {:error, _reason} ->
+        acc
+    end
+  end
+
+  # Loopback can split headers and body across packets, so wait for content-length.
+  defp request_complete?(acc) do
+    case String.split(acc, "\r\n\r\n", parts: 2) do
+      [headers, body] ->
+        case Regex.run(~r/content-length:\s*(\d+)/i, headers) do
+          [_, length] -> byte_size(body) >= String.to_integer(length)
+          nil -> true
+        end
+
+      _other ->
+        false
+    end
+  end
+
   # Temporarily override env vars for the duration of a test
   defp with_env(env_vars, func) do
     old_values = Enum.map(env_vars, fn {key, _} -> {key, System.get_env(key)} end)

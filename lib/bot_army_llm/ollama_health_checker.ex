@@ -7,13 +7,30 @@ defmodule BotArmyLlm.OllamaHealthChecker do
   Prometheus memory pressure is checked as a secondary signal.
 
   ## Routing
-  - best_ollama_node/1 returns the lowest-latency healthy node for :light/:medium
-  - :heavy complexity always returns {:error, :skip_local} to force cloud routing
+  - best_ollama_node/1 returns the lowest-latency healthy node for the given
+    complexity, considering only nodes that are not `explicit_only`
+  - best_ollama_node/2 targets one named node, ignoring latency and
+    `explicit_only`. Returns {:error, {:unknown_node | :node_not_configured |
+    :node_disabled | :node_unhealthy, name}} when it cannot serve
+
+  ## Explicit-only nodes
+  Mini holds models air does not (baytout3/qwen3.5-uncensored:27B). It is
+  `explicit_only` by default: latency selection must never route general traffic
+  to a node whose warm-up is a 17.7 GB load on the operator's machine. Callers
+  ask for it by name:
+
+      call_provider(:ollama, text, complexity,
+        model: "baytout3/qwen3.5-uncensored:27B", ollama_node: "mini")
+
+  Set OLLAMA_MINI_EXPLICIT_ONLY=false to fold mini back into latency selection.
 
   ## Env vars
     OLLAMA_URL              - Air node Ollama URL (fallback: OLLAMA_BASE_URL; default: http://localhost:11434)
     OLLAMA_MINI_URL         - Mini node Ollama URL (empty = not configured)
+    OLLAMA_MINI_EXPLICIT_ONLY - Mini is only used when named (default: true)
+    OLLAMA_MINI_MODEL       - Default model for the mini node (empty = complexity tiers)
     OLLAMA_PROBE_MODEL      - Model for health probes (default: gemma3:1b)
+    OLLAMA_MINI_PROBE_MODEL - Probe model for the mini node (default: OLLAMA_PROBE_MODEL)
     OLLAMA_MODEL_LIGHT      - Model for light tasks (default: ministral-3:3b)
     OLLAMA_MODEL_MEDIUM     - Model for medium tasks (default: ministral-3:8b)
     OLLAMA_DEGRADED_LATENCY_MS - Latency threshold for healthy status (default: 8000)
@@ -33,15 +50,25 @@ defmodule BotArmyLlm.OllamaHealthChecker do
   end
 
   @doc """
-  Returns the best Ollama URL + model for a given complexity level.
-  Returns {:ok, {url, model}} | {:error, :skip_local | :no_healthy_nodes}
+  Returns the best Ollama URL + model for a given complexity level, using only
+  nodes eligible for implicit latency-based routing.
+  Returns {:ok, {url, model}} | {:error, :no_healthy_nodes}
   """
   @spec best_ollama_node(:light | :medium | :heavy) ::
           {:ok, {String.t(), String.t()}} | {:error, atom()}
-  def best_ollama_node(complexity) do
+  def best_ollama_node(complexity), do: best_ollama_node(complexity, nil)
+
+  @doc """
+  Returns the URL + model for one named node ("air", "mini", ...), bypassing
+  latency ordering and the explicit-only filter. nil / "" / "auto" behave like
+  best_ollama_node/1.
+  """
+  @spec best_ollama_node(:light | :medium | :heavy, atom() | String.t() | nil) ::
+          {:ok, {String.t(), String.t()}} | {:error, term()}
+  def best_ollama_node(complexity, node_name) do
     case Process.whereis(__MODULE__) do
       nil -> {:error, :health_checker_not_running}
-      _pid -> GenServer.call(__MODULE__, {:best_node, complexity})
+      _pid -> GenServer.call(__MODULE__, {:best_node, complexity, node_name})
     end
   end
 
@@ -79,19 +106,24 @@ defmodule BotArmyLlm.OllamaHealthChecker do
   end
 
   @impl true
-  def handle_call({:best_node, complexity}, _from, state) do
-    model = local_model_for(complexity)
+  def handle_call({:best_node, complexity}, from, state),
+    do: handle_call({:best_node, complexity, nil}, from, state)
 
+  @impl true
+  def handle_call({:best_node, complexity, node_name}, _from, state) do
     result =
-      state.nodes
-      |> Enum.filter(fn {_name, node} -> node.healthy end)
-      |> Enum.sort_by(fn {_name, node} ->
-        penalty = if (node.memory_pressure || 0) > 0.7, do: 5_000, else: 0
-        (node.latency_ms || 0) + penalty
-      end)
-      |> case do
-        [{_name, node} | _] -> {:ok, {node.url, model}}
-        [] -> {:error, :no_healthy_nodes}
+      case normalize_node_name(node_name) do
+        :implicit ->
+          state.nodes
+          |> Enum.filter(fn {_name, node} -> implicit_candidate?(node) end)
+          |> Enum.sort_by(fn {_name, node} -> latency_rank(node) end)
+          |> case do
+            [{_name, node} | _] -> {:ok, {node.url, node_model(node, complexity)}}
+            [] -> {:error, :no_healthy_nodes}
+          end
+
+        name ->
+          explicit_node_result(state.nodes, name, complexity)
       end
 
     {:reply, result, state}
@@ -107,7 +139,9 @@ defmodule BotArmyLlm.OllamaHealthChecker do
           latency_ms: node.latency_ms,
           healthy: node.healthy,
           last_probe_at: node.last_probe_at,
-          memory_pressure: node.memory_pressure
+          memory_pressure: node.memory_pressure,
+          explicit_only: Map.get(node, :explicit_only, false),
+          default_model: Map.get(node, :default_model)
         }
       end)
 
@@ -146,16 +180,21 @@ defmodule BotArmyLlm.OllamaHealthChecker do
           # OLLAMA_BASE_URL (http://ollama:11434) while this bot historically
           # reads OLLAMA_URL — the mismatch left all LLM routing pointed at
           # localhost:11434 (refused). Accept either dialect.
-          url: BotArmyLibraryRuntime.ConfigLoader.get(
-                "OLLAMA_URL",
-                BotArmyLibraryRuntime.ConfigLoader.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
-              ),
+          url:
+            BotArmyLibraryRuntime.ConfigLoader.get(
+              "OLLAMA_URL",
+              BotArmyLibraryRuntime.ConfigLoader.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+            ),
           latency_ms: nil,
           last_probe_at: nil,
           healthy: false,
           memory_pressure: nil,
           cpu_load: nil,
-          enabled: true
+          enabled: true,
+          # Air is the default host — implicit latency routing may use it.
+          explicit_only: false,
+          default_model: nil,
+          probe_model: nil
         },
         mini: %{
           url: BotArmyLibraryRuntime.ConfigLoader.get("OLLAMA_MINI_URL", ""),
@@ -164,7 +203,15 @@ defmodule BotArmyLlm.OllamaHealthChecker do
           healthy: false,
           memory_pressure: nil,
           cpu_load: nil,
-          enabled: true
+          enabled: true,
+          # Mini is only reachable on purpose: general traffic must not be
+          # pulled onto the 27B model by a latency win.
+          explicit_only:
+            BotArmyLibraryRuntime.ConfigLoader.get("OLLAMA_MINI_EXPLICIT_ONLY", "true")
+            |> parse_bool(true),
+          default_model: nilify(BotArmyLibraryRuntime.ConfigLoader.get("OLLAMA_MINI_MODEL", "")),
+          probe_model:
+            nilify(BotArmyLibraryRuntime.ConfigLoader.get("OLLAMA_MINI_PROBE_MODEL", ""))
         }
       },
       probe_model: BotArmyLibraryRuntime.ConfigLoader.get("OLLAMA_PROBE_MODEL", "gemma3:1b"),
@@ -177,7 +224,10 @@ defmodule BotArmyLlm.OllamaHealthChecker do
   defp probe_all_nodes(state) do
     nodes =
       Map.new(state.nodes, fn {name, node} ->
-        updated = probe_node(name, node, state.probe_model, state.degraded_latency_ms)
+        # A node that does not carry the cluster's probe model (mini has no
+        # gemma3:1b) would otherwise pull it on first probe.
+        probe_model = Map.get(node, :probe_model) || state.probe_model
+        updated = probe_node(name, node, probe_model, state.degraded_latency_ms)
         {name, updated}
       end)
 
@@ -310,4 +360,85 @@ defmodule BotArmyLlm.OllamaHealthChecker do
 
   defp local_model_for(:heavy),
     do: BotArmyLibraryRuntime.ConfigLoader.get("OLLAMA_MODEL_HEAVY", "ministral-3:8b")
+
+  # Routing helpers
+
+  defp normalize_node_name(nil), do: :implicit
+  defp normalize_node_name(name) when is_atom(name), do: Atom.to_string(name)
+
+  defp normalize_node_name(name) when is_binary(name) do
+    case name |> String.trim() |> String.downcase() do
+      "" -> :implicit
+      "auto" -> :implicit
+      other -> other
+    end
+  end
+
+  defp normalize_node_name(_other), do: :implicit
+
+  defp implicit_candidate?(node) do
+    Map.get(node, :enabled, true) and not Map.get(node, :explicit_only, false) and
+      node_healthy?(node)
+  end
+
+  defp node_healthy?(node), do: node.healthy == true and node.url not in [nil, ""]
+
+  defp latency_rank(node) do
+    penalty = if (node.memory_pressure || 0) > 0.7, do: 5_000, else: 0
+    (node.latency_ms || 0) + penalty
+  end
+
+  defp explicit_node_result(nodes, wanted, complexity) do
+    case find_node(nodes, wanted) do
+      :error ->
+        {:error, {:unknown_node, wanted}}
+
+      {:ok, node} ->
+        cond do
+          node.url in [nil, ""] -> {:error, {:node_not_configured, wanted}}
+          Map.get(node, :enabled, true) == false -> {:error, {:node_disabled, wanted}}
+          not node_healthy?(node) -> {:error, {:node_unhealthy, wanted}}
+          true -> {:ok, {node.url, node_model(node, complexity)}}
+        end
+    end
+  end
+
+  defp find_node(nodes, wanted) do
+    Enum.find_value(nodes, :error, fn {name, node} ->
+      if Atom.to_string(name) == wanted, do: {:ok, node}
+    end)
+  end
+
+  # An explicitly named node may carry its own model — a 27B is not a tier.
+  defp node_model(node, complexity) do
+    case Map.get(node, :default_model) do
+      model when is_binary(model) and model != "" -> model
+      _ -> local_model_for(complexity)
+    end
+  end
+
+  defp parse_bool(value, _default) when is_boolean(value), do: value
+
+  defp parse_bool(value, default) when is_binary(value) do
+    case value |> String.trim() |> String.downcase() do
+      "true" -> true
+      "1" -> true
+      "yes" -> true
+      "false" -> false
+      "0" -> false
+      "no" -> false
+      _ -> default
+    end
+  end
+
+  defp parse_bool(_value, default), do: default
+
+  defp nilify(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      other -> other
+    end
+  end
+
+  defp nilify(_value), do: nil
 end

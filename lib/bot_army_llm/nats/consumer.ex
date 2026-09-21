@@ -606,7 +606,7 @@ defmodule BotArmyLlm.NATS.Consumer do
       record_lane_metric(:record_lane_request, lane)
 
       # Support both old format (prompt_context.prompt) and new format (system + messages)
-      {result, chat_opts, prompt_text} =
+      {result, _chat_opts, prompt_text} =
         if has_anthropic_format?(payload) do
           handle_anthropic_format(payload, lane, reasoning_mode)
         else

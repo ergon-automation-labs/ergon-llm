@@ -44,7 +44,16 @@ defmodule BotArmyLlm.OllamaHealthChecker do
   require Logger
 
   @probe_interval_ms 60_000
-  @probe_timeout_ms 120_000
+  # A probe answers one token ("1+1=") — a liveness check, not a benchmark. The
+  # healthy threshold is already 8 s (OLLAMA_DEGRADED_LATENCY_MS), so waiting
+  # minutes for a reply can only ever produce "unhealthy", while holding the
+  # checker's lock the whole time. Bounded so one wedged node (a 27B model loading,
+  # a stalled Tailscale link) cannot starve a whole cycle.
+  @probe_timeout_ms_default 15_000
+  # How long a routing lookup waits for the checker. Short on purpose: a lookup
+  # that has to wait is a lookup that is already broken, and the caller is a live
+  # LLM request. Tunable so it can be tested without sleeping it out.
+  @call_timeout_ms_default 5_000
   @prometheus_url "http://localhost:30090"
 
   # Public API
@@ -66,14 +75,39 @@ defmodule BotArmyLlm.OllamaHealthChecker do
   Returns the URL + model for one named node ("air", "mini", ...), bypassing
   latency ordering and the explicit-only filter. nil / "" / "auto" behave like
   best_ollama_node/1.
+
+  Never raises: a busy or wedged checker yields an honest
+  `{:error, :health_checker_busy}` rather than taking the caller down. For
+  `:uncensored` that is also the fail-closed outcome — no local model, no answer,
+  and emphatically no cloud fallback.
   """
   @spec best_ollama_node(BotArmyLlm.ModelType.all() | atom(), atom() | String.t() | nil) ::
           {:ok, {String.t(), String.t()}} | {:error, term()}
   def best_ollama_node(complexity, node_name) do
     case Process.whereis(__MODULE__) do
-      nil -> {:error, :health_checker_not_running}
-      _pid -> GenServer.call(__MODULE__, {:best_node, complexity, node_name})
+      nil ->
+        {:error, :health_checker_not_running}
+
+      _pid ->
+        try do
+          GenServer.call(
+            __MODULE__,
+            {:best_node, complexity, node_name},
+            call_timeout_ms()
+          )
+        catch
+          :exit, {:timeout, _} -> {:error, :health_checker_busy}
+          :exit, reason -> {:error, {:health_checker_down, reason}}
+        end
     end
+  end
+
+  defp call_timeout_ms do
+    BotArmyLibraryRuntime.ConfigLoader.get(
+      "OLLAMA_HEALTH_CALL_TIMEOUT_MS",
+      to_string(@call_timeout_ms_default)
+    )
+    |> parse_positive_int(@call_timeout_ms_default)
   end
 
   @doc "Returns current health status of all configured nodes."
@@ -103,10 +137,22 @@ defmodule BotArmyLlm.OllamaHealthChecker do
   end
 
   @impl true
-  def handle_info(:probe, state) do
-    new_state = probe_all_nodes(state)
+  def handle_info(:probe, %{probe_in_flight: true} = state) do
+    # A probe that outlives its interval must not stack up. The in-flight result
+    # still lands; this tick is simply skipped.
+    Logger.debug("Ollama probe still in flight; skipping this cycle")
     Process.send_after(self(), :probe, @probe_interval_ms)
-    {:noreply, new_state}
+    {:noreply, state}
+  end
+
+  def handle_info(:probe, state) do
+    start_probe(state)
+    Process.send_after(self(), :probe, @probe_interval_ms)
+    {:noreply, %{state | probe_in_flight: true}}
+  end
+
+  def handle_info({:probe_result, probed}, state) do
+    {:noreply, %{state | nodes: probed.nodes, probe_in_flight: false}}
   end
 
   @impl true
@@ -219,10 +265,40 @@ defmodule BotArmyLlm.OllamaHealthChecker do
         }
       },
       probe_model: BotArmyLibraryRuntime.ConfigLoader.get("OLLAMA_PROBE_MODEL", "gemma3:1b"),
+      probe_timeout_ms:
+        BotArmyLibraryRuntime.ConfigLoader.get(
+          "OLLAMA_PROBE_TIMEOUT_MS",
+          to_string(@probe_timeout_ms_default)
+        )
+        |> parse_positive_int(@probe_timeout_ms_default),
+      # Set while a probe cycle is running off the call path (see start_probe/1).
+      probe_in_flight: false,
       degraded_latency_ms:
         BotArmyLibraryRuntime.ConfigLoader.get("OLLAMA_DEGRADED_LATENCY_MS", "8000")
         |> String.to_integer()
     }
+  end
+
+  # Probes run OFF the call path. A probe is an HTTP round trip with a timeout of
+  # its own: run inside the GenServer it holds the lock, and every
+  # best_ollama_node/2 call (default 5 s) queues behind it and crashes its caller.
+  # A slow node must make ROUTING return "no healthy node", never make routing
+  # stop answering.
+  defp start_probe(state) do
+    parent = self()
+
+    spawn(fn ->
+      result =
+        try do
+          probe_all_nodes(state)
+        rescue
+          error ->
+            Logger.error("Ollama probe cycle failed: #{inspect(error)}")
+            state
+        end
+
+      send(parent, {:probe_result, result})
+    end)
   end
 
   defp probe_all_nodes(state) do
@@ -231,22 +307,25 @@ defmodule BotArmyLlm.OllamaHealthChecker do
         # A node that does not carry the cluster's probe model (mini has no
         # gemma3:1b) would otherwise pull it on first probe.
         probe_model = Map.get(node, :probe_model) || state.probe_model
-        updated = probe_node(name, node, probe_model, state.degraded_latency_ms)
+
+        updated =
+          probe_node(name, node, probe_model, state.degraded_latency_ms, state.probe_timeout_ms)
+
         {name, updated}
       end)
 
     %{state | nodes: nodes}
   end
 
-  defp probe_node(_name, %{url: url} = node, _probe_model, _degraded_latency_ms)
+  defp probe_node(_name, %{url: url} = node, _probe_model, _degraded_latency_ms, _timeout_ms)
        when url in [nil, ""] do
     %{node | healthy: false, latency_ms: nil}
   end
 
-  defp probe_node(name, node, probe_model, degraded_latency_ms) do
+  defp probe_node(name, node, probe_model, degraded_latency_ms, timeout_ms) do
     start = System.monotonic_time(:millisecond)
 
-    case send_probe(node.url, probe_model) do
+    case send_probe(node.url, probe_model, timeout_ms) do
       :ok ->
         latency = System.monotonic_time(:millisecond) - start
         memory_pressure = check_memory_pressure(name)
@@ -284,7 +363,7 @@ defmodule BotArmyLlm.OllamaHealthChecker do
     end
   end
 
-  defp send_probe(url, model) do
+  defp send_probe(url, model, timeout_ms) do
     endpoint = "#{url}/api/chat"
     headers = [{"Content-Type", "application/json"}]
 
@@ -296,8 +375,8 @@ defmodule BotArmyLlm.OllamaHealthChecker do
       })
 
     case HTTPoison.post(endpoint, payload, headers,
-           recv_timeout: @probe_timeout_ms,
-           timeout: @probe_timeout_ms
+           recv_timeout: timeout_ms,
+           timeout: timeout_ms
          ) do
       {:ok, %HTTPoison.Response{status_code: 200}} -> :ok
       {:ok, %HTTPoison.Response{status_code: status}} -> {:error, {:http_error, status}}
@@ -457,6 +536,21 @@ defmodule BotArmyLlm.OllamaHealthChecker do
   end
 
   defp parse_bool(_value, default), do: default
+
+  # An env typo must not stop the bot from booting: fall back and say so.
+  defp parse_positive_int(value, default) when is_binary(value) do
+    case Integer.parse(String.trim(value)) do
+      {int, ""} when int > 0 -> int
+      _ -> fallback_int(value, default)
+    end
+  end
+
+  defp parse_positive_int(value, default), do: fallback_int(value, default)
+
+  defp fallback_int(value, default) do
+    Logger.warning("Ignoring unusable integer config value #{inspect(value)}; using #{default}")
+    default
+  end
 
   defp nilify(value) when is_binary(value) do
     case String.trim(value) do

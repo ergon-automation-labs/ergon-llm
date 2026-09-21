@@ -115,8 +115,8 @@ release: check
 	@echo "==============================================="
 	@echo "Building OTP release"
 	@echo "==============================================="
-	rm -rf _build/prod/rel/llm_proxy
-	MIX_ENV=prod $(MIX) release
+	rm -rf _build/prod/rel/llm_proxy _build/prod/rel/llm_bot
+	MIX_ENV=prod $(MIX) release llm_proxy
 	@echo ""
 	@echo "✓ Release built successfully"
 	@echo "Location: _build/prod/rel/llm_proxy/"
@@ -145,6 +145,7 @@ sync-release-version:
 publish-release:
 	@BOT_NAME=llm; LOG_FILE="/tmp/publish-release-$${BOT_NAME}-$$(date +%s).log"; { \
 	set -e; \
+	set -o pipefail; \
 	VERSION=$$(sed -n 's/^[[:space:]]*version:[[:space:]]*"\([^"]*\)".*/\1/p' mix.exs | head -n 1); \
 	if [ -z "$$VERSION" ]; then \
 		echo "Failed to resolve version from mix.exs"; \
@@ -164,12 +165,17 @@ publish-release:
 		else \
 			[ "$(HAS_RESPONDER_CHANGES)" = "1" ] && echo "⚠️  Skipping integration gate (SKIP_INTEGRATION_GATE=1)" || true; \
 		fi; \
-		$(MAKE) release; \
-		$(MAKE) test-release-smoke || echo "⚠️  Smoke test warnings (non-blocking) - continuing"; \
+		$(MAKE) release || { echo "❌ Release build failed. Publish blocked."; exit 1; }; \
+		$(MAKE) test-release-smoke || { echo "❌ Smoke test failed. Publish blocked."; exit 1; }; \
 		echo "Creating release tarball..."; \
+		rm -f "$$TARBALL"; \
 		tar -czf "$$TARBALL" -C _build/prod/rel llm_proxy/; \
 		echo "✓ Tarball created: $$TARBALL"; \
 	fi; \
+	echo "Verifying $$TARBALL before upload (an asset that cannot start is worse than no release)..."; \
+	tar -tzf "$$TARBALL" >/dev/null 2>&1 || { echo "❌ $$TARBALL is not a readable tarball. Publish blocked."; exit 1; }; \
+	tar -tzf "$$TARBALL" | grep -qx 'llm_proxy/bin/llm_proxy' || { echo "❌ $$TARBALL has no llm_proxy/bin/llm_proxy. Publish blocked."; exit 1; }; \
+	echo "✓ Tarball verified ($$(du -h "$$TARBALL" | cut -f1))"; \
 	echo ""; \
 	echo "Creating GitHub release v$$VERSION..."; \
 	if gh release view "v$$VERSION" >/dev/null 2>&1; then \
@@ -181,6 +187,9 @@ publish-release:
 			--draft=false; \
 	fi; \
 	echo "✓ Release published to GitHub"; \
+	echo "Asserting the published asset exists (a gh rc is not proof)..."; \
+	gh release view "v$$VERSION" --json assets -q '.assets[].name' | grep -qx "$$TARBALL" || { echo "❌ No published asset $$TARBALL on v$$VERSION - publish FAILED."; exit 1; }; \
+	echo "✓ Verified on GitHub: v$$VERSION / $$TARBALL"; \
 	$(MAKE) sync-release-version; \
 	echo ""; \
 	echo "Publishing deploy.release.requested to the deploy pipeline (prod bus)..."; \

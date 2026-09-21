@@ -156,6 +156,11 @@ mix test
 
 ```
 llm.prompt.submit          → PromptHandler.handle_submit/1
+llm.request.chat           → Consumer.handle_chat_request_reply/3 (add "async": true to
+                             background it: replies {"job_id", "status": "accepted"}
+                             immediately and the completion is polled on llm.job.status)
+llm.job.status             → Consumer.job_status_response/1 (poll a backgrounded chat job;
+                             {job_id} -> {status: pending|completed|failed, result, error})
 llm.inference.chain        → InferenceHandler.handle_chain/1
 llm.inference.converse     → InferenceHandler.handle_converse/1
 llm.response.parse         → ResponseHandler.handle_parse/1

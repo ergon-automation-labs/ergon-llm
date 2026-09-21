@@ -27,6 +27,7 @@ defmodule BotArmyLlm.NATS.Consumer do
 
   alias BotArmyLibraryCore.NATS.Decoder
   alias BotArmyLlm.EmbeddingWorkerPool
+  alias BotArmyLlm.JobStore
   alias BotArmyLibraryRuntime.Registry
 
   alias BotArmyLlm.Handlers.{
@@ -109,6 +110,11 @@ defmodule BotArmyLlm.NATS.Consumer do
     %{subject: "llm.usage.query", type: :request_reply, description: "Query token usage"},
     %{subject: "llm.metrics.get", type: :request_reply, description: "Get metrics"},
     %{subject: "llm.queue.status", type: :request_reply, description: "Get queue status"},
+    %{
+      subject: "llm.job.status",
+      type: :request_reply,
+      description: "Poll a backgrounded (async) chat job by job_id"
+    },
     # Cross-bot conversation protocol
     %{
       subject: "conv.request.llm.*",
@@ -422,6 +428,10 @@ defmodule BotArmyLlm.NATS.Consumer do
   defp handle_request_reply("llm.queue.status", message, reply_to),
     do: handle_queue_status(message, reply_to)
 
+  defp handle_request_reply("llm.job.status", message, reply_to) do
+    publish_reply(reply_to, job_status_response(message))
+  end
+
   defp handle_request_reply("llm.army.opinion.vote", message, reply_to) do
     vote = ArmyOpinionVote.build_reply(:llm, message)
     publish_reply(reply_to, vote)
@@ -590,79 +600,193 @@ defmodule BotArmyLlm.NATS.Consumer do
   end
 
   defp handle_chat_request_reply(subject, message, reply_to) do
+    # Read the CALLER's fields, not the envelope's. A decoded envelope nests them
+    # under "payload", so reading at this level silently yields an empty prompt and
+    # drops every routing opt — and still answers, which looks like a content
+    # problem rather than a plumbing one. The bridge survives this only because it
+    # duplicates its fields top-level; nesting correctly must not be a penalty.
+    payload = chat_payload(message)
+
+    if async_requested?(payload) do
+      publish_reply(reply_to, submit_chat_job(payload, subject))
+    else
+      spawn(fn -> publish_reply(reply_to, run_chat(payload, subject)) end)
+    end
+  end
+
+  @doc """
+  Starts a chat request as a background job and returns the acceptance reply.
+
+  Public and pure-ish (it starts work and returns immediately) so the accepted
+  reply's shape is assertable without a broker. The caller polls
+  `llm.job.status` with the returned `job_id` on its own schedule — see
+  `BotArmyLlm.JobStore`.
+
+  `runner` is the work itself, injectable so tests can exercise the job
+  lifecycle without a provider round trip.
+  """
+  @spec submit_chat_job(map(), String.t(), (map(), String.t() -> map())) :: map()
+  def submit_chat_job(payload, subject, runner \\ &run_chat/2) do
+    job_id = UUID.uuid4()
+    request_id = Map.get(payload, "request_id", UUID.uuid4())
+    response_type = Map.get(payload, "request_type", "chat")
+    lane = lane_for_chat_subject(subject, payload)
+
+    JobStore.create(job_id, %{
+      subject: subject,
+      lane: lane,
+      request_id: request_id,
+      submitted_at: DateTime.utc_now() |> DateTime.to_iso8601()
+    })
+
     spawn(fn ->
-      # Read the CALLER's fields, not the envelope's. A decoded envelope nests them
-      # under "payload", so reading at this level silently yields an empty prompt and
-      # drops every routing opt — and still answers, which looks like a content
-      # problem rather than a plumbing one. The bridge survives this only because it
-      # duplicates its fields top-level; nesting correctly must not be a penalty.
-      payload = chat_payload(message)
-      request_id = Map.get(payload, "request_id", UUID.uuid4())
-      request_type = Map.get(payload, "request_type", "chat")
-      lane = lane_for_chat_subject(subject, payload)
-      reasoning_mode = Map.get(payload, "reasoning_mode")
-
-      started_at = System.monotonic_time(:millisecond)
-      record_lane_metric(:record_lane_request, lane)
-
-      # Support both old format (prompt_context.prompt) and new format (system + messages)
-      {result, _chat_opts, prompt_text} =
-        if has_anthropic_format?(payload) do
-          handle_anthropic_format(payload, lane, reasoning_mode)
-        else
-          handle_legacy_format(payload, lane, reasoning_mode)
-        end
-
-      response =
-        case result do
-          {:ok, resp} ->
-            %{
-              "request_id" => request_id,
-              "response_type" => request_type,
-              "model_used" => Map.get(resp, :model_used, "auto"),
-              "content" => Map.get(resp, :completion, ""),
-              "cache_hit" => false,
-              "lane" => lane,
-              "latency_ms" => System.monotonic_time(:millisecond) - started_at,
-              "tokens" => %{
-                "input" => Map.get(resp, :tokens_input, 0),
-                "output" => Map.get(resp, :tokens_output, 0)
-              }
-            }
-
-          {:error, reason} ->
-            maybe_fallback_chat_response(
-              prompt_text,
-              request_id,
-              request_type,
-              lane,
-              started_at,
-              reason
-            )
-        end
-
-      record_lane_metric(:record_lane_latency, lane, response["latency_ms"])
-
-      publish_reply(reply_to, response)
-
-      # Record outcome: LLM chat quality
       try do
-        was_successful =
-          Map.get(response, "content") != "" and Map.get(response, "content") != nil
-
-        model_used = Map.get(response, "model_used", "auto")
-
-        BotArmyLibraryLearning.OutcomeTracker.record(
-          request_id,
-          "llm.chat_quality",
-          model_used,
-          if(was_successful, do: "success", else: "failure"),
-          :llm_outcome_tracker
-        )
+        JobStore.complete(job_id, runner.(payload, subject))
       rescue
-        _ -> :ok
+        error ->
+          Logger.error("LLM job #{job_id} failed: #{Exception.message(error)}")
+          JobStore.fail(job_id, Exception.message(error))
+      catch
+        kind, reason ->
+          Logger.error("LLM job #{job_id} crashed (#{kind}): #{inspect(reason)}")
+          JobStore.fail(job_id, "#{kind}: #{inspect(reason)}")
       end
     end)
+
+    %{
+      "request_id" => request_id,
+      "response_type" => response_type,
+      "lane" => lane,
+      "job_id" => job_id,
+      "status" => "accepted",
+      "poll_subject" => "llm.job.status"
+    }
+  end
+
+  @doc """
+  Whether a chat caller asked for the request to be backgrounded.
+
+  Accepts `true` and `"true"`: pillar/config values arrive as strings in this
+  fleet (`explicit_only: "true"`), and a caller that wrote `"true"` meant yes.
+  """
+  @spec async_requested?(map()) :: boolean()
+  def async_requested?(payload) when is_map(payload),
+    do: Map.get(payload, "async") in [true, "true"]
+
+  def async_requested?(_other), do: false
+
+  @doc """
+  Builds the `llm.job.status` reply for a request message. Public and pure so the
+  reply shape is assertable; the private handler only publishes it.
+
+  Mirrors the bridge's `bridge.job.status`: `job_id`, `status`, `result`, `error`.
+  """
+  @spec job_status_response(map()) :: map()
+  def job_status_response(message) do
+    case job_id_from(message) do
+      nil ->
+        %{"ok" => false, "error" => "missing_job_id"}
+
+      job_id ->
+        case JobStore.get(job_id) do
+          {:error, :not_found} ->
+            %{"ok" => false, "error" => "job_not_found", "job_id" => job_id}
+
+          {:ok, job} ->
+            %{
+              "ok" => true,
+              "job_id" => job_id,
+              "status" => Atom.to_string(job.status),
+              "result" => job.result,
+              "error" => job.error,
+              "timestamp" =>
+                DateTime.from_unix!(job.updated_at, :millisecond) |> DateTime.to_iso8601()
+            }
+        end
+    end
+  end
+
+  defp job_id_from(message) do
+    payload = chat_payload(message)
+    nested = Map.get(payload, "job_id")
+
+    cond do
+      is_binary(nested) -> nested
+      is_map(message) and is_binary(Map.get(message, "job_id")) -> Map.get(message, "job_id")
+      true -> nil
+    end
+  end
+
+  # The work itself, with no reply and no job bookkeeping: it returns the response
+  # map so the synchronous handler can publish it and the async job can store it.
+  defp run_chat(payload, subject) do
+    request_id = Map.get(payload, "request_id", UUID.uuid4())
+    request_type = Map.get(payload, "request_type", "chat")
+    lane = lane_for_chat_subject(subject, payload)
+    reasoning_mode = Map.get(payload, "reasoning_mode")
+
+    started_at = System.monotonic_time(:millisecond)
+    record_lane_metric(:record_lane_request, lane)
+
+    # Support both old format (prompt_context.prompt) and new format (system + messages)
+    {result, _chat_opts, prompt_text} =
+      if has_anthropic_format?(payload) do
+        handle_anthropic_format(payload, lane, reasoning_mode)
+      else
+        handle_legacy_format(payload, lane, reasoning_mode)
+      end
+
+    response =
+      case result do
+        {:ok, resp} ->
+          %{
+            "request_id" => request_id,
+            "response_type" => request_type,
+            "model_used" => Map.get(resp, :model_used, "auto"),
+            "content" => Map.get(resp, :completion, ""),
+            "cache_hit" => false,
+            "lane" => lane,
+            "latency_ms" => System.monotonic_time(:millisecond) - started_at,
+            "tokens" => %{
+              "input" => Map.get(resp, :tokens_input, 0),
+              "output" => Map.get(resp, :tokens_output, 0)
+            }
+          }
+
+        {:error, reason} ->
+          maybe_fallback_chat_response(
+            prompt_text,
+            request_id,
+            request_type,
+            lane,
+            started_at,
+            reason
+          )
+      end
+
+    record_lane_metric(:record_lane_latency, lane, response["latency_ms"])
+    record_chat_outcome(request_id, response)
+    response
+  end
+
+  defp record_chat_outcome(request_id, response) do
+    # Record outcome: LLM chat quality
+    try do
+      was_successful =
+        Map.get(response, "content") != "" and Map.get(response, "content") != nil
+
+      model_used = Map.get(response, "model_used", "auto")
+
+      BotArmyLibraryLearning.OutcomeTracker.record(
+        request_id,
+        "llm.chat_quality",
+        model_used,
+        if(was_successful, do: "success", else: "failure"),
+        :llm_outcome_tracker
+      )
+    rescue
+      _ -> :ok
+    end
   end
 
   defp lane_for_chat_subject(subject, message) do

@@ -68,6 +68,10 @@ defmodule BotArmyLlm.Application do
         # Local queue manager (tracks pending Ollama requests for visibility)
         {BotArmyLlm.LocalQueueManager, []},
 
+        # Deferred chat jobs — a slow local model must not force a blocking
+        # request/reply with a guessed deadline (see BotArmyLlm.JobStore)
+        {BotArmyLlm.JobStore, []},
+
         # Veto listener — vetoes GTD remind during active LLM conversations
         {BotArmyLibraryRuntime.Intent.VetoListener,
          rules: [

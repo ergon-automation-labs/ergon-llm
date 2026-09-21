@@ -591,20 +591,26 @@ defmodule BotArmyLlm.NATS.Consumer do
 
   defp handle_chat_request_reply(subject, message, reply_to) do
     spawn(fn ->
-      request_id = Map.get(message, "request_id", UUID.uuid4())
-      request_type = Map.get(message, "request_type", "chat")
-      lane = lane_for_chat_subject(subject, message)
-      reasoning_mode = Map.get(message, "reasoning_mode")
+      # Read the CALLER's fields, not the envelope's. A decoded envelope nests them
+      # under "payload", so reading at this level silently yields an empty prompt and
+      # drops every routing opt — and still answers, which looks like a content
+      # problem rather than a plumbing one. The bridge survives this only because it
+      # duplicates its fields top-level; nesting correctly must not be a penalty.
+      payload = chat_payload(message)
+      request_id = Map.get(payload, "request_id", UUID.uuid4())
+      request_type = Map.get(payload, "request_type", "chat")
+      lane = lane_for_chat_subject(subject, payload)
+      reasoning_mode = Map.get(payload, "reasoning_mode")
 
       started_at = System.monotonic_time(:millisecond)
       record_lane_metric(:record_lane_request, lane)
 
       # Support both old format (prompt_context.prompt) and new format (system + messages)
       {result, chat_opts, prompt_text} =
-        if has_anthropic_format?(message) do
-          handle_anthropic_format(message, lane, reasoning_mode)
+        if has_anthropic_format?(payload) do
+          handle_anthropic_format(payload, lane, reasoning_mode)
         else
-          handle_legacy_format(message, lane, reasoning_mode)
+          handle_legacy_format(payload, lane, reasoning_mode)
         end
 
       response =
@@ -728,11 +734,28 @@ defmodule BotArmyLlm.NATS.Consumer do
   @chat_passthrough [{"model", :model}, {"ollama_node", :ollama_node}]
 
   @doc """
+  Unwrap a decoded envelope down to the caller's payload.
+
+  `Decoder.decode/1` returns the whole envelope, so a caller that nests its fields
+  under `"payload"` — the contract shape — is invisible to code that reads the top
+  level. The nested payload wins whenever it is a map; a bare payload map passes
+  through unchanged, so both producer styles work.
+
+  Public (and pure) for the same reason as `chat_opts/2`: a field read at the wrong
+  level is silent, and silence here reads as a model problem — an empty prompt still
+  gets a fluent answer.
+  """
+  @spec chat_payload(map()) :: map()
+  def chat_payload(%{"payload" => payload}) when is_map(payload), do: payload
+  def chat_payload(message) when is_map(message), do: message
+  def chat_payload(_other), do: %{}
+
+  @doc """
   Translate a chat payload's per-request routing controls into provider opts.
 
-  Public (and pure) so the passthrough contract can be tested without a NATS
-  connection: a routing control that is silently dropped here is invisible in
-  the reply, which is exactly how "model" was lost on this path once already.
+  Expects the caller's payload, not the raw envelope — pass `chat_payload/1` first.
+  A routing control that is silently dropped here is invisible in the reply, which is
+  exactly how "model" was lost on this path once already.
   """
   @spec chat_opts(map(), String.t()) :: keyword()
   def chat_opts(message, lane) when is_map(message) do

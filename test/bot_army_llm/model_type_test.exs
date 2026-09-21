@@ -201,6 +201,78 @@ defmodule BotArmyLlm.ModelTypeTest do
     end
   end
 
+  describe "Consumer.chat_payload/1 unwraps the envelope" do
+    # The decoder hands the consumer the WHOLE envelope, with the caller's fields
+    # nested under "payload". Reading them at the top level yields an empty prompt
+    # and drops the routing opts — and still returns a fluent answer, so nothing
+    # points at the plumbing. Pinned here because the failure is invisible.
+    test "a decoded envelope yields the nested payload" do
+      envelope = %{
+        "event_id" => "e-1",
+        "event" => "wife_care.narration.requested",
+        "schema_version" => "1.0",
+        "timestamp" => "2026-09-21T13:00:00Z",
+        "source" => "wife_care_bot",
+        "source_node" => "wife_care_bot@mini",
+        "triggered_by" => "wife_care_bot.narrator",
+        "payload" => %{
+          "prompt_context" => %{"prompt" => "say BANANA"},
+          "model_type" => "uncensored"
+        }
+      }
+
+      payload = Consumer.chat_payload(envelope)
+
+      assert payload["prompt_context"]["prompt"] == "say BANANA"
+      assert payload["model_type"] == "uncensored"
+    end
+
+    test "a bare payload passes through unchanged" do
+      bare = %{"prompt_context" => %{"prompt" => "say BANANA"}, "model_type" => "uncensored"}
+
+      assert Consumer.chat_payload(bare) == bare
+    end
+
+    test "the bridge's doubled envelope still resolves to the nested payload" do
+      # The bridge mirrors system/messages/request_id at the top level, which is
+      # precisely why this bug stayed hidden. Both levels are the same values, so
+      # unwrapping keeps the reply correlated by request_id.
+      envelope = %{
+        "event" => "llm.request.chat",
+        "payload" => %{"request_id" => "r-1", "messages" => [%{"role" => "user"}]},
+        "request_id" => "r-1",
+        "messages" => [%{"role" => "user"}]
+      }
+
+      assert Consumer.chat_payload(envelope)["request_id"] == "r-1"
+    end
+
+    test "a non-map payload does not shadow the message" do
+      assert Consumer.chat_payload(%{"payload" => "not-a-map", "model_type" => "uncensored"})[
+               "model_type"
+             ] == "uncensored"
+
+      assert Consumer.chat_payload("junk") == %{}
+    end
+
+    test "an envelope's routing controls survive the unwrap into provider opts" do
+      envelope = %{
+        "event" => "llm.request.chat",
+        "payload" => %{
+          "model_type" => "uncensored",
+          "ollama_node" => "mini",
+          "model" => "explicit-model"
+        }
+      }
+
+      opts = Consumer.chat_payload(envelope) |> Consumer.chat_opts("interactive")
+
+      assert Keyword.fetch!(opts, :model_type) == :uncensored
+      assert Keyword.fetch!(opts, :ollama_node) == "mini"
+      assert Keyword.fetch!(opts, :model) == "explicit-model"
+    end
+  end
+
   defp with_env(env_vars, func) do
     old_values = Enum.map(env_vars, fn {key, _} -> {key, System.get_env(key)} end)
 

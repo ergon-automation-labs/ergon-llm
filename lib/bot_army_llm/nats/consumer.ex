@@ -522,10 +522,13 @@ defmodule BotArmyLlm.NATS.Consumer do
           if is_nil(text) or text == "" do
             {:error, :empty_prompt}
           else
-            llm_client.complete(text,
-              model: model,
-              allow_cloud_when_sensitive: allow_cloud,
-              reasoning_mode: reasoning_mode
+            llm_client.complete(
+              text,
+              [
+                model: model,
+                allow_cloud_when_sensitive: allow_cloud,
+                reasoning_mode: reasoning_mode
+              ] ++ List.wrap(model_type_opt(payload))
             )
           end
         after
@@ -720,9 +723,19 @@ defmodule BotArmyLlm.NATS.Consumer do
   # Per-request routing controls that must survive from payload to provider opts.
   # "model" was silently dropped on this path while llm.prompt.submit honored it,
   # and "ollama_node" is what makes an explicit-only node (mini) addressable.
+  # "model_type" is validated against a closed allowlist by model_type_opt/1
+  # rather than passed through — it names a type, not an arbitrary atom.
   @chat_passthrough [{"model", :model}, {"ollama_node", :ollama_node}]
 
-  defp chat_opts_for_lane(message, lane) do
+  @doc """
+  Translate a chat payload's per-request routing controls into provider opts.
+
+  Public (and pure) so the passthrough contract can be tested without a NATS
+  connection: a routing control that is silently dropped here is invisible in
+  the reply, which is exactly how "model" was lost on this path once already.
+  """
+  @spec chat_opts(map(), String.t()) :: keyword()
+  def chat_opts(message, lane) when is_map(message) do
     # Tiered defaults keep foreground traffic snappy and background traffic cheaper.
     # Explicit caller options still win when present.
     defaults =
@@ -749,6 +762,32 @@ defmodule BotArmyLlm.NATS.Consumer do
         value -> Keyword.put(acc, opt_key, value)
       end
     end)
+    |> put_model_type(message)
+  end
+
+  # A caller asks for a model *type* ("light"|"medium"|"heavy"|"uncensored").
+  # Unknown values are dropped with a warning: `String.to_atom/1` on caller input
+  # would let any producer mint atoms in the LLM bot, and silently reinterpreting
+  # an unknown type would hide a typo behind a plausible answer.
+  defp put_model_type(opts, message) do
+    case message |> Map.get("model_type") |> BotArmyLlm.ModelType.parse() do
+      {:ok, type} ->
+        Keyword.put(opts, :model_type, type)
+
+      :error ->
+        case message |> Map.get("model_type") |> trimmed_string() do
+          nil ->
+            opts
+
+          unknown ->
+            Logger.warning(
+              "llm.request.chat: ignoring unknown model_type #{inspect(unknown)} " <>
+                "(allowed: #{Enum.map_join(BotArmyLlm.ModelType.all(), ", ", &Atom.to_string/1)})"
+            )
+
+            opts
+        end
+    end
   end
 
   defp trimmed_string(value) when is_binary(value) do
@@ -759,6 +798,15 @@ defmodule BotArmyLlm.NATS.Consumer do
   end
 
   defp trimmed_string(_value), do: nil
+
+  # Shared by the prompt path: a model type is a closed allowlist, and absent
+  # means absent (no :model_type opt at all).
+  defp model_type_opt(payload) do
+    case payload |> Map.get("model_type") |> BotArmyLlm.ModelType.parse() do
+      {:ok, type} -> {:model_type, type}
+      :error -> nil
+    end
+  end
 
   defp has_anthropic_format?(message) do
     system = Map.get(message, "system")
@@ -774,7 +822,7 @@ defmodule BotArmyLlm.NATS.Consumer do
 
     chat_opts =
       message
-      |> chat_opts_for_lane(lane)
+      |> chat_opts(lane)
       |> Keyword.merge(failed_provider_chat_opts(message, %{}))
       |> Keyword.put(:reasoning_mode, reasoning_mode)
 
@@ -799,7 +847,7 @@ defmodule BotArmyLlm.NATS.Consumer do
 
     chat_opts =
       message
-      |> chat_opts_for_lane(lane)
+      |> chat_opts(lane)
       |> Keyword.merge(failed_provider_chat_opts(message, prompt_context))
       |> Keyword.put(:reasoning_mode, reasoning_mode)
 

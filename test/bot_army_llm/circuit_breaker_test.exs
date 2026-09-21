@@ -157,6 +157,29 @@ defmodule BotArmyLlm.CircuitBreakerTest do
     end
   end
 
+  describe "reset/1" do
+    setup do
+      provider = :"test_reset_#{System.unique_integer([:positive])}"
+      start_supervised!({CircuitBreaker, provider})
+      %{provider: provider}
+    end
+
+    test "closes an open circuit and clears its failures", %{provider: provider} do
+      for _ <- 1..5, do: CircuitBreaker.record_failure(provider)
+
+      assert CircuitBreaker.get_state(provider).state == :open
+      assert {:open, _retry_after_ms} = CircuitBreaker.allow?(provider)
+
+      assert CircuitBreaker.reset(provider) == :ok
+      assert CircuitBreaker.get_state(provider) == %{state: :closed, failures: 0}
+      assert CircuitBreaker.allow?(provider) == :ok
+    end
+
+    test "is a no-op for an unknown provider (fail-open, like allow?/1)" do
+      assert CircuitBreaker.reset(:nonexistent_provider_999) == :ok
+    end
+  end
+
   describe "resilience to missing GenServer" do
     test "allow? returns :ok for unknown provider (fail-open)" do
       assert CircuitBreaker.allow?(:nonexistent_provider_999) == :ok

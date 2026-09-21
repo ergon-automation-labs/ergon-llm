@@ -71,6 +71,29 @@ defmodule BotArmyLlm.LlmClient do
     end
   end
 
+  # A named type wins over the scored complexity. An unparseable type is not a
+  # request for uncensored anything — it is a typo — so it scores as usual and
+  # says so, rather than becoming a silent routing change.
+  defp request_complexity(scored, opts) do
+    case Keyword.get(opts, :model_type) do
+      nil ->
+        scored
+
+      requested ->
+        case BotArmyLlm.ModelType.parse(requested) do
+          {:ok, type} ->
+            type
+
+          :error ->
+            Logger.warning(
+              "LLM: unknown model_type #{inspect(requested)} — ignoring it and scoring the prompt as #{scored}"
+            )
+
+            scored
+        end
+    end
+  end
+
   defp anthropic_url,
     do:
       BotArmyLibraryRuntime.ConfigLoader.get(
@@ -100,13 +123,17 @@ defmodule BotArmyLlm.LlmClient do
 
   Options:
     - `model`: Override model selection ("auto" uses complexity routing)
+    - `model_type`: Ask for a type by name — `:light | :medium | :heavy |
+      :uncensored`, or the same as a string (see `BotArmyLlm.ModelType`).
+      `:uncensored` replaces the scored complexity: the type is a promise about
+      who may answer, not a difficulty.
     - `temperature`: Generation temperature (default: 0.7)
     - `max_tokens`: Max response tokens (default: 1000)
   """
   def complete(text, opts \\ []) when is_binary(text) do
     text = BotArmyLlm.ReasoningScaffold.wrap(text, opts)
     start_time = System.monotonic_time(:millisecond)
-    complexity = ComplexityScorer.score(text)
+    complexity = request_complexity(ComplexityScorer.score(text), opts)
     allow_cloud_when_sensitive = Keyword.get(opts, :allow_cloud_when_sensitive, false)
 
     # Determine the routed model based on complexity
@@ -114,6 +141,7 @@ defmodule BotArmyLlm.LlmClient do
       case complexity do
         :heavy -> "high-reasoning"
         :medium -> "general"
+        :uncensored -> "general"
         :light -> "fast_cheap"
       end
 
@@ -206,6 +234,7 @@ defmodule BotArmyLlm.LlmClient do
 
   Options:
     - `model`: Override model selection ("auto" uses complexity routing)
+    - `model_type`: Ask for a type by name (see `complete/2`)
     - `temperature`: Generation temperature (default: 0.7)
     - `max_tokens`: Max response tokens (default: 1000)
   """
@@ -214,7 +243,7 @@ defmodule BotArmyLlm.LlmClient do
     start_time = System.monotonic_time(:millisecond)
 
     # Score based on the last user message if available
-    complexity =
+    scored =
       messages
       |> Enum.reverse()
       |> Enum.find(&(&1["role"] == "user"))
@@ -223,11 +252,14 @@ defmodule BotArmyLlm.LlmClient do
         _ -> :medium
       end
 
+    complexity = request_complexity(scored, opts)
+
     # Determine the routed model based on complexity
     capability =
       case complexity do
         :heavy -> "high-reasoning"
         :medium -> "general"
+        :uncensored -> "general"
         :light -> "fast_cheap"
       end
 
@@ -365,13 +397,31 @@ defmodule BotArmyLlm.LlmClient do
     end)
   end
 
-  defp provider_chain(:heavy) do
+  @doc """
+  The providers that may serve a given complexity or model type, in order.
+
+  Public because this *is* the promise: `provider_chain(:uncensored)` is
+  `[:ollama]` no matter how cloud providers are configured, so an uncensored
+  request can never be answered by a model that would refuse it. A local-only
+  type may not be silently rerouted by load either — see default_provider_chain/0,
+  which drops Ollama when local nodes are busy.
+  """
+  @spec provider_chain(atom()) :: [atom()]
+  def provider_chain(complexity) do
+    case complexity do
+      :heavy -> heavy_provider_chain()
+      :uncensored -> [:ollama]
+      _ -> default_provider_chain()
+    end
+  end
+
+  defp heavy_provider_chain do
     # Check if custom chain is configured, otherwise use default
     chain = resolved_provider_chain()
     if :ollama in chain, do: chain ++ [:ollama], else: chain
   end
 
-  defp provider_chain(_complexity) do
+  defp default_provider_chain do
     # Check if custom chain is configured
     chain = resolved_provider_chain()
 
@@ -582,6 +632,13 @@ defmodule BotArmyLlm.LlmClient do
   end
 
   # Model selection per provider + complexity
+
+  # The uncensored family is local by construction: there is no cloud model name
+  # for it. Returning "" lands the provider clauses on
+  # {:error, :model_not_configured}, which fails closed — a censored cloud model
+  # must never answer an uncensored request, because a refusal reads as a content
+  # problem instead of a routing problem.
+  defp cloud_model(_provider, :uncensored), do: ""
 
   defp cloud_model(:blackbox, :light),
     do: BotArmyLibraryRuntime.ConfigLoader.get("BLACKBOX_MODEL_LIGHT", "qwen/qwen3-14b:free")

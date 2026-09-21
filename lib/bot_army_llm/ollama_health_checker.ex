@@ -33,6 +33,10 @@ defmodule BotArmyLlm.OllamaHealthChecker do
     OLLAMA_MINI_PROBE_MODEL - Probe model for the mini node (default: OLLAMA_PROBE_MODEL)
     OLLAMA_MODEL_LIGHT      - Model for light tasks (default: ministral-3:3b)
     OLLAMA_MODEL_MEDIUM     - Model for medium tasks (default: ministral-3:8b)
+    OLLAMA_MODEL_UNCENSORED - Model that serves the :uncensored type (default: none)
+                              No default on purpose: the type means "will not
+                              refuse", which cannot be guessed. Empty makes it
+                              fail closed rather than answer with a refusal.
     OLLAMA_DEGRADED_LATENCY_MS - Latency threshold for healthy status (default: 8000)
   """
 
@@ -54,8 +58,8 @@ defmodule BotArmyLlm.OllamaHealthChecker do
   nodes eligible for implicit latency-based routing.
   Returns {:ok, {url, model}} | {:error, :no_healthy_nodes}
   """
-  @spec best_ollama_node(:light | :medium | :heavy) ::
-          {:ok, {String.t(), String.t()}} | {:error, atom()}
+  @spec best_ollama_node(BotArmyLlm.ModelType.all() | atom()) ::
+          {:ok, {String.t(), String.t()}} | {:error, atom() | tuple()}
   def best_ollama_node(complexity), do: best_ollama_node(complexity, nil)
 
   @doc """
@@ -63,7 +67,7 @@ defmodule BotArmyLlm.OllamaHealthChecker do
   latency ordering and the explicit-only filter. nil / "" / "auto" behave like
   best_ollama_node/1.
   """
-  @spec best_ollama_node(:light | :medium | :heavy, atom() | String.t() | nil) ::
+  @spec best_ollama_node(BotArmyLlm.ModelType.all() | atom(), atom() | String.t() | nil) ::
           {:ok, {String.t(), String.t()}} | {:error, term()}
   def best_ollama_node(complexity, node_name) do
     case Process.whereis(__MODULE__) do
@@ -126,7 +130,7 @@ defmodule BotArmyLlm.OllamaHealthChecker do
           explicit_node_result(state.nodes, name, complexity)
       end
 
-    {:reply, result, state}
+    {:reply, blank_model_error(result, complexity), state}
   end
 
   @impl true
@@ -361,6 +365,15 @@ defmodule BotArmyLlm.OllamaHealthChecker do
   defp local_model_for(:heavy),
     do: BotArmyLibraryRuntime.ConfigLoader.get("OLLAMA_MODEL_HEAVY", "ministral-3:8b")
 
+  # The uncensored family has NO default on purpose. Every other tier can fall
+  # back to something reasonable, but "a model that will not refuse" cannot be
+  # guessed: substituting a smaller censored model answers the request with a
+  # refusal, which looks like a content problem rather than a config one. An
+  # empty value makes the type fail closed (see blank_model_error/2) and the
+  # pillar names it: llm:ollama:models:uncensored.
+  defp local_model_for(:uncensored),
+    do: BotArmyLibraryRuntime.ConfigLoader.get("OLLAMA_MODEL_UNCENSORED", "")
+
   # Routing helpers
 
   defp normalize_node_name(nil), do: :implicit
@@ -416,6 +429,18 @@ defmodule BotArmyLlm.OllamaHealthChecker do
       _ -> local_model_for(complexity)
     end
   end
+
+  # A node that resolved to an empty model name is not a usable answer: the
+  # caller would post an empty "model" to Ollama and get a 400 whose text says
+  # nothing about the missing env var. Name the missing setting instead.
+  defp blank_model_error({:ok, {url, model}}, complexity) do
+    case nilify(model) do
+      nil -> {:error, {:model_not_configured, complexity}}
+      _ -> {:ok, {url, model}}
+    end
+  end
+
+  defp blank_model_error(other, _complexity), do: other
 
   defp parse_bool(value, _default) when is_boolean(value), do: value
 

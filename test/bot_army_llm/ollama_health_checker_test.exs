@@ -535,6 +535,51 @@ defmodule BotArmyLlm.OllamaHealthCheckerTest do
       end)
     end
 
+    # ── the :uncensored type ────────────────────────────────────────────────
+    # The uncensored family is named by the pillar per node, and it has no
+    # fallback: a substituted smaller model answers intimate content with a
+    # refusal, which is indistinguishable from a content problem at the caller.
+    test "resolves :uncensored to OLLAMA_MODEL_UNCENSORED" do
+      with_env("OLLAMA_MODEL_UNCENSORED", "baytout3/qwen3.5-uncensored:9B", fn ->
+        with_state(pinned_state(), fn ->
+          assert {:ok, {"http://air:11434", "baytout3/qwen3.5-uncensored:9B"}} =
+                   OllamaHealthChecker.best_ollama_node(:uncensored)
+        end)
+      end)
+    end
+
+    test "an explicit node's own uncensored model still wins" do
+      with_env("OLLAMA_MODEL_UNCENSORED", "baytout3/qwen3.5-uncensored:9B", fn ->
+        with_state(pinned_state(), fn ->
+          assert {:ok, {"http://mini:11434", "baytout3/qwen3.5-uncensored:27B"}} =
+                   OllamaHealthChecker.best_ollama_node(:uncensored, "mini")
+        end)
+      end)
+    end
+
+    test "fails closed when no uncensored model is configured" do
+      with_env("OLLAMA_MODEL_UNCENSORED", nil, fn ->
+        state = pinned_state()
+        state = put_in(state.nodes.air.default_model, nil)
+
+        with_state(state, fn ->
+          assert {:error, {:model_not_configured, :uncensored}} =
+                   OllamaHealthChecker.best_ollama_node(:uncensored)
+        end)
+      end)
+    end
+
+    test "a blank model is reported, not passed on to Ollama" do
+      # The regression this guards: posting model:"" to Ollama yields a 400 whose
+      # text says nothing about the missing setting.
+      with_env("OLLAMA_MODEL_UNCENSORED", " ", fn ->
+        with_state(pinned_state(), fn ->
+          assert {:error, {:model_not_configured, :uncensored}} =
+                   OllamaHealthChecker.best_ollama_node(:uncensored)
+        end)
+      end)
+    end
+
     test "node_status exposes explicit_only" do
       with_state(pinned_state(), fn ->
         status = OllamaHealthChecker.node_status()
@@ -542,6 +587,25 @@ defmodule BotArmyLlm.OllamaHealthCheckerTest do
         assert %{explicit_only: false} = Enum.find(status, &(&1.name == :air))
         assert %{explicit_only: true} = Enum.find(status, &(&1.name == :mini))
       end)
+    end
+  end
+
+  # Set (or clear) a single env var for the duration of one test.
+  defp with_env(key, value, func) do
+    previous = System.get_env(key)
+
+    case value do
+      nil -> System.delete_env(key)
+      _ -> System.put_env(key, value)
+    end
+
+    try do
+      func.()
+    after
+      case previous do
+        nil -> System.delete_env(key)
+        _ -> System.put_env(key, previous)
+      end
     end
   end
 

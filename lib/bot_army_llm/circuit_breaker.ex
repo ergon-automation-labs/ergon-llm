@@ -97,6 +97,21 @@ defmodule BotArmyLlm.CircuitBreaker do
     :exit, _ -> %{state: :unknown, failures: 0}
   end
 
+  @doc """
+  Close a provider's circuit and clear its failure count.
+
+  For operators after a provider is fixed, and for tests that need a
+  deterministic starting state: an open circuit skips the provider entirely, so
+  a test that asserts *which* provider is asked cannot rely on inherited state.
+  """
+  def reset(provider) do
+    GenServer.call(via(provider), :reset, 1000)
+  rescue
+    _ -> :ok
+  catch
+    :exit, _ -> :ok
+  end
+
   # GenServer callbacks
 
   @impl true
@@ -140,6 +155,12 @@ defmodule BotArmyLlm.CircuitBreaker do
   @impl true
   def handle_call(:get_state, _from, state) do
     {:reply, %{state: state.circuit_state, failures: state.failures}, state}
+  end
+
+  @impl true
+  def handle_call(:reset, _from, state) do
+    {:reply, :ok,
+     %{state | circuit_state: :closed, failures: 0, opened_at: nil, cooldown_until: nil}}
   end
 
   # Test-only: simulate time passing for half-open timeout

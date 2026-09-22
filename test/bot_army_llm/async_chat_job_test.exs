@@ -185,6 +185,28 @@ defmodule BotArmyLlm.AsyncChatJobTest do
     end
   end
 
+  describe "the consumer's subscriptions match what it advertises" do
+    # This drifted once: `llm.job.status` was advertised to the registry but never
+    # subscribed, so a caller could poll a backgrounded job forever and get no
+    # answer from a bot that looked, from the registry, like it was listening.
+    test "every advertised subject is subscribed (wildcards excepted)" do
+      advertised = Consumer.advertised_subjects()
+      subscribed = Consumer.subscription_subjects()
+
+      missing =
+        advertised
+        |> Enum.reject(&(String.contains?(&1, ">") or String.contains?(&1, "*")))
+        |> Enum.reject(&(&1 in subscribed))
+
+      assert missing == [], "advertised but not subscribed: #{inspect(missing)}"
+    end
+
+    test "the job poll subject is subscribed, not only advertised" do
+      assert "llm.job.status" in Consumer.advertised_subjects()
+      assert "llm.job.status" in Consumer.subscription_subjects()
+    end
+  end
+
   defp wait_for_status(job_id, wanted, attempts \\ 100) do
     response = Consumer.job_status_response(%{"job_id" => job_id})
 

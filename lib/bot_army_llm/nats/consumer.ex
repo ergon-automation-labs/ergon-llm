@@ -140,11 +140,6 @@ defmodule BotArmyLlm.NATS.Consumer do
       description: "Army general poll broadcasts"
     },
     %{
-      subject: "bot_army.llm.intent.summarize",
-      type: :subscribe,
-      description: "Intent: summarize recent activity"
-    },
-    %{
       subject: "llm.army.opinion.vote",
       type: :request_reply,
       description: "Army opinion collect voter (persona-style choice)"
@@ -240,38 +235,61 @@ defmodule BotArmyLlm.NATS.Consumer do
     {:noreply, register_with_role(%{state | role: :standby, subscriptions: []})}
   end
 
+  # The subjects this consumer actually subscribes to. It is deliberately its own
+  # list, separate from `@subjects` (what the fleet registry is told this bot can
+  # answer): the registry entry is also read by other bots to discover peers.
+  #
+  # Keeping them separate means they can drift — and they did: `llm.job.status`
+  # was advertised but never subscribed, so a caller that polled a backgrounded
+  # job (the wife care narrator, 0.1.27) would wait forever on a responder that
+  # was not there. `subscription_subjects/0` and `advertised_subjects/0` are public
+  # so a test can assert every advertised subject is actually subscribed.
+  @business_subjects [
+    "llm.request.chat",
+    "pi-go.llm.request.chat",
+    "pi-go.llm.request.chat.urgent",
+    "pi-go.llm.request.chat.interactive",
+    "pi-go.llm.request.chat.background",
+    "llm.prompt.submit",
+    "llm.skill.prompt.submit",
+    "llm.inference.chain",
+    "llm.inference.converse",
+    "llm.response.parse",
+    "llm.vision.analyze",
+    "llm.embed.request",
+    "llm.embed.request.bulk",
+    "llm.rag.index",
+    "llm.rag.search",
+    "llm.rag.delete",
+    "llm.claude_code.complete",
+    "llm.skill.execute",
+    "llm.usage.query",
+    "llm.metrics.get",
+    "llm.queue.status",
+    "llm.job.status",
+    "conv.request.llm.>",
+    "conv.mailbox.llm",
+    "conv.followup.>",
+    "gossip.poll.broadcast",
+    "llm.army.opinion.vote",
+    "bridge.narrative.refresh",
+    # Advertised and handled since Phase 2, but never actually subscribed — the
+    # dispatcher's LLM subtasks went nowhere. Inert while no dispatcher runs.
+    "dispatcher.subtask.intent.bot_army_llm"
+  ]
+
+  @doc "The subjects this consumer subscribes to on the broker."
+  @spec subscription_subjects() :: [String.t()]
+  def subscription_subjects, do: @business_subjects
+
+  @doc "The subjects this bot advertises to the fleet registry."
+  @spec advertised_subjects() :: [String.t()]
+  def advertised_subjects, do: Enum.map(@subjects, & &1[:subject])
+
   defp subscribe_to_topics(conn, state) do
     Logger.info("Connected to NATS, subscribing to LLM topics")
 
-    subjects = [
-      "llm.request.chat",
-      "pi-go.llm.request.chat",
-      "pi-go.llm.request.chat.urgent",
-      "pi-go.llm.request.chat.interactive",
-      "pi-go.llm.request.chat.background",
-      "llm.prompt.submit",
-      "llm.skill.prompt.submit",
-      "llm.inference.chain",
-      "llm.inference.converse",
-      "llm.response.parse",
-      "llm.vision.analyze",
-      "llm.embed.request",
-      "llm.embed.request.bulk",
-      "llm.rag.index",
-      "llm.rag.search",
-      "llm.rag.delete",
-      "llm.claude_code.complete",
-      "llm.skill.execute",
-      "llm.usage.query",
-      "llm.metrics.get",
-      "llm.queue.status",
-      "conv.request.llm.>",
-      "conv.mailbox.llm",
-      "conv.followup.>",
-      "gossip.poll.broadcast",
-      "llm.army.opinion.vote",
-      "bridge.narrative.refresh"
-    ]
+    subjects = @business_subjects
 
     subs =
       Enum.reduce_while(subjects, [], fn subject, acc ->

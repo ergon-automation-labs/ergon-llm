@@ -32,6 +32,7 @@ defmodule BotArmyLlm.NodeQueueWiringTest do
       Application.delete_env(:bot_army_llm, :node_queue_server)
       Application.delete_env(:bot_army_llm, :ollama_health_checker)
       Application.delete_env(:bot_army_llm, :hanging_node_url)
+      BotArmyLlm.OllamaHealthChecker.publish_url_owners(%{})
     end)
 
     :ok
@@ -68,6 +69,15 @@ defmodule BotArmyLlm.NodeQueueWiringTest do
   end
 
   defp status(url), do: Map.get(NodeQueue.status(), url, %{running: [], waiting: []})
+
+  # Status by node, for what the gate keys by node rather than URL. Absent is a
+  # real state — the first poll usually beats the task's first acquire.
+  defp node_state(name), do: Map.get(NodeQueue.status(), name, %{running: [], waiting: []})
+
+  # The hanging node, by a second name — what a LAN name or a tailnet name is to
+  # the same machine. Nothing listens there; the point is that the GATE treats it
+  # as the same node, which is decided before any connection is made.
+  defp other_name(url), do: String.replace(url, "127.0.0.1", "other-name.invalid")
 
   defp wait_until(fun, tries \\ 200) do
     Enum.reduce_while(1..tries, false, fn _n, _acc ->
@@ -117,5 +127,36 @@ defmodule BotArmyLlm.NodeQueueWiringTest do
     assert status(url).waiting == []
 
     Task.shutdown(first, :brutal_kill)
+  end
+
+  test "the same node under another name waits on the same slot" do
+    start_queue(max_wait_ms: 5_000)
+    url = start_hanging_node()
+
+    # What the prober publishes once it has settled on one of a node's names.
+    BotArmyLlm.OllamaHealthChecker.publish_url_owners(%{
+      air: %{url: url, urls: [url, other_name(url)]}
+    })
+
+    assert NodeQueue.key_for(url) == :air
+    assert NodeQueue.key_for(other_name(url)) == :air
+
+    first = Task.async(fn -> LlmClient.complete("hi") end)
+    assert wait_until(fn -> node_state(:air).running != [] end)
+
+    # The probe now answers with the node's OTHER name — the flapping case. The
+    # second job must still queue: one GPU, so one slot, however many names the
+    # probe is willing to try.
+    Application.put_env(:bot_army_llm, :hanging_node_url, other_name(url))
+    second = Task.async(fn -> LlmClient.complete("hi") end)
+
+    assert wait_until(fn -> node_state(:air).waiting != [] end),
+           "the second name must wait on the first name's slot"
+
+    # Waiting, not running: it has not finished, and it never reached the network.
+    assert Task.yield(second, 300) == nil
+
+    Task.shutdown(first, :brutal_kill)
+    Task.shutdown(second, :brutal_kill)
   end
 end

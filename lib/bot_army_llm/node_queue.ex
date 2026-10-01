@@ -97,13 +97,28 @@ defmodule BotArmyLlm.NodeQueue do
   """
   @spec acquire(key(), label()) :: :ok | {:error, atom()}
   def acquire(key, label \\ nil) do
-    GenServer.call(server(), {:acquire, key, label}, :infinity)
+    GenServer.call(server(), {:acquire, key_for(key), label}, :infinity)
   end
 
   @doc "Gives back the slot taken by `acquire/2` on `key`."
   @spec release(key()) :: :ok
   def release(key) do
-    GenServer.cast(server(), {:release, key, self()})
+    GenServer.cast(server(), {:release, key_for(key), self()})
+  end
+
+  @doc """
+  The identity a slot is keyed by.
+
+  Two names for one machine are two names for ONE GPU. A node is configured with
+  more than one name (tailnet, LAN, loopback — see `OllamaHealthChecker`) and the
+  probe settles on whichever answers, so the URL a call lands on is not a stable
+  identity; keying on it would hand out a second slot the moment the probe moved
+  to the next name. The node's name is the stable identity. A URL the health
+  checker cannot name stays its own key.
+  """
+  @spec key_for(String.t()) :: key()
+  def key_for(url) when is_binary(url) do
+    BotArmyLlm.OllamaHealthChecker.owner_of_url(url) || url
   end
 
   @doc "Which job holds each node, and which jobs wait behind it."

@@ -106,10 +106,28 @@ Log lines worth knowing:
 ## Node URLs and fallback names
 
 Each node is probed at a list of URLs (`OLLAMA_URLS`, `OLLAMA_MINI_URLS`), tried
-in order, so a tailnet address can be followed by a LAN name for the case where
-Tailscale is the thing that is down. `mini.local` is **not** a LAN name: Tailscale
-MagicDNS resolves it to the tailnet IP. The real off-tailnet name for mini is
-`the-chosen-legend.local` (`192.168.1.15`).
+in order, so the tailnet name can be followed by an off-tailnet name for the case
+where Tailscale is the thing that is down. The preferred name is the **tailnet
+MagicDNS name**, not the tailnet IP: the address is assigned to the node and has
+to be re-pinned if the node is re-registered, while the name follows the machine.
+
+Mini's list (`pillar/air.sls`) is, in order:
+
+| Name | Why it is there |
+|---|---|
+| `abbys-mac-mini-2.tail5ab297.ts.net` | the MagicDNS name — follows the machine, not the address |
+| `100.72.132.2` | the tailnet IP, for when DNS is the broken thing |
+| `the-chosen-legend.local` (`192.168.1.15`) | mini's own LocalHostName — the off-tailnet path |
+
+`mini.local` is **not** an off-tailnet name: it is a hand-written `/etc/hosts`
+entry (`salt/air/hosts.sls`) that pins it to the tailnet IP, so it fails exactly
+when the tailnet does. The machine's LocalHostName is `the-chosen-legend`.
+
+**Several names, one GPU.** A probe settles on whichever name answers, so the URL
+a call lands on moves; the *node* does not. The gate therefore keys slots by node
+(`NodeQueue.key_for/1`, which asks `OllamaHealthChecker.owner_of_url/1`), and a
+URL no node claims is its own key. Without that, a failover would hand out a
+second slot on the one machine the gate exists to protect.
 
 ## See also
 

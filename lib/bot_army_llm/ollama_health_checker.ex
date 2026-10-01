@@ -117,6 +117,41 @@ defmodule BotArmyLlm.OllamaHealthChecker do
     GenServer.call(__MODULE__, :node_status)
   end
 
+  @url_owners_key {__MODULE__, :url_owners}
+
+  @doc """
+  The node that answers on `url`, as published by the last probe.
+
+  A node is configured with more than one name (tailnet, LAN, loopback) and the
+  probe settles on whichever works, so the URL a call lands on is not a stable
+  identity — the machine is. Callers that must count work per *machine* rather
+  than per name (`BotArmyLlm.NodeQueue`) ask this instead. `nil` means "no node
+  claims this URL", which is not the same as "no such node".
+  """
+  @spec owner_of_url(String.t()) :: atom() | nil
+  def owner_of_url(url) when is_binary(url) do
+    :persistent_term.get(@url_owners_key, %{})
+    |> Map.get(url)
+  end
+
+  @doc """
+  Publishes the URL -> node mapping. Called after every probe, and the whole
+  contract of `owner_of_url/1` — so it is public, because a caller with no probes
+  to run (a test) has to be able to establish the same state. An empty map
+  withdraws every claim.
+  """
+  @spec publish_url_owners(%{atom() => map()}) :: :ok
+  def publish_url_owners(nodes) when is_map(nodes) do
+    owners =
+      for {name, node} <- nodes,
+          url <- [Map.get(node, :url) | Map.get(node, :urls, [])],
+          is_binary(url),
+          into: %{},
+          do: {url, name}
+
+    :persistent_term.put(@url_owners_key, owners)
+  end
+
   @doc """
   Returns true if all enabled nodes have acceptable CPU and memory load.
   When metrics are unavailable (Prometheus unreachable), treats as acceptable (fail-open).
@@ -133,6 +168,9 @@ defmodule BotArmyLlm.OllamaHealthChecker do
     state = build_initial_state()
     # Run initial probe synchronously to avoid race where LLM client queries before first probe
     initial_state = probe_all_nodes(state)
+    # The gate keys slots by node, not URL, and learns which URL belongs to which
+    # node from here — so publish before anything can ask.
+    publish_url_owners(initial_state.nodes)
     # Schedule subsequent probes asynchronously
     Process.send_after(self(), :probe, @probe_interval_ms)
     {:ok, initial_state}
@@ -154,6 +192,7 @@ defmodule BotArmyLlm.OllamaHealthChecker do
   end
 
   def handle_info({:probe_result, probed}, state) do
+    publish_url_owners(probed.nodes)
     {:noreply, %{state | nodes: probed.nodes, probe_in_flight: false}}
   end
 

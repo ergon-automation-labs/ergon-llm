@@ -8,6 +8,7 @@ defmodule BotArmyLlm.NodeQueueTest do
     on_exit(fn ->
       Application.delete_env(:bot_army_llm, :node_queue_server)
       Process.delete(:llm_job_id)
+      BotArmyLlm.OllamaHealthChecker.publish_url_owners(%{})
     end)
 
     :ok
@@ -144,5 +145,65 @@ defmodule BotArmyLlm.NodeQueueTest do
     Application.put_env(:bot_army_llm, :node_queue_server, :node_queue_that_was_never_started)
 
     assert {:ok, :ran} = NodeQueue.run("air", nil, fn -> {:ok, :ran} end)
+  end
+
+  # A node has more than one name (tailnet, LAN, loopback) and the probe settles
+  # on whichever answers. These are the tests that a name change cannot buy a
+  # second slot on one GPU.
+  describe "one node, several names" do
+    @air_fqdn "http://abbys-macbook-air.tail5ab297.ts.net:11434"
+    @air_lan "http://abby-air.local:11434"
+
+    test "a URL no node claims is its own key" do
+      assert NodeQueue.key_for("http://unknown:11434") == "http://unknown:11434"
+    end
+
+    test "two names for one node are one key" do
+      BotArmyLlm.OllamaHealthChecker.publish_url_owners(%{
+        air: %{url: @air_fqdn, urls: [@air_fqdn, @air_lan]}
+      })
+
+      assert NodeQueue.key_for(@air_fqdn) == :air
+      assert NodeQueue.key_for(@air_lan) == :air
+      # ... and an unrelated host is still itself.
+      assert NodeQueue.key_for("http://mini:11434") == "http://mini:11434"
+    end
+
+    test "a slot taken by one name blocks the node's other name" do
+      start_queue(max_concurrency: 1, max_waiting: 0)
+
+      BotArmyLlm.OllamaHealthChecker.publish_url_owners(%{
+        air: %{url: @air_fqdn, urls: [@air_fqdn, @air_lan]}
+      })
+
+      start_holder(@air_fqdn)
+
+      # The probe moved to the other name; the slot is still the same GPU's.
+      assert {:error, :queue_full} = NodeQueue.acquire(@air_lan, "job-across-names")
+      assert Map.keys(NodeQueue.status()) == [:air]
+    end
+
+    test "releasing by one name frees the node, whatever name took it" do
+      start_queue(max_concurrency: 1, max_waiting: 1, max_wait_ms: 5_000)
+
+      BotArmyLlm.OllamaHealthChecker.publish_url_owners(%{
+        air: %{url: @air_fqdn, urls: [@air_fqdn, @air_lan]}
+      })
+
+      holder = start_holder(@air_fqdn)
+
+      # Waiting on the node's *other* name: one slot, so this cannot be admitted
+      # until the first is given back.
+      waiting = Task.async(fn -> NodeQueue.acquire(@air_lan, "job-across-names") end)
+      assert wait_until(fn -> NodeQueue.status()[:air].waiting != [] end)
+
+      send(holder, :release)
+      assert_receive {:released, ^holder}, 1_000
+
+      assert Task.await(waiting, 5_000) == :ok
+      assert wait_until(fn ->
+               match?(%{running: [], waiting: []}, Map.take(NodeQueue.status()[:air], [:running, :waiting]))
+             end)
+    end
   end
 end

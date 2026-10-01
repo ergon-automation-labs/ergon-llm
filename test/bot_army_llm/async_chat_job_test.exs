@@ -23,11 +23,41 @@ defmodule BotArmyLlm.AsyncChatJobTest do
     def publish(_event), do: raise("the bus is gone")
   end
 
+  # Health checkers for the local-load announcement: the three answers the code
+  # must tell apart — loaded, idle, and unable to say.
+  defmodule LoadedChecker do
+    @moduledoc false
+    def load_acceptable?, do: false
+  end
+
+  defmodule IdleChecker do
+    @moduledoc false
+    def load_acceptable?, do: true
+  end
+
+  defmodule BrokenChecker do
+    @moduledoc false
+    def load_acceptable?, do: raise("no health checker")
+  end
+
   @accepted_keys ~w(request_id response_type lane job_id status poll_subject)
 
   setup do
     if Process.whereis(JobStore) == nil, do: start_supervised!(JobStore)
     :ok
+  end
+
+  # Submits one job through the async path with the given health checker and
+  # returns whatever it logged. The runner is a stub: this is about the
+  # announcement, not about a provider.
+  defp submit(model_type, checker) do
+    Application.put_env(:bot_army_llm, :ollama_health_checker, checker)
+
+    ExUnit.CaptureLog.capture_log(fn ->
+      Consumer.submit_chat_job(%{"model_type" => model_type}, "llm.request.chat", fn _p, _s ->
+        %{"content" => "BANANA"}
+      end)
+    end)
   end
 
   describe "JobStore" do
@@ -152,6 +182,48 @@ defmodule BotArmyLlm.AsyncChatJobTest do
 
       assert %{"status" => "failed", "error" => error} = wait_for_status(job_id, "failed")
       assert error =~ "provider_gave_up"
+    end
+  end
+
+  describe "a local-only job submitted while local nodes are loaded" do
+    # An uncensored job cannot be rerouted to a cloud provider, so under load it
+    # waits — and a job that waits with nothing in the log reads as a hung job.
+    # Measured 2026-10-01: a three-word uncensored job sat `pending` for over ten
+    # minutes while cloud-routed work finished in three seconds.
+    setup do
+      previous = Application.get_env(:bot_army_llm, :ollama_health_checker)
+
+      on_exit(fn ->
+        if previous do
+          Application.put_env(:bot_army_llm, :ollama_health_checker, previous)
+        else
+          Application.delete_env(:bot_army_llm, :ollama_health_checker)
+        end
+      end)
+
+      :ok
+    end
+
+    test "says out loud that it is waiting, not failing" do
+      assert submit("uncensored", __MODULE__.LoadedChecker) =~
+               "waits for a local node rather than being rerouted to a cloud provider"
+    end
+
+    test "a tier that may use the cloud is not waiting for anything" do
+      refute submit("light", __MODULE__.LoadedChecker) =~ "waits for a local node"
+    end
+
+    test "an idle local node is not a wait" do
+      refute submit("uncensored", __MODULE__.IdleChecker) =~ "waits for a local node"
+    end
+
+    test "a type nobody asked for is not a local-only type" do
+      refute submit(nil, __MODULE__.LoadedChecker) =~ "waits for a local node"
+      refute submit("nonsense", __MODULE__.LoadedChecker) =~ "waits for a local node"
+    end
+
+    test "a health checker that cannot answer is not a reason to warn" do
+      refute submit("uncensored", __MODULE__.BrokenChecker) =~ "waits for a local node"
     end
   end
 

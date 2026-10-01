@@ -29,6 +29,8 @@ defmodule BotArmyLlm.NATS.Consumer do
   alias BotArmyLlm.EmbeddingWorkerPool
   alias BotArmyLlm.JobBell
   alias BotArmyLlm.JobStore
+  alias BotArmyLlm.LlmClient
+  alias BotArmyLlm.ModelType
   alias BotArmyLibraryRuntime.Registry
 
   alias BotArmyLlm.Handlers.{
@@ -659,6 +661,8 @@ defmodule BotArmyLlm.NATS.Consumer do
       submitted_at: DateTime.utc_now() |> DateTime.to_iso8601()
     })
 
+    announce_local_wait(job_id, payload)
+
     spawn(fn ->
       try do
         JobStore.complete(job_id, runner.(payload, subject))
@@ -684,6 +688,29 @@ defmodule BotArmyLlm.NATS.Consumer do
       "status" => "accepted",
       "poll_subject" => "llm.job.status"
     }
+  end
+
+  # A local-only job has no cloud fallback — `provider_chain(:uncensored)` is
+  # `[:ollama]` and stays that way when local nodes are loaded, because a cloud
+  # model would substitute a policy for the content. So under load such a job
+  # *waits*, and how long it has waited is exactly what the caller cannot see:
+  # measured 2026-10-01, a three-word uncensored job sat `pending` for over ten
+  # minutes while cloud-routed work finished in three seconds, and nothing in this
+  # bot said why. The job is not failing, it is queueing, and one line at
+  # submission is the difference between a mystery and a wait.
+  defp announce_local_wait(job_id, payload) do
+    with {:ok, type} <- ModelType.parse(Map.get(payload, "model_type")),
+         true <- ModelType.local_only?(type),
+         false <- LlmClient.local_load_acceptable?() do
+      Logger.warning(
+        "LLM job #{job_id} is #{type} and local nodes are loaded: it waits for a local " <>
+          "node rather than being rerouted to a cloud provider, which is this type's promise"
+      )
+    else
+      _other -> :ok
+    end
+
+    :ok
   end
 
   @doc """

@@ -44,6 +44,26 @@ defmodule BotArmyLlm.LlmClient do
     Application.get_env(:bot_army_llm, :ollama_health_checker, OllamaHealthChecker)
   end
 
+  @doc """
+  Whether a local node can take more work right now.
+
+  Public because a *caller* can need it: a local-only request (an uncensored one)
+  has no cloud fallback by design — that is what makes it uncensored — so while
+  local nodes are loaded it waits, and a job that waits looks hung to whoever is
+  watching `llm.job.status`. Asking here lets the waiting be announced.
+
+  Answers `true` ("nothing to warn about") when the health checker cannot answer
+  at all: an absent opinion is not a reason to log a warning about load.
+  """
+  @spec local_load_acceptable?() :: boolean()
+  def local_load_acceptable? do
+    health_checker_module().load_acceptable?()
+  rescue
+    _error -> true
+  catch
+    _kind, _reason -> true
+  end
+
   # Per-request node targeting. Callers (and test doubles) that predate node
   # pinning implement only best_ollama_node/1, so route to /2 only when a node
   # was actually named.

@@ -11,8 +11,17 @@ defmodule BotArmyLlm.AsyncChatJobTest do
   # So a caller may background the request and poll instead. These tests pin the
   # job lifecycle (accepted -> pending -> completed | failed) and the reply shapes
   # the poller depends on.
+  alias BotArmyLlm.JobBell
   alias BotArmyLlm.JobStore
   alias BotArmyLlm.NATS.Consumer
+  alias BotArmyLlm.Test.JobBellPublisher
+
+  defmodule ExplodingPublisher do
+    @moduledoc false
+    # A bell is a courtesy: a bus that is gone must not turn a finished job into
+    # a crashed one.
+    def publish(_event), do: raise("the bus is gone")
+  end
 
   @accepted_keys ~w(request_id response_type lane job_id status poll_subject)
 
@@ -182,6 +191,89 @@ defmodule BotArmyLlm.AsyncChatJobTest do
       %{"timestamp" => timestamp} = Consumer.job_status_response(%{"job_id" => job_id})
 
       assert {:ok, %DateTime{}, _offset} = DateTime.from_iso8601(timestamp)
+    end
+  end
+
+  describe "the job bell" do
+    # A caller that backgrounded a job should not have to ask for an hour to find
+    # out it is done. This is the other half of the async contract: the job rings
+    # when it reaches a terminal state, and the words are *not* in the ring.
+
+    setup do
+      original = Application.get_env(:bot_army_llm, :job_bell_sink)
+      Application.put_env(:bot_army_llm, :job_bell_sink, self())
+
+      on_exit(fn ->
+        if original do
+          Application.put_env(:bot_army_llm, :job_bell_sink, original)
+        else
+          Application.delete_env(:bot_army_llm, :job_bell_sink)
+        end
+      end)
+
+      :ok
+    end
+
+    test "a finished job is rung, and carries no words" do
+      accepted =
+        Consumer.submit_chat_job(%{"async" => true}, "llm.request.chat", fn _payload, _subject ->
+          %{"content" => "her private answer", "model_used" => "test"}
+        end)
+
+      # The job runs in its own process: the bell arrives, it is not already here.
+      assert_receive {:bell_published, event}, 1_000
+      assert event["event"] == "llm.job.completed"
+      assert event["payload"] == %{"job_id" => accepted["job_id"], "status" => "completed"}
+
+      body = Jason.encode!(event)
+      refute body =~ "her private answer"
+      refute body =~ "model_used"
+    end
+
+    test "a job that raised is rung as failed, without the provider's message" do
+      accepted =
+        Consumer.submit_chat_job(%{"async" => true}, "llm.request.chat", fn _payload, _subject ->
+          raise "the provider said: her private answer"
+        end)
+
+      assert_receive {:bell_published, event}, 1_000
+      assert event["payload"] == %{"job_id" => accepted["job_id"], "status" => "failed"}
+      refute Jason.encode!(event) =~ "her private answer"
+    end
+
+    test "the bell rings only once the result is readable" do
+      # A woken caller reads JobStore. If the bell could arrive first it would read
+      # `pending`, go back to sleep, and wait for a second bell that never comes.
+      accepted =
+        Consumer.submit_chat_job(%{"async" => true}, "llm.request.chat", fn _payload, _subject ->
+          %{"content" => "done"}
+        end)
+
+      assert_receive {:bell_published, _event}, 1_000
+
+      assert {:ok, %{status: :completed}} = JobStore.get(accepted["job_id"])
+    end
+
+    test "the bell is published on a subject a subscriber can name" do
+      assert BotArmyLlm.NATS.Publisher.subject_for(JobBell.event()) ==
+               "events.llm.job.completed"
+    end
+
+    test "an unknown status is refused rather than rung" do
+      assert {:error, {:unknown_status, "pending"}} = JobBell.ring(UUID.uuid4(), "pending")
+      refute_received {:bell_published, _event}
+    end
+
+    test "a bell that cannot be rung reports the failure instead of raising" do
+      Application.put_env(
+        :bot_army_llm,
+        :nats_publisher,
+        __MODULE__.ExplodingPublisher
+      )
+
+      on_exit(fn -> Application.put_env(:bot_army_llm, :nats_publisher, JobBellPublisher) end)
+
+      assert {:error, :bell_failed} = JobBell.ring(UUID.uuid4(), "completed")
     end
   end
 

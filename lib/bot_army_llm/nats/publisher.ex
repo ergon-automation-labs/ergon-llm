@@ -75,29 +75,42 @@ defmodule BotArmyLlm.NATS.Publisher do
     end
   end
 
-  defp derive_subject(event_type) when is_binary(event_type) do
-    known_events = [
-      "llm.completion",
-      "llm.error",
-      "llm.chain.step.completed",
-      "llm.chain.completed",
-      "llm.conversation.replied",
-      "llm.response.parsed",
-      "llm.vision.analyzed",
-      "llm.embedding.created",
-      "llm.rag.indexed",
-      "llm.rag.search.result",
-      "llm.rag.deleted"
-    ]
+  # Every event type this bot is allowed to put on the wire. An event name that
+  # is missing here is published to `events.llm.unknown` — a subject nothing
+  # subscribes to — and the publish still reports `:ok`, which is why the
+  # mapping is asserted in tests rather than trusted.
+  @known_events ~w(
+    llm.chain.completed
+    llm.chain.step.completed
+    llm.completion
+    llm.conversation.replied
+    llm.embedding.created
+    llm.error
+    llm.job.completed
+    llm.rag.deleted
+    llm.rag.indexed
+    llm.rag.search.result
+    llm.response.parsed
+    llm.vision.analyzed
+  )
 
-    if String.starts_with?(event_type, "llm.") and event_type in known_events do
+  @doc """
+  The wire subject an event type is published on.
+
+  Public so the mapping is assertable without a broker: an event missing from
+  `@known_events` silently becomes `events.llm.unknown`, so a caller that only
+  checked the publish return value would believe it had been heard.
+  """
+  @spec subject_for(String.t()) :: String.t()
+  def subject_for(event_type) when is_binary(event_type) do
+    if String.starts_with?(event_type, "llm.") and event_type in @known_events do
       "events." <> event_type
     else
       "events.llm.unknown"
     end
   end
 
-  defp derive_subject(_) do
-    "events.llm.unknown"
-  end
+  def subject_for(_event_type), do: "events.llm.unknown"
+
+  defp derive_subject(event_type), do: subject_for(event_type)
 end

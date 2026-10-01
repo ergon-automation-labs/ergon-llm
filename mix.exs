@@ -4,9 +4,10 @@ defmodule BotArmyLlm.MixProject do
   def project do
     [
       app: :bot_army_llm,
-      version: "0.10.8",
+      version: "0.10.9",
       elixir: "~> 1.14",
       start_permanent: Mix.env() == :prod,
+      elixirc_paths: elixirc_paths(Mix.env()),
       deps: deps(),
       default_release: :llm_bot,
       releases: [
@@ -19,6 +20,11 @@ defmodule BotArmyLlm.MixProject do
       ]
     ]
   end
+
+  # `test/support` holds stubs that must exist before the first test file is
+  # required (the suite installs a bell publisher in `test_helper.exs`).
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_env), do: ["lib"]
 
   def application do
     [

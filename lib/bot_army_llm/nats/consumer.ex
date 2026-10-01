@@ -27,6 +27,7 @@ defmodule BotArmyLlm.NATS.Consumer do
 
   alias BotArmyLibraryCore.NATS.Decoder
   alias BotArmyLlm.EmbeddingWorkerPool
+  alias BotArmyLlm.JobBell
   alias BotArmyLlm.JobStore
   alias BotArmyLibraryRuntime.Registry
 
@@ -636,9 +637,10 @@ defmodule BotArmyLlm.NATS.Consumer do
   Starts a chat request as a background job and returns the acceptance reply.
 
   Public and pure-ish (it starts work and returns immediately) so the accepted
-  reply's shape is assertable without a broker. The caller polls
-  `llm.job.status` with the returned `job_id` on its own schedule — see
-  `BotArmyLlm.JobStore`.
+  reply's shape is assertable without a broker. The caller reads the result with
+  `llm.job.status` and the returned `job_id`; it can poll on its own schedule (see
+  `BotArmyLlm.JobStore`), or wait to be told — a finished job also rings
+  `BotArmyLlm.JobBell`, one message instead of hundreds.
 
   `runner` is the work itself, injectable so tests can exercise the job
   lifecycle without a provider round trip.
@@ -660,14 +662,17 @@ defmodule BotArmyLlm.NATS.Consumer do
     spawn(fn ->
       try do
         JobStore.complete(job_id, runner.(payload, subject))
+        JobBell.ring(job_id, "completed")
       rescue
         error ->
           Logger.error("LLM job #{job_id} failed: #{Exception.message(error)}")
           JobStore.fail(job_id, Exception.message(error))
+          JobBell.ring(job_id, "failed")
       catch
         kind, reason ->
           Logger.error("LLM job #{job_id} crashed (#{kind}): #{inspect(reason)}")
           JobStore.fail(job_id, "#{kind}: #{inspect(reason)}")
+          JobBell.ring(job_id, "failed")
       end
     end)
 

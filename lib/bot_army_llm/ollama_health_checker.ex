@@ -34,6 +34,8 @@ defmodule BotArmyLlm.OllamaHealthChecker do
     OLLAMA_MODEL_LIGHT      - Model for light tasks (default: ministral-3:3b)
     OLLAMA_MODEL_MEDIUM     - Model for medium tasks (default: ministral-3:8b)
     OLLAMA_MODEL_UNCENSORED - Model that serves the :uncensored type (default: none)
+    OLLAMA_URLS             - Comma-separated names for the air node, in failover order
+    OLLAMA_MINI_URLS        - Comma-separated names for the mini node, in failover order
                               No default on purpose: the type means "will not
                               refuse", which cannot be guessed. Empty makes it
                               fail closed rather than answer with a refusal.
@@ -186,6 +188,7 @@ defmodule BotArmyLlm.OllamaHealthChecker do
         %{
           name: name,
           url: node.url,
+          urls: Map.get(node, :urls, []),
           latency_ms: node.latency_ms,
           healthy: node.healthy,
           last_probe_at: node.last_probe_at,
@@ -223,6 +226,14 @@ defmodule BotArmyLlm.OllamaHealthChecker do
   # Private
 
   defp build_initial_state do
+    air_primary =
+      BotArmyLibraryRuntime.ConfigLoader.get(
+        "OLLAMA_URL",
+        BotArmyLibraryRuntime.ConfigLoader.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+      )
+
+    mini_primary = BotArmyLibraryRuntime.ConfigLoader.get("OLLAMA_MINI_URL", "")
+
     %{
       nodes: %{
         air: %{
@@ -230,11 +241,14 @@ defmodule BotArmyLlm.OllamaHealthChecker do
           # OLLAMA_BASE_URL (http://ollama:11434) while this bot historically
           # reads OLLAMA_URL — the mismatch left all LLM routing pointed at
           # localhost:11434 (refused). Accept either dialect.
-          url:
-            BotArmyLibraryRuntime.ConfigLoader.get(
-              "OLLAMA_URL",
-              BotArmyLibraryRuntime.ConfigLoader.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
-            ),
+          url: air_primary,
+          # Every name this node answers on, tried in order on each probe. A node
+          # is reachable by more than one name in practice: a tailnet address
+          # works wherever the tailnet is up, while a `.local` mDNS name or a LAN
+          # IP works when the machines share a network and the tailnet is down.
+          # See node_urls/2.
+          urls:
+            node_urls(BotArmyLibraryRuntime.ConfigLoader.get("OLLAMA_URLS", ""), [air_primary]),
           latency_ms: nil,
           last_probe_at: nil,
           healthy: false,
@@ -247,7 +261,12 @@ defmodule BotArmyLlm.OllamaHealthChecker do
           probe_model: nil
         },
         mini: %{
-          url: BotArmyLibraryRuntime.ConfigLoader.get("OLLAMA_MINI_URL", ""),
+          url: mini_primary,
+          urls:
+            node_urls(
+              BotArmyLibraryRuntime.ConfigLoader.get("OLLAMA_MINI_URLS", ""),
+              [mini_primary]
+            ),
           latency_ms: nil,
           last_probe_at: nil,
           healthy: false,
@@ -317,24 +336,39 @@ defmodule BotArmyLlm.OllamaHealthChecker do
     %{state | nodes: nodes}
   end
 
-  defp probe_node(_name, %{url: url} = node, _probe_model, _degraded_latency_ms, _timeout_ms)
-       when url in [nil, ""] do
+  defp probe_node(_name, node, _probe_model, _degraded_latency_ms, _timeout_ms)
+       when node.urls == [] do
     %{node | healthy: false, latency_ms: nil}
   end
 
   defp probe_node(name, node, probe_model, degraded_latency_ms, timeout_ms) do
+    node = Map.put_new(node, :urls, List.wrap(Map.get(node, :url)))
+    probe_urls(name, node, node.urls, probe_model, degraded_latency_ms, timeout_ms)
+  end
+
+  # Try each name this node may answer on, in order, and keep the one that worked
+  # as the node's live URL: a node that moved networks heals within one probe
+  # cycle instead of needing a config edit and a restart, and a node whose every
+  # name fails is honestly unhealthy rather than routed to.
+  defp probe_urls(name, node, [url | rest], probe_model, degraded_latency_ms, timeout_ms) do
     start = System.monotonic_time(:millisecond)
 
-    case send_probe(node.url, probe_model, timeout_ms) do
+    case send_probe(url, probe_model, timeout_ms) do
       :ok ->
         latency = System.monotonic_time(:millisecond) - start
         memory_pressure = check_memory_pressure(name)
-        cpu_load = check_cpu_load(node.url)
+        cpu_load = check_cpu_load(url)
         healthy = latency < degraded_latency_ms
 
         unless healthy do
           Logger.warning(
             "Ollama node #{name} probe latency #{latency}ms exceeds #{degraded_latency_ms}ms threshold"
+          )
+        end
+
+        if url != node.url do
+          Logger.info(
+            "Ollama node #{name}: #{node.url} did not answer, using #{url} from its name list"
           )
         end
 
@@ -344,7 +378,8 @@ defmodule BotArmyLlm.OllamaHealthChecker do
 
         %{
           node
-          | latency_ms: latency,
+          | url: url,
+            latency_ms: latency,
             healthy: healthy,
             last_probe_at: DateTime.utc_now(),
             memory_pressure: memory_pressure,
@@ -352,15 +387,49 @@ defmodule BotArmyLlm.OllamaHealthChecker do
         }
 
       {:error, reason} ->
-        Logger.warning("Ollama node #{name} at #{node.url} probe failed: #{inspect(reason)}")
+        Logger.warning("Ollama node #{name} at #{url} probe failed: #{inspect(reason)}")
 
-        %{
-          node
-          | latency_ms: nil,
-            healthy: false,
-            last_probe_at: DateTime.utc_now()
-        }
+        case rest do
+          [] ->
+            %{
+              node
+              | latency_ms: nil,
+                healthy: false,
+                last_probe_at: DateTime.utc_now()
+            }
+
+          _ ->
+            probe_urls(name, node, rest, probe_model, degraded_latency_ms, timeout_ms)
+        end
     end
+  end
+
+  # Ordered names for one node: `OLLAMA_URLS` / `OLLAMA_MINI_URLS` (comma
+  # separated) win when set, otherwise the single historical URL is the only name.
+  # Order is the failover order — the first name that answers becomes the live URL
+  # (see probe_urls/6).
+  @doc """
+  The ordered names a node may answer on. Public so the failover contract is
+  testable without a network: a node is reachable by more than one name in
+  practice — a tailnet address works wherever the tailnet is up, a `.local` mDNS
+  name or a LAN IP works when the machines share a network and the tailnet is
+  down — and the order of that list is the order the probe tries.
+
+  `configured` is the comma-separated env value ("" when unset); `defaults` is the
+  node's historical single URL.
+  """
+  @spec node_urls(String.t() | nil, [String.t()]) :: [String.t()]
+  def node_urls(configured, defaults) do
+    configured_urls =
+      configured
+      |> to_string()
+      |> String.split(",")
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == ""))
+
+    (configured_urls ++ defaults)
+    |> Enum.reject(&(&1 in [nil, ""]))
+    |> Enum.uniq()
   end
 
   defp send_probe(url, model, timeout_ms) do

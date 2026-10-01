@@ -907,6 +907,11 @@ defmodule BotArmyLlm.NATS.Consumer do
   # rather than passed through — it names a type, not an arbitrary atom.
   @chat_passthrough [{"model", :model}, {"ollama_node", :ollama_node}]
 
+  # A caller may name a node, or ask this bot to pick one. The sentinel is resolved
+  # here rather than in the caller so every bot shares one weighting and nobody has
+  # to track which machines are up (see BotArmyLlm.NodeRotator).
+  @rotation_sentinels ["round-robin", "rotate", "rotation"]
+
   @doc """
   Unwrap a decoded envelope down to the caller's payload.
 
@@ -956,10 +961,56 @@ defmodule BotArmyLlm.NATS.Consumer do
     Enum.reduce(@chat_passthrough, lane_opts, fn {payload_key, opt_key}, acc ->
       case message |> Map.get(payload_key) |> trimmed_string() do
         nil -> acc
-        value -> Keyword.put(acc, opt_key, value)
+        value -> Keyword.put(acc, opt_key, resolve_routing_option(opt_key, value))
       end
     end)
     |> put_model_type(message)
+  end
+
+  defp resolve_routing_option(:ollama_node, value) do
+    if value in @rotation_sentinels, do: rotation_node(value), else: value
+  end
+
+  defp resolve_routing_option(_opt_key, value), do: value
+
+  @doc """
+  The node a rotation sentinel resolves to right now, or the sentinel itself.
+
+  Public (and, modulo the health read, pure) for the same reason as `chat_opts/2`:
+  a routing decision that cannot be inspected is indistinguishable from a routing
+  decision that did not happen.
+
+  Returning the sentinel unchanged when no node is healthy is deliberate. The
+  provider layer then refuses with an unknown-node error, which is visible, rather
+  than this function inventing a node that cannot answer — an empty rotation is a
+  refusal, not a default.
+  """
+  @spec rotation_node(String.t()) :: String.t()
+  def rotation_node(sentinel) do
+    case eligible_nodes() do
+      [] -> sentinel
+      names -> rotator_module().next(names)
+    end
+  end
+
+  # A failed health read is an empty rotation, never a guess — the same rule as
+  # everywhere else in this fleet: an unreadable value is absent, not a default.
+  defp eligible_nodes do
+    health_checker_module().node_status()
+    |> Enum.filter(& &1.healthy)
+    |> Enum.map(& &1.name)
+  rescue
+    _error -> []
+  catch
+    _kind, _reason -> []
+  end
+
+  defp health_checker_module do
+    Application.get_env(:bot_army_llm, :ollama_health_checker, BotArmyLlm.OllamaHealthChecker)
+  end
+
+  defp rotator_module do
+    Application.get_env(:bot_army_llm, :node_rotator, BotArmyLlm.NodeRotator)
   end
 
   # A caller asks for a model *type* ("light"|"medium"|"heavy"|"uncensored").

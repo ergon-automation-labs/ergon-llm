@@ -65,6 +65,10 @@ defmodule BotArmyLlm.Application do
         # Ollama health checker (probes nodes every 60s, drives routing decisions)
         {BotArmyLlm.OllamaHealthChecker, []},
 
+        # Weighted round-robin across those nodes — what "ollama_node":
+        # "round-robin" resolves against, so every bot shares one weighting
+        {BotArmyLlm.NodeRotator, []},
+
         # Local queue manager (tracks pending Ollama requests for visibility)
         {BotArmyLlm.LocalQueueManager, []},
 

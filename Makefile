@@ -204,8 +204,18 @@ publish-release:
 		--arg node "$$(hostname -s)" \
 		--arg payload "$$(jq -n --arg bot "$$BOT_NAME" --arg repo "$$REPO_SLUG" --arg version "$$VERSION" --arg tag "v$$VERSION" --arg target "$$TARGET_NODE" --arg request_id "$$REQUEST_ID" '{bot: $$bot, repo: $$repo, version: $$version, tag: $$tag, release_tag: $$tag, target: $$target, request_id: $$request_id}')" \
 		'{event_id: $$eid, event: "deploy.release.requested", schema_version: "1.0", timestamp: $$ts, source: "publish_release", source_node: $$node, triggered_by: "user", payload: ($$payload | fromjson)}'); \
-	NATS_ENV=production bash "$$(SCRIPTS_DIRECTORY)/../bot_army_infra/salt/common/files/nats_publish.sh" "$$DEPLOY_SUBJECT" "$$ENVELOPE" || { echo "⚠️  NATS publish failed (is the prod bus up on 4222?)"; }; \
-	echo "✓ Deploy event published (subject $$DEPLOY_SUBJECT, job $$REQUEST_ID — pipeline validates the envelope)"; \
+	NATS_PUBLISH_SCRIPT=""; \
+	for candidate in "$(abspath $(CURDIR)/../bot_army_infra/salt/common/files/nats_publish.sh)" "$(abspath $(CURDIR)/../../bot_army_infra/salt/common/files/nats_publish.sh)"; do \
+		[ -f "$$candidate" ] && { NATS_PUBLISH_SCRIPT="$$candidate"; break; }; \
+	done; \
+	if [ -f "$$NATS_PUBLISH_SCRIPT" ] && NATS_ENV=production bash "$$NATS_PUBLISH_SCRIPT" "$$DEPLOY_SUBJECT" "$$ENVELOPE"; then \
+		echo "✓ Deploy event published (subject $$DEPLOY_SUBJECT, job $$REQUEST_ID — pipeline validates the envelope)"; \
+	else \
+		[ -f "$$NATS_PUBLISH_SCRIPT" ] || echo "    (nats_publish.sh not found — expected next to the bot_army_infra checkout)"; \
+		echo "⚠️  Deploy event NOT published (subject $$DEPLOY_SUBJECT, job $$REQUEST_ID)"; \
+		echo "    The release is on GitHub, but nothing was asked to deploy it. Deploy it directly:"; \
+		echo "    make -C ../bot_army_infra deploy-bot-direct BOT=llm TARGET=$$TARGET_NODE"; \
+	fi; \
 	echo ""; \
 	echo "✓ Publish-release log: $$LOG_FILE"; \
 	} 2>&1 | tee "$$LOG_FILE"

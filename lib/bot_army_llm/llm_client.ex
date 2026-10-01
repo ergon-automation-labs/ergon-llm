@@ -542,6 +542,12 @@ defmodule BotArmyLlm.LlmClient do
     end
   end
 
+  # A node-queue refusal is not a broken provider: the provider is healthy, the
+  # node is *busy*. Saying so keeps the cause reachable from the log line, where
+  # a bare `:queue_timeout` looks like a timeout against the model.
+  defp busy_or(reason) when reason in [:queue_full, :queue_timeout], do: {:ollama_node_busy, reason}
+  defp busy_or(reason), do: reason
+
   # Chain traversal
 
   defp try_providers([], _text, _complexity, _opts) do
@@ -589,7 +595,7 @@ defmodule BotArmyLlm.LlmClient do
 
         case ollama_call(url, model, text) do
           {:ok, completion} -> {:ok, %{completion: completion, model_used: model}}
-          {:error, reason} -> {:error, reason}
+          {:error, reason} -> {:error, busy_or(reason)}
         end
 
       {:error, reason} ->
@@ -710,11 +716,22 @@ defmodule BotArmyLlm.LlmClient do
   end
 
   defp ollama_call(url, model, text) do
-    if OllamaWireFormat.wire_format() == :openai do
-      ollama_call_openai(url, model, text)
-    else
-      ollama_call_native(url, model, text)
-    end
+    queued(url, fn ->
+      if OllamaWireFormat.wire_format() == :openai do
+        ollama_call_openai(url, model, text)
+      else
+        ollama_call_native(url, model, text)
+      end
+    end)
+  end
+
+  # One generation at a time per node (see BotArmyLlm.NodeQueue). Wrapping the
+  # dispatch — the last thing between us and the hardware — means every local
+  # generation is gated, whichever wire format is configured and whichever lane
+  # asked. A refusal comes back shaped like a provider error, so a cloud-eligible
+  # job still falls through to a cloud provider and a local-only job refuses.
+  defp queued(url, fun) do
+    BotArmyLlm.NodeQueue.run(url, BotArmyLlm.NodeQueue.queued_label(), fun)
   end
 
   defp ollama_call_native(url, model, text) do
@@ -957,7 +974,7 @@ defmodule BotArmyLlm.LlmClient do
 
         case ollama_call_messages(url, model, messages) do
           {:ok, completion} -> {:ok, %{completion: completion, model_used: model}}
-          {:error, reason} -> {:error, reason}
+          {:error, reason} -> {:error, busy_or(reason)}
         end
 
       {:error, reason} ->
@@ -1022,11 +1039,13 @@ defmodule BotArmyLlm.LlmClient do
   end
 
   defp ollama_call_messages(url, model, messages) do
-    if OllamaWireFormat.wire_format() == :openai do
-      ollama_call_messages_openai(url, model, messages)
-    else
-      ollama_call_messages_native(url, model, messages)
-    end
+    queued(url, fn ->
+      if OllamaWireFormat.wire_format() == :openai do
+        ollama_call_messages_openai(url, model, messages)
+      else
+        ollama_call_messages_native(url, model, messages)
+      end
+    end)
   end
 
   defp ollama_call_messages_native(url, model, messages) do

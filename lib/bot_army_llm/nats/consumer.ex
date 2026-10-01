@@ -664,6 +664,10 @@ defmodule BotArmyLlm.NATS.Consumer do
     announce_local_wait(job_id, payload)
 
     spawn(fn ->
+      # Names this job for the per-node queue: a node being busy can then say
+      # *which* job is why (see BotArmyLlm.NodeQueue.queued_label/0).
+      Process.put(:llm_job_id, job_id)
+
       try do
         JobStore.complete(job_id, runner.(payload, subject))
         JobBell.ring(job_id, "completed")

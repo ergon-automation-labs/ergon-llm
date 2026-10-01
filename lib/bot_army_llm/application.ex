@@ -69,6 +69,10 @@ defmodule BotArmyLlm.Application do
         # "round-robin" resolves against, so every bot shares one weighting
         {BotArmyLlm.NodeRotator, []},
 
+        # Per-node single-flight gate — one generation at a time per node, and a
+        # bounded wait behind it. Without this, "one at a time" was a hope.
+        {BotArmyLlm.NodeQueue, []},
+
         # Local queue manager (tracks pending Ollama requests for visibility)
         {BotArmyLlm.LocalQueueManager, []},
 

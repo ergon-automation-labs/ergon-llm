@@ -80,6 +80,9 @@ iex -S mix
 ## Key Modules
 
 - `lib/bot_army_llm/llm_client.ex` - Multi-provider LLM interface
+- `lib/bot_army_llm/ollama_health_checker.ex` - which local node can take work
+- `lib/bot_army_llm/node_rotator.ex` - weighted round-robin across those nodes
+- `lib/bot_army_llm/node_queue.ex` - one generation at a time per node (see [docs/LLM_ROUTING.md](docs/LLM_ROUTING.md))
 - `lib/bot_army_llm/conversation_store.ex` - Session management
 - `lib/bot_army_llm/json_extractor.ex` - JSON parsing & schema validation
 - `lib/bot_army_llm/handlers/*.ex` - Message processing

@@ -151,6 +151,20 @@ defmodule BotArmyLlm.AsyncChatJobTest do
                wait_for_status(job_id, "completed")
     end
 
+    test "the job process is labelled with its own job_id, for the node queue" do
+      test_pid = self()
+
+      runner = fn _payload, _subject ->
+        send(test_pid, {:ran_as, BotArmyLlm.NodeQueue.queued_label()})
+        %{"content" => "ok"}
+      end
+
+      accepted = Consumer.submit_chat_job(%{}, "llm.request.chat", runner)
+      {:ok, job_id} = Map.fetch(accepted, "job_id")
+
+      assert_receive {:ran_as, ^job_id}, 1_000
+    end
+
     test "carries the caller's lane and request_id into the job" do
       runner = fn _payload, _subject -> %{"content" => "ok"} end
 

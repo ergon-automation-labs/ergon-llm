@@ -307,7 +307,7 @@ defmodule BotArmyLlm.AsyncChatJobTest do
         end)
 
       # The job runs in its own process: the bell arrives, it is not already here.
-      assert_receive {:bell_published, event}, 1_000
+      event = receive_bell_for(accepted["job_id"])
       assert event["event"] == "llm.job.completed"
       assert event["payload"] == %{"job_id" => accepted["job_id"], "status" => "completed"}
 
@@ -322,7 +322,7 @@ defmodule BotArmyLlm.AsyncChatJobTest do
           raise "the provider said: her private answer"
         end)
 
-      assert_receive {:bell_published, event}, 1_000
+      event = receive_bell_for(accepted["job_id"])
       assert event["payload"] == %{"job_id" => accepted["job_id"], "status" => "failed"}
       refute Jason.encode!(event) =~ "her private answer"
     end
@@ -335,7 +335,7 @@ defmodule BotArmyLlm.AsyncChatJobTest do
           %{"content" => "done"}
         end)
 
-      assert_receive {:bell_published, _event}, 1_000
+      receive_bell_for(accepted["job_id"])
 
       assert {:ok, %{status: :completed}} = JobStore.get(accepted["job_id"])
     end
@@ -346,8 +346,9 @@ defmodule BotArmyLlm.AsyncChatJobTest do
     end
 
     test "an unknown status is refused rather than rung" do
-      assert {:error, {:unknown_status, "pending"}} = JobBell.ring(UUID.uuid4(), "pending")
-      refute_received {:bell_published, _event}
+      job_id = UUID.uuid4()
+      assert {:error, {:unknown_status, "pending"}} = JobBell.ring(job_id, "pending")
+      refute_received {:bell_published, %{"payload" => %{"job_id" => ^job_id}}}
     end
 
     test "a bell that cannot be rung reports the failure instead of raising" do
@@ -382,6 +383,19 @@ defmodule BotArmyLlm.AsyncChatJobTest do
     test "the job poll subject is subscribed, not only advertised" do
       assert "llm.job.status" in Consumer.advertised_subjects()
       assert "llm.job.status" in Consumer.subscription_subjects()
+    end
+  end
+
+  # The bell sink is process-global, and the app can ring for jobs this test did
+  # not start (a sibling test's job, or one still finishing). Taking whatever
+  # arrives first made "a finished job is rung" fail on another job's id when
+  # the full suite ran — so match OUR job_id and keep waiting past foreign bells.
+  defp receive_bell_for(job_id, timeout \\ 1_000) do
+    receive do
+      {:bell_published, %{"payload" => %{"job_id" => ^job_id}} = event} ->
+        event
+    after
+      timeout -> flunk("no bell was rung for job #{job_id}")
     end
   end
 

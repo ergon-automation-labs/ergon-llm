@@ -151,14 +151,14 @@ defmodule BotArmyLlm.TokenAccounting do
   end
 
   defp get_default_tenant_id("claude_code") do
-    case System.get_env("BOT_ARMY_LLM_CLAUDE_CODE_TENANT_ID") do
+    case BotArmyLlm.Config.get("BOT_ARMY_LLM_CLAUDE_CODE_TENANT_ID") do
       v when is_binary(v) and v != "" -> v
       _ -> WellKnownIds.claude_code_default_tenant()
     end
   end
 
   defp get_default_tenant_id(_source) do
-    case System.get_env("BOT_ARMY_LLM_DEFAULT_TENANT_ID") do
+    case BotArmyLlm.Config.get("BOT_ARMY_LLM_DEFAULT_TENANT_ID") do
       v when is_binary(v) and v != "" -> v
       _ -> WellKnownIds.legacy_default_tenant()
     end
@@ -169,7 +169,7 @@ defmodule BotArmyLlm.TokenAccounting do
 
     if uid in [nil, ""] and source == "claude_code" do
       user =
-        case System.get_env("BOT_ARMY_LLM_CLAUDE_CODE_USER_ID") do
+        case BotArmyLlm.Config.get("BOT_ARMY_LLM_CLAUDE_CODE_USER_ID") do
           v when is_binary(v) and v != "" -> v
           _ -> WellKnownIds.claude_code_default_user()
         end
@@ -286,7 +286,7 @@ defmodule BotArmyLlm.TokenAccounting do
   end
 
   defp read_pricing_file_rules do
-    case System.get_env("BOT_ARMY_LLM_PRICING_FILE") do
+    case BotArmyLlm.Config.get("BOT_ARMY_LLM_PRICING_FILE") do
       nil ->
         []
 
@@ -306,7 +306,7 @@ defmodule BotArmyLlm.TokenAccounting do
   end
 
   defp read_pricing_json_env_rules do
-    case System.get_env("BOT_ARMY_LLM_PRICING_JSON") do
+    case BotArmyLlm.Config.get("BOT_ARMY_LLM_PRICING_JSON") do
       nil ->
         []
 

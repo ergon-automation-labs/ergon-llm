@@ -38,7 +38,7 @@ defmodule BotArmyLlm.ChatCompletionToAnthropic do
 
   defp resolve_model(response, model_default) do
     response["model"] || model_default ||
-      System.get_env("OPENROUTER_MODEL_CLAUDE_CODE", "anthropic/claude-3.5-sonnet")
+      BotArmyLlm.Config.get("OPENROUTER_MODEL_CLAUDE_CODE", "anthropic/claude-3.5-sonnet")
   end
 
   defp build_usage(usage) do

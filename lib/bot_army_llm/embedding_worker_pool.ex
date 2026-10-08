@@ -80,7 +80,7 @@ defmodule BotArmyLlm.EmbeddingWorkerPool do
   end
 
   defp max_concurrency_from_env do
-    case System.get_env("BOT_ARMY_LLM_EMBED_MAX_CONCURRENCY") do
+    case BotArmyLlm.Config.get("BOT_ARMY_LLM_EMBED_MAX_CONCURRENCY") do
       nil ->
         @default_max_concurrency
 

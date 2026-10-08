@@ -20,7 +20,7 @@ defmodule BotArmyLlm.EmbeddingConfig do
 
   @doc "Default Ollama embedding model when NATS payload or `LlmClient.embed/2` omits `model`."
   def default_model do
-    System.get_env("BOT_ARMY_LLM_EMBED_DEFAULT_MODEL") || @default_model
+    BotArmyLlm.Config.get("BOT_ARMY_LLM_EMBED_DEFAULT_MODEL") || @default_model
   end
 
   @doc """
@@ -30,7 +30,7 @@ defmodule BotArmyLlm.EmbeddingConfig do
   embeddings on OpenRouter). If unset, uses `default_model/0` so both providers tried the same id.
   """
   def openrouter_embed_default_model do
-    case System.get_env("BOT_ARMY_LLM_OPENROUTER_EMBED_DEFAULT_MODEL") do
+    case BotArmyLlm.Config.get("BOT_ARMY_LLM_OPENROUTER_EMBED_DEFAULT_MODEL") do
       nil -> default_model()
       "" -> default_model()
       m when is_binary(m) -> m
@@ -47,17 +47,17 @@ defmodule BotArmyLlm.EmbeddingConfig do
 
   @doc "HTTP timeout (ms) for Ollama `POST .../api/embed`."
   def ollama_embed_timeout_ms do
-    parse_timeout_ms(System.get_env("OLLAMA_EMBED_TIMEOUT_MS"), 120_000)
+    parse_timeout_ms(BotArmyLlm.Config.get("OLLAMA_EMBED_TIMEOUT_MS"), 120_000)
   end
 
   @doc "Full URL for OpenRouter-compatible embeddings API."
   def openrouter_embeddings_url do
-    System.get_env("OPENROUTER_EMBEDDINGS_URL") || @default_openrouter_embeddings_url
+    BotArmyLlm.Config.get("OPENROUTER_EMBEDDINGS_URL") || @default_openrouter_embeddings_url
   end
 
   @doc "HTTP timeout (ms) for OpenRouter embeddings request."
   def openrouter_embed_timeout_ms do
-    parse_timeout_ms(System.get_env("OPENROUTER_EMBED_TIMEOUT_MS"), 30_000)
+    parse_timeout_ms(BotArmyLlm.Config.get("OPENROUTER_EMBED_TIMEOUT_MS"), 30_000)
   end
 
   defp parse_timeout_ms(nil, default), do: default

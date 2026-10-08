@@ -395,7 +395,7 @@ defmodule BotArmyLlm.LlmClient do
         list
 
       nil ->
-        case System.get_env("BOT_ARMY_LLM_PROVIDER_CHAIN") do
+        case BotArmyLlm.Config.get("BOT_ARMY_LLM_PROVIDER_CHAIN") do
           nil -> [:ollama, :blackbox, :openrouter, :anthropic]
           env_str -> parse_provider_chain_string(env_str)
         end
@@ -466,7 +466,7 @@ defmodule BotArmyLlm.LlmClient do
         list
 
       nil ->
-        case System.get_env("BOT_ARMY_LLM_EMBED_PROVIDER_CHAIN") do
+        case BotArmyLlm.Config.get("BOT_ARMY_LLM_EMBED_PROVIDER_CHAIN") do
           nil -> [:ollama_embed, :openrouter_embed]
           env_str -> parse_embed_provider_chain_string(env_str)
         end
@@ -604,8 +604,8 @@ defmodule BotArmyLlm.LlmClient do
   end
 
   defp call_provider(:blackbox, text, complexity, opts) do
-    api_key = System.get_env("BLACKBOX_API_KEY")
-    base_url = System.get_env("BLACKBOX_BASE_URL", "https://api.blackbox.ai/api/chat")
+    api_key = BotArmyLlm.Config.get("BLACKBOX_API_KEY")
+    base_url = BotArmyLlm.Config.get("BLACKBOX_BASE_URL", "https://api.blackbox.ai/api/chat")
     model = cloud_model(:blackbox, complexity)
 
     case {api_key, model} do
@@ -619,7 +619,7 @@ defmodule BotArmyLlm.LlmClient do
     api_key = BotArmyLibraryRuntime.ConfigLoader.get("OPENROUTER_API_KEY")
 
     base_url =
-      System.get_env("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1/chat/completions")
+      BotArmyLlm.Config.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1/chat/completions")
 
     model = cloud_model(:openrouter, complexity)
 
@@ -647,7 +647,7 @@ defmodule BotArmyLlm.LlmClient do
   end
 
   defp call_provider(:anthropic, text, complexity, opts) do
-    api_key = System.get_env("ANTHROPIC_API_KEY")
+    api_key = BotArmyLlm.Config.get("ANTHROPIC_API_KEY")
     model = cloud_model(:anthropic, complexity)
 
     case {api_key, model} do
@@ -983,8 +983,8 @@ defmodule BotArmyLlm.LlmClient do
   end
 
   defp call_provider_messages(:blackbox, messages, complexity, opts) do
-    api_key = System.get_env("BLACKBOX_API_KEY")
-    base_url = System.get_env("BLACKBOX_BASE_URL", "https://api.blackbox.ai/api/chat")
+    api_key = BotArmyLlm.Config.get("BLACKBOX_API_KEY")
+    base_url = BotArmyLlm.Config.get("BLACKBOX_BASE_URL", "https://api.blackbox.ai/api/chat")
     model = cloud_model(:blackbox, complexity)
 
     case {api_key, model} do
@@ -998,7 +998,7 @@ defmodule BotArmyLlm.LlmClient do
     api_key = BotArmyLibraryRuntime.ConfigLoader.get("OPENROUTER_API_KEY")
 
     base_url =
-      System.get_env("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1/chat/completions")
+      BotArmyLlm.Config.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1/chat/completions")
 
     model = cloud_model(:openrouter, complexity)
     extra_headers = [{"HTTP-Referer", "https://github.com/ergon-automation-labs"}]
@@ -1024,7 +1024,7 @@ defmodule BotArmyLlm.LlmClient do
   end
 
   defp call_provider_messages(:anthropic, messages, complexity, opts) do
-    api_key = System.get_env("ANTHROPIC_API_KEY")
+    api_key = BotArmyLlm.Config.get("ANTHROPIC_API_KEY")
     model = cloud_model(:anthropic, complexity)
 
     case {api_key, model} do

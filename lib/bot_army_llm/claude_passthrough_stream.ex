@@ -85,12 +85,12 @@ defmodule BotArmyLlm.ClaudePassthroughStream do
   end
 
   defp dispatch(:blackbox, conn, body, source, event_id, start_ms) do
-    api_key = System.get_env("BLACKBOX_API_KEY")
-    url = System.get_env("BLACKBOX_BASE_URL", "https://api.blackbox.ai/api/chat")
+    api_key = BotArmyLlm.Config.get("BLACKBOX_API_KEY")
+    url = BotArmyLlm.Config.get("BLACKBOX_BASE_URL", "https://api.blackbox.ai/api/chat")
 
     model =
-      System.get_env("BLACKBOX_MODEL_CLAUDE_CODE") ||
-        System.get_env("BLACKBOX_MODEL_MEDIUM", "qwen/qwen3-32b:free")
+      BotArmyLlm.Config.get("BLACKBOX_MODEL_CLAUDE_CODE") ||
+        BotArmyLlm.Config.get("BLACKBOX_MODEL_MEDIUM", "qwen/qwen3-32b:free")
 
     case api_key do
       nil ->
@@ -114,9 +114,9 @@ defmodule BotArmyLlm.ClaudePassthroughStream do
   end
 
   defp dispatch(:openrouter, conn, body, source, event_id, start_ms) do
-    api_key = System.get_env("OPENROUTER_API_KEY")
-    url = System.get_env("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1/chat/completions")
-    model = System.get_env("OPENROUTER_MODEL_CLAUDE_CODE", "anthropic/claude-3.5-sonnet")
+    api_key = BotArmyLlm.Config.get("OPENROUTER_API_KEY")
+    url = BotArmyLlm.Config.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1/chat/completions")
+    model = BotArmyLlm.Config.get("OPENROUTER_MODEL_CLAUDE_CODE", "anthropic/claude-3.5-sonnet")
     extra = [{"HTTP-Referer", "https://github.com/ergon-automation-labs"}]
 
     case api_key do

@@ -13,8 +13,8 @@ defmodule BotArmyLlm.Http.OllamaAnthropicSseStream do
           {:ok, Plug.Conn.t()} | {:error, term()}
   def run(conn, anthropic_body, source, event_id, start_ms) when is_map(anthropic_body) do
     model =
-      System.get_env("OLLAMA_MODEL_CLAUDE_FALLBACK") ||
-        System.get_env("OLLAMA_MODEL_MEDIUM", "ministral-3:8b")
+      BotArmyLlm.Config.get("OLLAMA_MODEL_CLAUDE_FALLBACK") ||
+        BotArmyLlm.Config.get("OLLAMA_MODEL_MEDIUM", "ministral-3:8b")
 
     with {:ok, messages} <- AnthropicOllamaAdapter.to_ollama_messages(anthropic_body),
          {:ok, {url, _}} <- BotArmyLlm.OllamaHealthChecker.best_ollama_node(:medium),

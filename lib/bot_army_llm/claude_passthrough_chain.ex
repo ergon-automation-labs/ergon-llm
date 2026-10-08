@@ -58,7 +58,7 @@ defmodule BotArmyLlm.ClaudePassthroughChain do
         {:ok, list}
 
       _ ->
-        parse_chain_string(System.get_env("BOT_ARMY_LLM_CLAUDE_CHAIN", @default_chain))
+        parse_chain_string(BotArmyLlm.Config.get("BOT_ARMY_LLM_CLAUDE_CHAIN", @default_chain))
     end
   end
 
@@ -103,12 +103,12 @@ defmodule BotArmyLlm.ClaudePassthroughChain do
   defp dispatch(:ollama, payload), do: try_ollama(payload)
 
   defp try_blackbox(payload) do
-    api_key = System.get_env("BLACKBOX_API_KEY")
-    url = System.get_env("BLACKBOX_BASE_URL", "https://api.blackbox.ai/api/chat")
+    api_key = BotArmyLlm.Config.get("BLACKBOX_API_KEY")
+    url = BotArmyLlm.Config.get("BLACKBOX_BASE_URL", "https://api.blackbox.ai/api/chat")
 
     model =
-      System.get_env("BLACKBOX_MODEL_CLAUDE_CODE") ||
-        System.get_env("BLACKBOX_MODEL_MEDIUM", "qwen/qwen3-32b:free")
+      BotArmyLlm.Config.get("BLACKBOX_MODEL_CLAUDE_CODE") ||
+        BotArmyLlm.Config.get("BLACKBOX_MODEL_MEDIUM", "qwen/qwen3-32b:free")
 
     case api_key do
       nil -> {:error, {:provider_not_configured, "Blackbox"}}
@@ -118,9 +118,9 @@ defmodule BotArmyLlm.ClaudePassthroughChain do
   end
 
   defp try_openrouter(payload) do
-    api_key = System.get_env("OPENROUTER_API_KEY")
-    url = System.get_env("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1/chat/completions")
-    model = System.get_env("OPENROUTER_MODEL_CLAUDE_CODE", "anthropic/claude-3.5-sonnet")
+    api_key = BotArmyLlm.Config.get("OPENROUTER_API_KEY")
+    url = BotArmyLlm.Config.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1/chat/completions")
+    model = BotArmyLlm.Config.get("OPENROUTER_MODEL_CLAUDE_CODE", "anthropic/claude-3.5-sonnet")
     extra = [{"HTTP-Referer", "https://github.com/ergon-automation-labs"}]
 
     case api_key do
@@ -203,8 +203,8 @@ defmodule BotArmyLlm.ClaudePassthroughChain do
   end
 
   defp try_anthropic_direct(payload) do
-    api_key = System.get_env("ANTHROPIC_API_KEY")
-    model = System.get_env("ANTHROPIC_MODEL_CLAUDE_CODE", "claude-haiku-4-5-20251001")
+    api_key = BotArmyLlm.Config.get("ANTHROPIC_API_KEY")
+    model = BotArmyLlm.Config.get("ANTHROPIC_MODEL_CLAUDE_CODE", "claude-haiku-4-5-20251001")
 
     case {api_key, model} do
       {nil, _} ->
@@ -224,13 +224,13 @@ defmodule BotArmyLlm.ClaudePassthroughChain do
   end
 
   defp anthropic_url,
-    do: System.get_env("ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1/messages")
+    do: BotArmyLlm.Config.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1/messages")
 
   defp anthropic_fallback_url,
-    do: System.get_env("ANTHROPIC_FALLBACK_URL", "https://api.anthropic.com/v1/messages")
+    do: BotArmyLlm.Config.get("ANTHROPIC_FALLBACK_URL", "https://api.anthropic.com/v1/messages")
 
   defp openrouter_fallback_url,
-    do: System.get_env("OPENROUTER_FALLBACK_URL", "https://openrouter.ai/api/v1/chat/completions")
+    do: BotArmyLlm.Config.get("OPENROUTER_FALLBACK_URL", "https://openrouter.ai/api/v1/chat/completions")
 
   defp anthropic_messages_api_post(api_key, payload) do
     headers = [
@@ -377,8 +377,8 @@ defmodule BotArmyLlm.ClaudePassthroughChain do
   end
 
   defp ollama_fallback_model do
-    System.get_env("OLLAMA_MODEL_CLAUDE_FALLBACK") ||
-      System.get_env("OLLAMA_MODEL_MEDIUM", "llama3.1:8b-instruct-q6_K")
+    BotArmyLlm.Config.get("OLLAMA_MODEL_CLAUDE_FALLBACK") ||
+      BotArmyLlm.Config.get("OLLAMA_MODEL_MEDIUM", "llama3.1:8b-instruct-q6_K")
   end
 
   defp map_unsupported_ollama_model(model) do
@@ -447,7 +447,7 @@ defmodule BotArmyLlm.ClaudePassthroughChain do
   defp put_ollama_options(m, extra), do: Map.put(m, "options", extra)
 
   defp ollama_timeout_ms do
-    case System.get_env("OLLAMA_TIMEOUT_MS") do
+    case BotArmyLlm.Config.get("OLLAMA_TIMEOUT_MS") do
       nil -> 600_000
       v -> String.to_integer(v)
     end

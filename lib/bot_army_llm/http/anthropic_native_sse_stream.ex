@@ -9,12 +9,12 @@ defmodule BotArmyLlm.Http.AnthropicNativeSseStream do
   @receive_timeout 120_000
 
   defp anthropic_url,
-    do: System.get_env("ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1/messages")
+    do: BotArmyLlm.Config.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1/messages")
 
   @spec run(Plug.Conn.t(), map(), String.t(), String.t(), integer()) ::
           {:ok, Plug.Conn.t()} | {:error, term()}
   def run(conn, body, source, event_id, start_ms) when is_map(body) do
-    case System.get_env("ANTHROPIC_API_KEY") do
+    case BotArmyLlm.Config.get("ANTHROPIC_API_KEY") do
       key when is_binary(key) and key != "" ->
         run_with_auth(conn, body, source, event_id, start_ms, key)
 
@@ -24,7 +24,7 @@ defmodule BotArmyLlm.Http.AnthropicNativeSseStream do
   end
 
   defp run_with_auth(conn, body, source, event_id, start_ms, api_key) do
-    model = System.get_env("ANTHROPIC_MODEL_CLAUDE_CODE", "claude-haiku-4-5-20251001")
+    model = BotArmyLlm.Config.get("ANTHROPIC_MODEL_CLAUDE_CODE", "claude-haiku-4-5-20251001")
 
     payload =
       body

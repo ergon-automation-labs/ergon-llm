@@ -521,7 +521,7 @@ defmodule BotArmyLlm.OllamaHealthChecker do
 
   # Query Prometheus for node CPU load (normalized by logical processors)
   defp check_cpu_load(_node_url) do
-    prometheus_url = System.get_env("PROMETHEUS_URL", @prometheus_url)
+    prometheus_url = BotArmyLlm.Config.get("PROMETHEUS_URL", @prometheus_url)
     url = "#{prometheus_url}/api/v1/query?query=#{URI.encode("node_load1")}"
     cpu_count = max(:erlang.system_info(:logical_processors), 1)
 

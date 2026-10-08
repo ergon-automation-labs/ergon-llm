@@ -173,7 +173,7 @@ defmodule BotArmyLlm.Http.AnthropicMessagesProxy do
   end
 
   defp env_model do
-    System.get_env("ANTHROPIC_MODEL_CLAUDE_CODE", "claude-haiku-4-5-20251001")
+    BotArmyLlm.Config.get("ANTHROPIC_MODEL_CLAUDE_CODE", "claude-haiku-4-5-20251001")
   end
 
   defp record_usage(attrs) do

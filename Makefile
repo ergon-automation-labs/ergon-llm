@@ -63,8 +63,11 @@ init:
 _compile-impl:
 	@LOG_FILE="/tmp/compile-llm-$$(date +%s).log"; \
 	echo "Compiling llm and logging to $$LOG_FILE..."; \
+	set -o pipefail; \
 	$(MIX) compile 2>&1 | tee "$$LOG_FILE"; \
-	echo "✓ Compilation log: $$LOG_FILE"
+	rc=$$?; \
+	echo "✓ Compilation log: $$LOG_FILE"; \
+	exit $$rc
 
 deps:
 	$(MIX) deps.get
@@ -76,8 +79,11 @@ test:
 	@BOT_NAME=llm; \
 	LOG_FILE="/tmp/test-$${BOT_NAME}-$$(date +%s).log"; \
 	echo "Running tests and logging to $$LOG_FILE..."; \
+	set -o pipefail; \
 	$(MIX) test 2>&1 | tee "$$LOG_FILE"; \
-	echo "✓ Test log: $$LOG_FILE"
+	rc=$$?; \
+	echo "✓ Test log: $$LOG_FILE"; \
+	exit $$rc
 
 test-handlers:
 	MIX_ENV=test $(MIX) test --only handlers --trace

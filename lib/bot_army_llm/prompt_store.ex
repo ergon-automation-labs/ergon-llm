@@ -274,8 +274,8 @@ defmodule BotArmyLlm.PromptStore do
       "temperature" => prompt.temperature,
       "max_tokens" => prompt.max_tokens,
       "status" => prompt.status,
-      "created_at" => prompt.inserted_at |> NaiveDateTime.to_iso8601(),
-      "updated_at" => prompt.updated_at |> NaiveDateTime.to_iso8601()
+      "created_at" => prompt.inserted_at |> BotArmyLibraryRuntime.Timestamp.utc_iso8601(),
+      "updated_at" => prompt.updated_at |> BotArmyLibraryRuntime.Timestamp.utc_iso8601()
     }
   end
 end

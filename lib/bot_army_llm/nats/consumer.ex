@@ -27,6 +27,7 @@ defmodule BotArmyLlm.NATS.Consumer do
 
   alias BotArmyLibraryCore.NATS.Decoder
   alias BotArmyLlm.EmbeddingWorkerPool
+  alias BotArmyLlm.ExecutionLane
   alias BotArmyLlm.JobBell
   alias BotArmyLlm.JobStore
   alias BotArmyLlm.LlmClient
@@ -793,10 +794,14 @@ defmodule BotArmyLlm.NATS.Consumer do
     response =
       case result do
         {:ok, resp} ->
+          provider = Map.get(resp, :provider)
+
           %{
             "request_id" => request_id,
             "response_type" => request_type,
             "model_used" => Map.get(resp, :model_used, "auto"),
+            "provider" => provider_name(provider),
+            "execution" => ExecutionLane.classify(provider, Map.get(resp, :model_used)),
             "content" => Map.get(resp, :completion, ""),
             "cache_hit" => false,
             "lane" => lane,
@@ -1135,6 +1140,7 @@ defmodule BotArmyLlm.NATS.Consumer do
         "response_type" => request_type,
         "model_used" => "deterministic_fallback",
         "provider" => "local_fallback",
+        "execution" => "local",
         "content" => deterministic_fallback_content(prompt),
         "cache_hit" => false,
         "degraded" => true,
@@ -1159,6 +1165,10 @@ defmodule BotArmyLlm.NATS.Consumer do
   defp llm_capacity_error?(:provider_not_configured), do: true
   defp llm_capacity_error?({:ollama_unavailable, _}), do: true
   defp llm_capacity_error?(_), do: false
+
+  defp provider_name(provider) when is_atom(provider), do: Atom.to_string(provider)
+  defp provider_name(provider) when is_binary(provider), do: provider
+  defp provider_name(_provider), do: nil
 
   defp deterministic_fallback_content(prompt) when is_binary(prompt) do
     down = String.downcase(prompt)

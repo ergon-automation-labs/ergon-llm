@@ -40,6 +40,34 @@ defmodule BotArmyLlm.AsyncChatJobTest do
     def load_acceptable?, do: raise("no health checker")
   end
 
+  defmodule CloudChatClient do
+    @moduledoc false
+    def complete_messages(_messages, _opts) do
+      {:ok,
+       %{
+         completion: "cloud answer",
+         model_used: "glm-5.1:cloud",
+         provider: :ollama,
+         tokens_input: 1,
+         tokens_output: 1
+       }}
+    end
+  end
+
+  defmodule LocalChatClient do
+    @moduledoc false
+    def complete_messages(_messages, _opts) do
+      {:ok,
+       %{
+         completion: "local answer",
+         model_used: "qwen3.5-uncensored:27B",
+         provider: :ollama,
+         tokens_input: 1,
+         tokens_output: 1
+       }}
+    end
+  end
+
   @accepted_keys ~w(request_id response_type lane job_id status poll_subject)
 
   setup do
@@ -277,6 +305,60 @@ defmodule BotArmyLlm.AsyncChatJobTest do
       %{"timestamp" => timestamp} = Consumer.job_status_response(%{"job_id" => job_id})
 
       assert {:ok, %DateTime{}, _offset} = DateTime.from_iso8601(timestamp)
+    end
+  end
+
+  describe "execution lane in the chat result" do
+    # A caller choosing a deadline needs to know whether the answer came from a
+    # fast cloud model or a local uncensored one. The provider chain is the only
+    # place that knows; the reply must carry it, not leave the caller to guess
+    # from a model name.
+    setup do
+      previous = Application.get_env(:bot_army_llm, :llm_client)
+
+      on_exit(fn ->
+        if previous do
+          Application.put_env(:bot_army_llm, :llm_client, previous)
+        else
+          Application.delete_env(:bot_army_llm, :llm_client)
+        end
+      end)
+
+      :ok
+    end
+
+    test "an Ollama cloud model reports cloud execution" do
+      Application.put_env(:bot_army_llm, :llm_client, __MODULE__.CloudChatClient)
+
+      accepted =
+        Consumer.submit_chat_job(
+          %{"system" => "s", "messages" => [%{"role" => "user", "content" => "hi"}]},
+          "llm.request.chat"
+        )
+
+      assert %{"status" => "completed", "result" => result} =
+               wait_for_status(accepted["job_id"], "completed")
+
+      assert result["execution"] == "cloud"
+      assert result["provider"] == "ollama"
+      assert result["model_used"] == "glm-5.1:cloud"
+    end
+
+    test "a local uncensored model reports local execution" do
+      Application.put_env(:bot_army_llm, :llm_client, __MODULE__.LocalChatClient)
+
+      accepted =
+        Consumer.submit_chat_job(
+          %{"system" => "s", "messages" => [%{"role" => "user", "content" => "hi"}]},
+          "llm.request.chat"
+        )
+
+      assert %{"status" => "completed", "result" => result} =
+               wait_for_status(accepted["job_id"], "completed")
+
+      assert result["execution"] == "local"
+      assert result["provider"] == "ollama"
+      assert result["model_used"] == "qwen3.5-uncensored:27B"
     end
   end
 

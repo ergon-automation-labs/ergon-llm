@@ -54,6 +54,38 @@ also a rotation of model sizes. `:uncensored` is **local-only and fail-closed**:
 no local node, no answer, and emphatically no cloud fallback — that is what makes
 it uncensored.
 
+## The execution lane in a reply
+
+`model_type` is a request, not a fact. `heavy` usually routes to cloud, but the
+provider chain may fall back; `light` and `medium` may be served locally. A
+completed `llm.request.chat` result therefore names the lane it actually used:
+
+```json
+{
+  "model_used": "glm-5.1:cloud",
+  "provider": "ollama",
+  "execution": "cloud",
+  "lane": "interactive",
+  "latency_ms": 1840
+}
+```
+
+`execution` is `"cloud"`, `"local"`, or `"unknown"`. It is derived from the
+resolved provider and model, not from `model_type`. Ollama cloud models carry a
+`-cloud` or `:cloud` suffix; `anthropic`, `openrouter`, and `blackbox` are cloud
+by provider even when their model names have no suffix. A local/deterministic
+fallback reports `"local"` with `"provider": "local_fallback"`.
+
+The **lane** and the **execution** answer different questions:
+
+| Field | Answers |
+|---|---|
+| `lane` | how urgent the request is (`urgent`, `interactive`, `background`) |
+| `execution` | where the answer actually ran (`cloud`, `local`) |
+
+Neither is a content policy. `model_type: "uncensored"` remains the local-only
+promise; `execution` only tells a caller how long to wait for the answer it got.
+
 ## One generation at a time per node
 
 A node has one GPU. A second concurrent generation does not go faster; it makes

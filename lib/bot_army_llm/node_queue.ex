@@ -27,6 +27,16 @@ defmodule BotArmyLlm.NodeQueue do
   The refusal is the point. An unbounded queue is indistinguishable from a hang,
   which is the failure this module exists to remove.
 
+  ## Pausing is not stopping
+
+  An operator can pause local generation for a bounded time — the lever is
+  separate from `army-halt`, because a busy GPU is not a policy violation. A
+  paused gate refuses new work and releases everyone already waiting with
+  `{:error, :paused}`; a generation already in flight is allowed to finish,
+  because killing it would waste the work and leave Ollama holding the model.
+  The pause expires on its own so a forgotten lever cannot stop local inference
+  forever.
+
   ## Waiting is per node, not global
 
   The key is the node's URL — the hardware — so air and mini each get their own
@@ -49,6 +59,11 @@ defmodule BotArmyLlm.NodeQueue do
   @default_waiting 2
   @default_wait_ms 600_000
   @long_wait_log_ms 1_000
+  @default_pause_ms 900_000
+  @min_pause_ms 1_000
+  @max_pause_ms 28_800_000
+  @max_pause_reason 200
+  @max_pause_by 120
 
   @type key :: String.t()
   @type label :: String.t() | nil
@@ -68,9 +83,9 @@ defmodule BotArmyLlm.NodeQueue do
   @doc """
   Runs `fun` while holding a slot on `key`, releasing it however `fun` ends.
 
-  Returns `fun`'s own result, or the gate's refusal — `{:error, :queue_full}` or
-  `{:error, :queue_timeout}` — which is shaped like a provider error so a caller
-  (and the provider chain) can treat it as one.
+  Returns `fun`'s own result, or the gate's refusal — `{:error, :queue_full}`,
+  `{:error, :queue_timeout}`, or `{:error, :paused}` — which is shaped like a
+  provider error so a caller (and the provider chain) can treat it as one.
   """
   @spec run(key(), label(), (-> result)) :: result | {:error, atom()}
         when result: term()
@@ -91,9 +106,9 @@ defmodule BotArmyLlm.NodeQueue do
   @doc """
   Takes a slot on `key`, or waits for one, or refuses.
 
-  Always replies — `:ok`, `{:error, :queue_full}`, `{:error, :queue_timeout}` —
-  so a caller may block on it forever without hanging on an answer that will
-  never come.
+  Always replies — `:ok`, `{:error, :queue_full}`, `{:error, :queue_timeout}`,
+  `{:error, :paused}` — so a caller may block on it forever without hanging on
+  an answer that will never come.
   """
   @spec acquire(key(), label()) :: :ok | {:error, atom()}
   def acquire(key, label \\ nil) do
@@ -128,6 +143,52 @@ defmodule BotArmyLlm.NodeQueue do
   end
 
   @doc """
+  The capacity picture: whether local generation is paused, how many jobs each
+  node runs and queues, and the limits that produced those numbers.
+
+  Counts, not job ids — this is read by the War Room, and the room does not need
+  to know which prompt is running to say that the machine is saturated.
+  """
+  @spec capacity_status() :: map()
+  def capacity_status do
+    case Process.whereis(server()) do
+      nil -> unavailable_capacity()
+      _pid -> GenServer.call(server(), :capacity_status)
+    end
+  end
+
+  @doc """
+  Pauses local generation for `ttl_ms` (default fifteen minutes, capped at eight
+  hours). New work is refused and waiting work is released; in-flight work may
+  finish. Calling it again extends the pause.
+  """
+  @spec pause(binary() | nil, keyword()) :: :ok | {:error, atom()}
+  def pause(reason \\ nil, opts \\ []) do
+    case Process.whereis(server()) do
+      nil -> {:error, :not_running}
+      _pid -> GenServer.call(server(), {:pause, reason, opts})
+    end
+  end
+
+  @doc "Lifts a pause immediately."
+  @spec resume() :: :ok | {:error, atom()}
+  def resume do
+    case Process.whereis(server()) do
+      nil -> {:error, :not_running}
+      _pid -> GenServer.call(server(), :resume)
+    end
+  end
+
+  @doc "Whether local generation is paused right now."
+  @spec paused?() :: boolean()
+  def paused? do
+    case Process.whereis(server()) do
+      nil -> false
+      _pid -> GenServer.call(server(), :paused?)
+    end
+  end
+
+  @doc """
   The job id of the process doing the asking, when a chat job is the asker.
 
   Set by `BotArmyLlm.NATS.Consumer` on the process that runs the job, so a wait
@@ -147,7 +208,12 @@ defmodule BotArmyLlm.NodeQueue do
        max_concurrency:
          positive(opts[:max_concurrency], config(@config_concurrency, @default_concurrency)),
        max_waiting: non_negative(opts[:max_waiting], config(@config_waiting, @default_waiting)),
-       max_wait_ms: positive(opts[:max_wait_ms], config(@config_wait_ms, @default_wait_ms))
+       max_wait_ms: positive(opts[:max_wait_ms], config(@config_wait_ms, @default_wait_ms)),
+       paused_until: nil,
+       paused_reason: nil,
+       paused_by: nil,
+       pause_token: nil,
+       pause_timer: nil
      }}
   end
 
@@ -158,6 +224,39 @@ defmodule BotArmyLlm.NodeQueue do
 
   def handle_call(:status, _from, state) do
     {:reply, describe(state), state}
+  end
+
+  def handle_call(:capacity_status, _from, state) do
+    {:reply, capacity_describe(state), state}
+  end
+
+  def handle_call(:paused?, _from, state) do
+    {:reply, paused_now?(state), state}
+  end
+
+  def handle_call({:pause, reason, opts}, _from, state) do
+    ttl_ms = pause_ttl(opts)
+    token = make_ref()
+    timer = Process.send_after(self(), {:pause_expired, token}, ttl_ms)
+
+    if state.pause_timer, do: Process.cancel_timer(state.pause_timer)
+
+    state = refuse_waiters(state, :paused)
+
+    {:reply, :ok,
+     %{
+       state
+       | paused_until: now_ms() + ttl_ms,
+         paused_reason: pause_reason(reason),
+         paused_by: pause_by(opts),
+         pause_token: token,
+         pause_timer: timer
+     }}
+  end
+
+  def handle_call(:resume, _from, state) do
+    if state.pause_timer, do: Process.cancel_timer(state.pause_timer)
+    {:reply, :ok, clear_pause(state)}
   end
 
   @impl true
@@ -175,6 +274,14 @@ defmodule BotArmyLlm.NodeQueue do
 
   def handle_info({:wait_timeout, key, ref}, state) do
     {:noreply, expire(key, ref, state)}
+  end
+
+  def handle_info({:pause_expired, token}, state) do
+    if state.pause_token == token do
+      {:noreply, clear_pause(state)}
+    else
+      {:noreply, state}
+    end
   end
 
   def handle_info(_other, state), do: {:noreply, state}
@@ -199,6 +306,9 @@ defmodule BotArmyLlm.NodeQueue do
     {pid, _tag} = from
 
     cond do
+      paused_now?(state) ->
+        {:reply, {:error, :paused}, state}
+
       map_size(node.holders) < state.max_concurrency ->
         {:reply, :ok, put_node(state, key, add_holder(node, pid, label))}
 
@@ -306,6 +416,145 @@ defmodule BotArmyLlm.NodeQueue do
          max_waiting: state.max_waiting
        }}
     end)
+  end
+
+  defp capacity_describe(state) do
+    nodes =
+      state.nodes
+      |> Enum.map(fn {key, node} -> capacity_node(key, node, state) end)
+      |> Enum.sort_by(& &1["node"])
+
+    paused = paused_now?(state)
+
+    %{
+      "available" => true,
+      "as_of" => BotArmyLibraryRuntime.Timestamp.utc_iso8601(DateTime.utc_now()),
+      "paused" => paused,
+      "paused_reason" => if(paused, do: state.paused_reason),
+      "paused_by" => if(paused, do: state.paused_by),
+      "paused_until" => if(paused, do: iso_until(state.paused_until)),
+      "nodes" => nodes,
+      "totals" => %{
+        "nodes" => length(nodes),
+        "running" => Enum.sum(Enum.map(nodes, & &1["running"])),
+        "waiting" => Enum.sum(Enum.map(nodes, & &1["waiting"])),
+        "saturated" => Enum.count(nodes, &(&1["pressure"] == "saturated"))
+      },
+      "limits" => capacity_limits(state)
+    }
+  end
+
+  defp capacity_node(key, node, state) do
+    running = map_size(node.holders)
+    waiting = length(node.waiting)
+
+    pressure =
+      cond do
+        running == 0 and waiting == 0 -> "idle"
+        running >= state.max_concurrency and waiting >= state.max_waiting -> "saturated"
+        waiting > 0 -> "queued"
+        true -> "busy"
+      end
+
+    %{
+      "node" => to_string(key),
+      "running" => running,
+      "waiting" => waiting,
+      "max_concurrency" => state.max_concurrency,
+      "max_waiting" => state.max_waiting,
+      "pressure" => pressure
+    }
+  end
+
+  defp capacity_limits(state) do
+    %{
+      "max_concurrency" => state.max_concurrency,
+      "max_waiting" => state.max_waiting,
+      "max_wait_ms" => state.max_wait_ms,
+      "pause_default_ms" => @default_pause_ms,
+      "pause_max_ms" => @max_pause_ms
+    }
+  end
+
+  defp unavailable_capacity do
+    %{
+      "available" => false,
+      "reason" => "node queue is not running",
+      "paused" => false,
+      "nodes" => [],
+      "totals" => %{"nodes" => 0, "running" => 0, "waiting" => 0, "saturated" => 0},
+      "limits" => %{
+        "max_concurrency" => @default_concurrency,
+        "max_waiting" => @default_waiting,
+        "max_wait_ms" => @default_wait_ms,
+        "pause_default_ms" => @default_pause_ms,
+        "pause_max_ms" => @max_pause_ms
+      }
+    }
+  end
+
+  defp refuse_waiters(state, reason) do
+    nodes =
+      Map.new(state.nodes, fn {key, node} ->
+        Enum.each(node.waiting, fn waiter ->
+          if waiter.timer, do: Process.cancel_timer(waiter.timer)
+          Process.demonitor(waiter.ref, [:flush])
+          GenServer.reply(waiter.from, {:error, reason})
+        end)
+
+        {key, %{node | waiting: []}}
+      end)
+
+    %{state | nodes: nodes}
+  end
+
+  defp clear_pause(state) do
+    %{
+      state
+      | paused_until: nil,
+        paused_reason: nil,
+        paused_by: nil,
+        pause_token: nil,
+        pause_timer: nil
+    }
+  end
+
+  defp paused_now?(%{paused_until: nil}), do: false
+  defp paused_now?(%{paused_until: until}), do: now_ms() < until
+
+  defp pause_ttl(opts) do
+    case Keyword.get(opts, :ttl_ms, @default_pause_ms) do
+      int when is_integer(int) -> int |> max(@min_pause_ms) |> min(@max_pause_ms)
+      _other -> @default_pause_ms
+    end
+  end
+
+  defp pause_reason(reason) when is_binary(reason) do
+    case String.trim(reason) do
+      "" -> "local inference paused by an operator"
+      text -> String.slice(text, 0, @max_pause_reason)
+    end
+  end
+
+  defp pause_reason(_reason), do: "local inference paused by an operator"
+
+  defp pause_by(opts) do
+    case Keyword.get(opts, :by) do
+      by when is_binary(by) ->
+        case String.trim(by) do
+          "" -> nil
+          text -> String.slice(text, 0, @max_pause_by)
+        end
+
+      _by ->
+        nil
+    end
+  end
+
+  defp iso_until(until) do
+    DateTime.utc_now()
+    |> DateTime.add(until - now_ms(), :millisecond)
+    |> BotArmyLibraryRuntime.Timestamp.utc_iso8601()
   end
 
   defp node(state, key) do

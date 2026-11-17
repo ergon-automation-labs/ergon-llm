@@ -201,9 +201,92 @@ defmodule BotArmyLlm.NodeQueueTest do
       assert_receive {:released, ^holder}, 1_000
 
       assert Task.await(waiting, 5_000) == :ok
+
       assert wait_until(fn ->
-               match?(%{running: [], waiting: []}, Map.take(NodeQueue.status()[:air], [:running, :waiting]))
+               match?(
+                 %{running: [], waiting: []},
+                 Map.take(NodeQueue.status()[:air], [:running, :waiting])
+               )
              end)
+    end
+  end
+
+  describe "pausing local inference" do
+    test "a paused gate refuses new work and releases the waiters" do
+      start_queue(max_concurrency: 1, max_waiting: 1, max_wait_ms: 60_000)
+      holder = start_holder("air")
+
+      waiting = Task.async(fn -> NodeQueue.acquire("air", "job-2") end)
+      assert wait_until(fn -> NodeQueue.status()["air"].waiting == ["job-2"] end)
+
+      assert :ok = NodeQueue.pause("Ollama is eating the laptop", ttl_ms: 60_000, by: "test")
+      assert NodeQueue.paused?()
+
+      # A waiter must not be held until the pause expires; it is told now.
+      assert {:error, :paused} = Task.await(waiting, 1_000)
+      assert {:error, :paused} = NodeQueue.acquire("air", "job-3")
+
+      # In-flight work keeps its slot; pause stops admission, it does not kill.
+      assert NodeQueue.status()["air"].running != []
+
+      assert :ok = NodeQueue.resume()
+      refute NodeQueue.paused?()
+
+      # The holder still owns air; resume only restores admission. A different
+      # node is free to take work immediately.
+      assert :ok = NodeQueue.acquire("mini", "job-4")
+      NodeQueue.release("mini")
+
+      send(holder, :release)
+      assert_receive {:released, ^holder}, 1_000
+    end
+
+    test "a paused gate does not run work" do
+      start_queue()
+
+      assert :ok = NodeQueue.pause("no local inference right now", ttl_ms: 60_000)
+
+      assert {:error, :paused} =
+               NodeQueue.run("air", "job-9", fn -> flunk("refused work must not run") end)
+    end
+
+    test "a pause expires on its own" do
+      start_queue()
+
+      assert :ok = NodeQueue.pause("a short pause", ttl_ms: 1_000)
+      assert NodeQueue.paused?()
+
+      assert wait_until(fn -> not NodeQueue.paused?() end, 200),
+             "a forgotten pause must not stop local inference forever"
+
+      assert :ok = NodeQueue.acquire("air", "job-after-pause")
+      NodeQueue.release("air")
+    end
+
+    test "capacity status reports pressure as counts, not job ids" do
+      start_queue(max_concurrency: 1, max_waiting: 2, max_wait_ms: 60_000)
+      start_holder("air")
+
+      waiting = Task.async(fn -> NodeQueue.acquire("air", "job-secret") end)
+      assert wait_until(fn -> NodeQueue.status()["air"].waiting == ["job-secret"] end)
+
+      status = NodeQueue.capacity_status()
+
+      assert status["available"] == true
+      assert status["paused"] == false
+      assert status["totals"] == %{"nodes" => 1, "running" => 1, "waiting" => 1, "saturated" => 0}
+      assert [%{"node" => "air", "pressure" => "queued"}] = status["nodes"]
+      refute inspect(status) =~ "job-secret"
+
+      assert :ok = NodeQueue.pause("a pause", ttl_ms: 60_000, by: "operator")
+      paused = NodeQueue.capacity_status()
+
+      assert paused["paused"] == true
+      assert paused["paused_reason"] == "a pause"
+      assert paused["paused_by"] == "operator"
+      assert is_binary(paused["paused_until"])
+
+      Task.shutdown(waiting, :brutal_kill)
     end
   end
 end

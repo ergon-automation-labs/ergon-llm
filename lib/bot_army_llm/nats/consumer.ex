@@ -32,6 +32,7 @@ defmodule BotArmyLlm.NATS.Consumer do
   alias BotArmyLlm.JobStore
   alias BotArmyLlm.LlmClient
   alias BotArmyLlm.ModelType
+  alias BotArmyLlm.NodeQueue
   alias BotArmyLibraryRuntime.Registry
 
   alias BotArmyLlm.Handlers.{
@@ -114,6 +115,21 @@ defmodule BotArmyLlm.NATS.Consumer do
     %{subject: "llm.usage.query", type: :request_reply, description: "Query token usage"},
     %{subject: "llm.metrics.get", type: :request_reply, description: "Get metrics"},
     %{subject: "llm.queue.status", type: :request_reply, description: "Get queue status"},
+    %{
+      subject: "llm.capacity.status",
+      type: :request_reply,
+      description: "Local inference capacity: pause state, per-node load, and limits"
+    },
+    %{
+      subject: "llm.capacity.pause",
+      type: :request_reply,
+      description: "Pause local inference for a bounded time (separate from army-halt)"
+    },
+    %{
+      subject: "llm.capacity.resume",
+      type: :request_reply,
+      description: "Resume local inference immediately"
+    },
     %{
       subject: "llm.job.status",
       type: :request_reply,
@@ -270,6 +286,9 @@ defmodule BotArmyLlm.NATS.Consumer do
     "llm.usage.query",
     "llm.metrics.get",
     "llm.queue.status",
+    "llm.capacity.status",
+    "llm.capacity.pause",
+    "llm.capacity.resume",
     "llm.job.status",
     "conv.request.llm.>",
     "conv.mailbox.llm",
@@ -450,6 +469,15 @@ defmodule BotArmyLlm.NATS.Consumer do
   defp handle_request_reply("llm.queue.status", message, reply_to),
     do: handle_queue_status(message, reply_to)
 
+  defp handle_request_reply("llm.capacity.status", message, reply_to),
+    do: handle_capacity_status(message, reply_to)
+
+  defp handle_request_reply("llm.capacity.pause", message, reply_to),
+    do: handle_capacity_pause(message, reply_to)
+
+  defp handle_request_reply("llm.capacity.resume", message, reply_to),
+    do: handle_capacity_resume(message, reply_to)
+
   defp handle_request_reply("llm.job.status", message, reply_to) do
     publish_reply(reply_to, job_status_response(message))
   end
@@ -619,6 +647,70 @@ defmodule BotArmyLlm.NATS.Consumer do
 
     Logger.debug("Publishing queue status response")
     publish_reply(reply_to, response)
+  end
+
+  defp handle_capacity_status(message, reply_to) do
+    publish_reply(
+      reply_to,
+      capacity_response("llm.capacity.status.response", NodeQueue.capacity_status(), message)
+    )
+  end
+
+  defp handle_capacity_pause(message, reply_to) do
+    payload = message["payload"] || message
+
+    case NodeQueue.pause(payload["reason"],
+           ttl_ms: payload["ttl_ms"],
+           by: payload["by"]
+         ) do
+      :ok ->
+        publish_reply(
+          reply_to,
+          capacity_response("llm.capacity.pause.response", NodeQueue.capacity_status(), message)
+        )
+
+      {:error, reason} ->
+        publish_reply(
+          reply_to,
+          capacity_response(
+            "llm.capacity.pause.response",
+            %{"ok" => false, "error" => to_string(reason)},
+            message
+          )
+        )
+    end
+  end
+
+  defp handle_capacity_resume(message, reply_to) do
+    case NodeQueue.resume() do
+      :ok ->
+        publish_reply(
+          reply_to,
+          capacity_response("llm.capacity.resume.response", NodeQueue.capacity_status(), message)
+        )
+
+      {:error, reason} ->
+        publish_reply(
+          reply_to,
+          capacity_response(
+            "llm.capacity.resume.response",
+            %{"ok" => false, "error" => to_string(reason)},
+            message
+          )
+        )
+    end
+  end
+
+  defp capacity_response(event, payload, message) do
+    %{
+      "event" => event,
+      "event_id" => message["event_id"],
+      "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601(),
+      "source" => "bot_army_llm",
+      "source_node" => node() |> Atom.to_string(),
+      "schema_version" => "1.0",
+      "payload" => payload
+    }
   end
 
   defp handle_chat_request_reply(subject, message, reply_to) do

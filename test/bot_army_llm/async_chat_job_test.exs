@@ -466,6 +466,13 @@ defmodule BotArmyLlm.AsyncChatJobTest do
       assert "llm.job.status" in Consumer.advertised_subjects()
       assert "llm.job.status" in Consumer.subscription_subjects()
     end
+
+    test "the capacity status and pause levers are advertised and subscribed" do
+      for subject <- ["llm.capacity.status", "llm.capacity.pause", "llm.capacity.resume"] do
+        assert subject in Consumer.advertised_subjects()
+        assert subject in Consumer.subscription_subjects()
+      end
+    end
   end
 
   # The bell sink is process-global, and the app can ring for jobs this test did

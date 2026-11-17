@@ -113,6 +113,43 @@ Both failure modes open rather than closed: if the gate is not running the work
 runs anyway, and a holder that dies without releasing has its slot freed by a
 monitor.
 
+## Pausing local inference, and seeing the pressure
+
+A queue bounds one node. It does not answer "may local inference use the machine
+at all right now?" — so `NodeQueue` also has a **bounded pause**:
+
+* `llm.capacity.pause` with `{"reason": "...", "ttl_ms": 900000, "by": "..."}`
+  refuses new local work with `{:error, :paused}` and releases current waiters
+  with the same reason. `ttl_ms` is clamped to **1 s .. 8 h**; the default is
+  **15 min**.
+* In-flight generations are **not killed**. Pause stops admission; it does not
+  throw away work or leave Ollama holding a model for a caller that has gone.
+* The pause expires on its own. A forgotten lever must not stop local inference
+  forever.
+* `llm.capacity.resume` lifts it immediately.
+* `llm.capacity.status` returns counts and limits, not job ids or prompts:
+
+  ```json
+  {
+    "available": true,
+    "paused": false,
+    "nodes": [{"node": "air", "running": 1, "waiting": 0,
+               "max_concurrency": 1, "max_waiting": 2,
+               "pressure": "busy"}],
+    "totals": {"nodes": 1, "running": 1, "waiting": 0, "saturated": 0}
+  }
+  ```
+
+`pressure` is `idle`, `queued`, `busy`, or `saturated`. When the gate is not
+running the answer is `{"available": false, "reason": "node queue is not running"}`,
+so a reader can say "unknown" instead of drawing an idle machine.
+
+**This governs bot inference only.** `ollama launch claude` through the bridge's
+`cli_invoker`, a pi session's own model use, and a direct CLI call do not pass
+through `NodeQueue`. Controlling those needs the infra lever
+(`OLLAMA_MAX_LOADED_MODELS=1`, `OLLAMA_NUM_PARALLEL=1`); the capacity subjects are
+the honest view of the part the bot does control.
+
 ## Inspecting it
 
 ```bash

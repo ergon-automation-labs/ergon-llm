@@ -1,0 +1,89 @@
+defmodule BotArmyLlm.TriageQueueTest do
+  use ExUnit.Case, async: true
+  @moduletag :core
+
+  alias BotArmyLlm.TriageQueue
+
+  @now 1_700_000_000
+
+  defp start(opts \\ []) do
+    test = self()
+    dispatch = fn item -> send(test, {:dispatched, item.id}) end
+    clock = fn _unit -> @now end
+
+    {:ok, pid} =
+      TriageQueue.start_link(
+        Keyword.merge([dispatch: dispatch, clock: clock, tick_ms: 0, slots: 2], opts)
+      )
+
+    pid
+  end
+
+  defp item(id, lane, attrs \\ %{}) do
+    Map.merge(%{id: id, lane: lane, enqueued_at: @now}, attrs)
+  end
+
+  test "a tick dispatches the top-ranked items up to the free slots and keeps the rest" do
+    q = start()
+    TriageQueue.enqueue(q, item("bg", "background"))
+    TriageQueue.enqueue(q, item("int", "interactive"))
+    TriageQueue.enqueue(q, item("urg", "urgent"))
+
+    status = TriageQueue.tick(q)
+
+    assert_receive {:dispatched, "urg"}
+    assert_receive {:dispatched, "int"}
+    refute_received {:dispatched, "bg"}
+    assert status.depth == 1
+    assert status.last_tick_at == @now
+  end
+
+  test "in-flight work holds slots until it completes" do
+    q = start(slots: 1)
+    TriageQueue.enqueue(q, item("a", "interactive"))
+    TriageQueue.enqueue(q, item("b", "interactive"))
+
+    TriageQueue.tick(q)
+    assert_receive {:dispatched, "a"}
+    refute_received {:dispatched, "b"}
+
+    # the dispatch task casts :done when it returns; a second tick then has a free slot
+    Process.sleep(20)
+    TriageQueue.tick(q)
+    assert_receive {:dispatched, "b"}
+  end
+
+  test "triage mode holds cloud-only work and reports it as waiting" do
+    q = start()
+    TriageQueue.set_mode(q, :triage)
+    TriageQueue.enqueue(q, item("cloud", "urgent", %{cloud_only: true}))
+    TriageQueue.enqueue(q, item("local", "background"))
+
+    status = TriageQueue.tick(q)
+
+    assert_receive {:dispatched, "local"}
+    refute_received {:dispatched, "cloud"}
+    assert status.waiting_for_cloud == 1
+    assert status.depth == 1
+  end
+
+  test "status reports depth by lane and the oldest wait" do
+    q = start(slots: 0)
+    TriageQueue.enqueue(q, item("old", "background", %{enqueued_at: @now - 600}))
+    TriageQueue.enqueue(q, item("new", "interactive"))
+
+    status = TriageQueue.status(q)
+    assert status.depth == 2
+    assert status.by_lane == %{"urgent" => 0, "interactive" => 1, "background" => 1}
+    assert status.oldest_wait_s == 600
+  end
+
+  test "background items beyond the bound are shed, and the count is kept" do
+    q = start(slots: 0, shed_bound: 2)
+    for n <- 1..4, do: TriageQueue.enqueue(q, item("bg#{n}", "background"))
+
+    status = TriageQueue.tick(q)
+    assert status.depth == 2
+    assert status.shed_total == 2
+  end
+end

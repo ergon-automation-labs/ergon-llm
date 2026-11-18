@@ -110,6 +110,7 @@ defmodule BotArmyLlm.Application do
       |> maybe_exclude_pulse_publisher()
       |> maybe_http_proxy_children()
       |> maybe_add_health_responder()
+      |> maybe_add_triage_queue()
 
     opts = [strategy: :one_for_one, name: BotArmyLlm.Supervisor]
     {:ok, pid} = Supervisor.start_link(children, opts)
@@ -123,6 +124,23 @@ defmodule BotArmyLlm.Application do
   end
 
   # Skip Repo in test unless BOT_ARMY_LLM_TEST_REPO=1 (avoids Postgrex errors when DB is missing)
+  # Opt-in: the triage queue only runs when :triage_enabled is set. Off means the
+  # chat path is exactly what it was before triage existed.
+  defp maybe_add_triage_queue(children) do
+    if @env != :test and BotArmyLlm.TriageAdmission.enabled?() do
+      children ++
+        [
+          {BotArmyLlm.TriageQueue,
+           [
+             slots: Application.get_env(:bot_army_llm, :triage_slots, 2),
+             mode: Application.get_env(:bot_army_llm, :triage_mode, :cloud)
+           ]}
+        ]
+    else
+      children
+    end
+  end
+
   defp maybe_add_health_responder(children) do
     if @env == :test do
       children

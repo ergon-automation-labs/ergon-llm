@@ -46,10 +46,10 @@ defmodule BotArmyLlm.TriageQueue do
   def init(opts) do
     state = %{
       items: [],
-      mode: :cloud,
+      mode: Keyword.get(opts, :mode, :cloud),
       slots: Keyword.get(opts, :slots, @default_slots),
       in_flight: 0,
-      dispatch: Keyword.get(opts, :dispatch, fn _item -> :ok end),
+      dispatch: Keyword.get(opts, :dispatch, fn item -> item.work.() end),
       clock: Keyword.get(opts, :clock, &System.system_time/1),
       shed_bound: Keyword.get(opts, :shed_bound, 50),
       tick_ms: Keyword.get(opts, :tick_ms, @default_tick_ms),

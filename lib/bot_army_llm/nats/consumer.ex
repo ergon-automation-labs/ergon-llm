@@ -721,10 +721,17 @@ defmodule BotArmyLlm.NATS.Consumer do
     # duplicates its fields top-level; nesting correctly must not be a penalty.
     payload = chat_payload(message)
 
-    if async_requested?(payload) do
-      publish_reply(reply_to, submit_chat_job(payload, subject))
-    else
-      spawn(fn -> publish_reply(reply_to, run_chat(payload, subject)) end)
+    cond do
+      async_requested?(payload) ->
+        publish_reply(reply_to, submit_chat_job(payload, subject))
+
+      BotArmyLlm.TriageAdmission.enabled?() ->
+        lane = lane_for_chat_subject(subject, payload)
+        work = fn -> publish_reply(reply_to, run_chat(payload, subject)) end
+        :ok = BotArmyLlm.TriageAdmission.admit(payload, lane, work)
+
+      true ->
+        spawn(fn -> publish_reply(reply_to, run_chat(payload, subject)) end)
     end
   end
 

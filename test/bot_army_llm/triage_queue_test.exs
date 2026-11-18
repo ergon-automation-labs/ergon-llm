@@ -67,6 +67,14 @@ defmodule BotArmyLlm.TriageQueueTest do
     assert status.depth == 1
   end
 
+  test "by default the queue runs each item's own work" do
+    test = self()
+    {:ok, q} = TriageQueue.start_link(name: nil, clock: fn _ -> @now end, tick_ms: 0, slots: 1)
+    TriageQueue.enqueue(q, item("w", "interactive", %{work: fn -> send(test, :ran) end}))
+    TriageQueue.tick(q)
+    assert_receive :ran
+  end
+
   test "status reports depth by lane and the oldest wait" do
     q = start(slots: 0)
     TriageQueue.enqueue(q, item("old", "background", %{enqueued_at: @now - 600}))

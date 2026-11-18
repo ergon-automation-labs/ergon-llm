@@ -75,6 +75,42 @@ defmodule BotArmyLlm.TriageQueueTest do
     assert_receive :ran
   end
 
+  defp scripted_probe(states) do
+    {:ok, agent} = Agent.start_link(fn -> states end)
+
+    fn ->
+      Agent.get_and_update(agent, fn
+        [next | rest] -> {next, rest}
+        [] -> {[:closed], []}
+      end)
+    end
+  end
+
+  test "automatic mode goes to triage after two ticks of no closed cloud breaker, and back after two closed" do
+    probe =
+      scripted_probe([
+        [:open, :open, :open],
+        [:open, :open, :open],
+        [:closed, :open, :open],
+        [:closed, :open, :open]
+      ])
+
+    q = start(auto_mode: true, cloud_probe: probe)
+
+    assert TriageQueue.tick(q).mode == :cloud
+    assert TriageQueue.tick(q).mode == :triage
+    assert TriageQueue.tick(q).mode == :triage
+    assert TriageQueue.tick(q).mode == :cloud
+  end
+
+  test "a single flap does not toggle the mode" do
+    probe = scripted_probe([[:open, :open, :open], [:closed, :open, :open], [:open, :open, :open]])
+    q = start(auto_mode: true, cloud_probe: probe)
+
+    for _ <- 1..3, do: TriageQueue.tick(q)
+    assert TriageQueue.status(q).mode == :cloud
+  end
+
   test "status reports depth by lane and the oldest wait" do
     q = start(slots: 0)
     TriageQueue.enqueue(q, item("old", "background", %{enqueued_at: @now - 600}))

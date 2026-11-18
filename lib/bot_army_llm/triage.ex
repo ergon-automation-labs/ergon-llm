@@ -81,6 +81,15 @@ defmodule BotArmyLlm.Triage do
   end
 
   @doc """
+  The mode the cloud breakers call for. `:triage` when no cloud provider is closed
+  (all open or probing), `:cloud` as soon as any one closes. No providers reported
+  means no evidence cloud is out, so `:cloud`.
+  """
+  @spec cloud_mode([atom()]) :: :cloud | :triage
+  def cloud_mode([]), do: :cloud
+  def cloud_mode(states), do: if(Enum.any?(states, &(&1 == :closed)), do: :cloud, else: :triage)
+
+  @doc """
   Where an item may run in a mode: `:local`, `:cloud`, or `:waiting_for_cloud`.
 
     * `local_only` (for example `model_type: "uncensored"`) always runs local.

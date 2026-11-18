@@ -133,7 +133,8 @@ defmodule BotArmyLlm.Application do
           {BotArmyLlm.TriageQueue,
            [
              slots: Application.get_env(:bot_army_llm, :triage_slots, 2),
-             mode: Application.get_env(:bot_army_llm, :triage_mode, :cloud)
+             mode: Application.get_env(:bot_army_llm, :triage_mode, :cloud),
+             auto_mode: true
            ]}
         ]
     else

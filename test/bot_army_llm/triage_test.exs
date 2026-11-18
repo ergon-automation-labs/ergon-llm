@@ -90,6 +90,13 @@ defmodule BotArmyLlm.TriageTest do
     assert Enum.all?(shed, fn {i, reason} -> i.lane == "background" and reason == :shed_background_bound end)
   end
 
+  test "cloud_mode: triage only when no cloud breaker is closed" do
+    assert Triage.cloud_mode([]) == :cloud
+    assert Triage.cloud_mode([:closed, :open, :open]) == :cloud
+    assert Triage.cloud_mode([:open, :half_open, :open]) == :triage
+    assert Triage.cloud_mode([:open, :open, :open]) == :triage
+  end
+
   test "shedding under the bound sheds nothing" do
     assert {[_, _], []} = Triage.shed([item("a", "background"), item("b", "urgent")], @now, shed_bound: 10)
   end

@@ -22,8 +22,18 @@ defmodule BotArmyLlm.TriageAdmission do
 
   @senders %{"user" => :user, "system" => :system, "automated" => :automated}
 
-  @doc "Whether the triage queue is enabled for this node."
-  def enabled?, do: Application.get_env(:bot_army_llm, :triage_enabled, false) == true
+  @doc """
+  Whether the triage queue is enabled for this node. `TRIAGE_ENABLED` (set by Salt
+  through the plist) wins when present; otherwise the application config decides.
+  """
+  def enabled? do
+    default = Application.get_env(:bot_army_llm, :triage_enabled, false) == true
+
+    case BotArmyLibraryRuntime.ConfigLoader.get("TRIAGE_ENABLED", nil) do
+      nil -> default
+      value -> String.downcase(to_string(value)) in ["true", "1", "yes"]
+    end
+  end
 
   @doc """
   Admit one request. `work` is a zero-arity function that runs the request and

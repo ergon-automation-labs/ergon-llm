@@ -19,7 +19,9 @@ defmodule BotArmyLlm.TriageQueue do
   use GenServer
   require Logger
 
-  alias BotArmyLlm.Triage
+  alias BotArmyLlm.{CircuitBreaker, Triage}
+
+  @cloud_providers [:blackbox, :openrouter, :anthropic]
 
   @default_slots 2
   @default_tick_ms 5_000
@@ -47,6 +49,11 @@ defmodule BotArmyLlm.TriageQueue do
     state = %{
       items: [],
       mode: Keyword.get(opts, :mode, :cloud),
+      auto_mode: Keyword.get(opts, :auto_mode, false),
+      cloud_probe: Keyword.get(opts, :cloud_probe, &cloud_states/0),
+      to_triage_after: Keyword.get(opts, :to_triage_after, 2),
+      to_cloud_after: Keyword.get(opts, :to_cloud_after, 2),
+      flip_run: 0,
       slots: Keyword.get(opts, :slots, @default_slots),
       in_flight: 0,
       dispatch: Keyword.get(opts, :dispatch, fn item -> item.work.() end),
@@ -97,7 +104,37 @@ defmodule BotArmyLlm.TriageQueue do
   defp schedule(ms) when is_integer(ms) and ms > 0, do: Process.send_after(self(), :tick, ms)
   defp schedule(_), do: :ok
 
+  # The cloud breakers' view of the world, read once per tick.
+  defp cloud_states do
+    Enum.map(@cloud_providers, fn p -> CircuitBreaker.get_state(p).state end)
+  end
+
+  # Automatic mode with hysteresis: the desired mode must hold for N consecutive
+  # ticks before the queue flips, so a flapping provider cannot toggle it.
+  defp auto_mode(%{auto_mode: false} = state), do: state
+
+  defp auto_mode(state) do
+    desired = Triage.cloud_mode(state.cloud_probe.())
+
+    cond do
+      desired == state.mode ->
+        %{state | flip_run: 0}
+
+      true ->
+        run = state.flip_run + 1
+        needed = if desired == :triage, do: state.to_triage_after, else: state.to_cloud_after
+
+        if run >= needed do
+          Logger.info("[TriageQueue] automatic mode #{state.mode} -> #{desired}")
+          %{state | mode: desired, flip_run: 0}
+        else
+          %{state | flip_run: run}
+        end
+    end
+  end
+
   defp evaluate(state) do
+    state = auto_mode(state)
     now = state.clock.(:second)
 
     {kept, shed} = Triage.shed(state.items, now, shed_bound: state.shed_bound)

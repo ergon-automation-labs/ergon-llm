@@ -33,3 +33,62 @@ defmodule BotArmyLlm.TriageAdmissionTest do
     refute TriageAdmission.enabled?()
   end
 end
+
+defmodule BotArmyLlm.TriageAdmissionFlowTest do
+  use ExUnit.Case, async: false
+  @moduletag :core
+
+  alias BotArmyLlm.{JobStore, TriageAdmission, TriageQueue}
+
+  setup do
+    unless Process.whereis(JobStore), do: start_supervised!({JobStore, []})
+    :ok
+  end
+
+  defp queue(name, slots) do
+    {:ok, _} =
+      TriageQueue.start_link(
+        name: name,
+        slots: slots,
+        tick_ms: 0,
+        clock: fn _ -> System.system_time(:second) end
+      )
+
+    name
+  end
+
+  test "a request still waiting after the ack window gets a queued reply with its job id" do
+    server = queue(:flow_wait_q, 0)
+    test = self()
+
+    :ok =
+      TriageAdmission.admit(%{"request_id" => "req-wait"}, "interactive",
+        reply: fn m -> send(test, {:reply, m}) end,
+        compute: fn -> %{"ok" => true, "answer" => "later"} end,
+        server: server,
+        ack_after_ms: 20
+      )
+
+    assert_receive {:reply, %{"status" => "queued", "job_id" => "req-wait"} = ack}, 1_000
+    assert ack["poll_subject"] == "llm.job.status"
+    assert {:ok, _job} = JobStore.get("req-wait")
+  end
+
+  test "a request dispatched before the ack window is answered directly, with no queued reply" do
+    server = queue(:flow_fast_q, 2)
+    test = self()
+
+    :ok =
+      TriageAdmission.admit(%{"request_id" => "req-fast"}, "interactive",
+        reply: fn m -> send(test, {:reply, m}) end,
+        compute: fn -> %{"ok" => true, "answer" => "now"} end,
+        server: server,
+        ack_after_ms: 500
+      )
+
+    TriageQueue.tick(server)
+
+    assert_receive {:reply, %{"answer" => "now"}}, 1_000
+    refute_receive {:reply, %{"status" => "queued"}}, 700
+  end
+end

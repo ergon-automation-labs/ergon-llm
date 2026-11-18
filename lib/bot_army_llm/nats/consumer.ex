@@ -727,8 +727,11 @@ defmodule BotArmyLlm.NATS.Consumer do
 
       BotArmyLlm.TriageAdmission.enabled?() ->
         lane = lane_for_chat_subject(subject, payload)
-        work = fn -> publish_reply(reply_to, run_chat(payload, subject)) end
-        :ok = BotArmyLlm.TriageAdmission.admit(payload, lane, work)
+        :ok =
+          BotArmyLlm.TriageAdmission.admit(payload, lane,
+            reply: fn map -> publish_reply(reply_to, map) end,
+            compute: fn -> run_chat(payload, subject) end
+          )
 
       true ->
         spawn(fn -> publish_reply(reply_to, run_chat(payload, subject)) end)

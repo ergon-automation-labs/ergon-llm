@@ -111,6 +111,28 @@ defmodule BotArmyLlm.TriageQueueTest do
     assert TriageQueue.status(q).mode == :cloud
   end
 
+  test "a claim is won once and is not released by the answer going out" do
+    q = start()
+    assert TriageQueue.claim(q, "r1", :dispatch)
+    refute TriageQueue.claim(q, "r1", :ack)
+  end
+
+  test "claims older than an hour are pruned on a tick" do
+    {:ok, clock} = Agent.start_link(fn -> @now end)
+    {:ok, q} =
+      TriageQueue.start_link(
+        name: nil,
+        clock: fn _ -> Agent.get(clock, & &1) end,
+        tick_ms: 0,
+        slots: 0
+      )
+
+    assert TriageQueue.claim(q, "old", :dispatch)
+    Agent.update(clock, &(&1 + 3_601))
+    TriageQueue.tick(q)
+    assert TriageQueue.claim(q, "old", :ack)
+  end
+
   test "status reports depth by lane and the oldest wait" do
     q = start(slots: 0)
     TriageQueue.enqueue(q, item("old", "background", %{enqueued_at: @now - 600}))

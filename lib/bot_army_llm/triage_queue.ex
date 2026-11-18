@@ -41,6 +41,20 @@ defmodule BotArmyLlm.TriageQueue do
   @doc "Run one evaluator pass now. Returns the status after the pass."
   def tick(server \\ __MODULE__), do: GenServer.call(server, :tick)
 
+  @doc """
+  First caller to claim a request id wins: `:dispatch` (the answer goes straight to
+  the caller) or `:ack` (the caller already got a queued reply, so the answer goes to
+  the job store). Returns `true` for the winner, `false` for everyone after.
+
+  A claim is held for an hour and then pruned, rather than released when the answer
+  goes out: releasing it would let a late ack re-answer a caller who already has the
+  result.
+  """
+  def claim(server \\ __MODULE__, id, who) when who in [:dispatch, :ack],
+    do: GenServer.call(server, {:claim, id, who})
+
+  @claim_ttl_s 3_600
+
   @doc "Depth by lane, mode, oldest wait, waiting-for-cloud count, in-flight, shed and dispatch totals, last tick."
   def status(server \\ __MODULE__), do: GenServer.call(server, :status)
 
@@ -54,6 +68,7 @@ defmodule BotArmyLlm.TriageQueue do
       to_triage_after: Keyword.get(opts, :to_triage_after, 2),
       to_cloud_after: Keyword.get(opts, :to_cloud_after, 2),
       flip_run: 0,
+      claims: %{},
       slots: Keyword.get(opts, :slots, @default_slots),
       in_flight: 0,
       dispatch: Keyword.get(opts, :dispatch, fn item -> item.work.() end),
@@ -83,6 +98,15 @@ defmodule BotArmyLlm.TriageQueue do
   def handle_call(:tick, _from, state) do
     state = evaluate(state)
     {:reply, summary(state), state}
+  end
+
+  def handle_call({:claim, id, who}, _from, state) do
+    if Map.has_key?(state.claims, id) do
+      {:reply, false, state}
+    else
+      at = state.clock.(:second)
+      {:reply, true, %{state | claims: Map.put(state.claims, id, {who, at})}}
+    end
   end
 
   def handle_call(:status, _from, state) do
@@ -136,6 +160,7 @@ defmodule BotArmyLlm.TriageQueue do
   defp evaluate(state) do
     state = auto_mode(state)
     now = state.clock.(:second)
+    state = %{state | claims: prune_claims(state.claims, now)}
 
     {kept, shed} = Triage.shed(state.items, now, shed_bound: state.shed_bound)
     Enum.each(shed, fn {item, reason} ->
@@ -176,6 +201,10 @@ defmodule BotArmyLlm.TriageQueue do
         dispatched_total: state.dispatched_total + length(to_run),
         last_tick_at: now
     }
+  end
+
+  defp prune_claims(claims, now) do
+    Map.filter(claims, fn {_id, {_who, at}} -> now - at < @claim_ttl_s end)
   end
 
   defp summary(state) do

@@ -13,7 +13,7 @@ defmodule BotArmyLlm.TriageQueueTest do
 
     {:ok, pid} =
       TriageQueue.start_link(
-        Keyword.merge([dispatch: dispatch, clock: clock, tick_ms: 0, slots: 2], opts)
+        Keyword.merge([name: nil, dispatch: dispatch, clock: clock, tick_ms: 0, slots: 2], opts)
       )
 
     pid

@@ -65,14 +65,16 @@ defmodule BotArmyLlm.TriageAdmission do
     server = Keyword.get(opts, :server, TriageQueue)
     ack_after = Keyword.get(opts, :ack_after_ms, ack_after_ms())
 
-    id = request_id(payload)
+    id = Keyword.get(opts, :id) || request_id(payload)
     work = fn -> run_work(id, reply, compute, server) end
     item = build_item(payload, lane, work) |> Map.put(:id, id)
 
     :ok = TriageQueue.enqueue(server, item)
-    # Only callers that said they can handle a queued reply get one. Everyone else
-    # keeps the answer-or-nothing contract they were written against.
-    if Map.get(payload, "accepts_queued") == true do
+    # Only callers that said they can handle a queued reply get one. Async jobs pass
+    # ack: false, since their caller already has the job id.
+    ack? = Keyword.get(opts, :ack, Map.get(payload, "accepts_queued") == true)
+
+    if ack? do
       Task.start(fn -> maybe_ack(id, lane, reply, server, ack_after) end)
     end
 
@@ -123,6 +125,11 @@ defmodule BotArmyLlm.TriageAdmission do
       error ->
         Logger.error("[TriageAdmission] request #{id} failed: #{Exception.message(error)}")
         JobStore.fail(id, Exception.message(error))
+        JobBell.ring(id, "failed")
+    catch
+      kind, reason ->
+        Logger.error("[TriageAdmission] request #{id} crashed (#{kind}): #{inspect(reason)}")
+        JobStore.fail(id, "#{kind}: #{inspect(reason)}")
         JobBell.ring(id, "failed")
     end
   end

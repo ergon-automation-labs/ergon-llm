@@ -89,6 +89,23 @@ defmodule BotArmyLlm.TriageAdmissionFlowTest do
     refute_receive {:reply, %{"status" => "queued"}}, 300
   end
 
+  test "an async job runs through the queue and its result lands with the job id" do
+    server = queue(:flow_job_q, 2)
+    test = self()
+
+    :ok =
+      TriageAdmission.admit(%{"request_id" => "ignored"}, "background",
+        id: "job-42",
+        ack: false,
+        reply: fn result -> send(test, {:job_done, result}) end,
+        compute: fn -> %{"ok" => true, "answer" => "from the queue"} end,
+        server: server
+      )
+
+    TriageQueue.tick(server)
+    assert_receive {:job_done, %{"answer" => "from the queue"}}, 1_000
+  end
+
   test "a request dispatched before the ack window is answered directly, with no queued reply" do
     server = queue(:flow_fast_q, 2)
     test = self()

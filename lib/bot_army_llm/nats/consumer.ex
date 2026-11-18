@@ -727,6 +727,7 @@ defmodule BotArmyLlm.NATS.Consumer do
 
       BotArmyLlm.TriageAdmission.enabled?() ->
         lane = lane_for_chat_subject(subject, payload)
+
         :ok =
           BotArmyLlm.TriageAdmission.admit(payload, lane,
             reply: fn map -> publish_reply(reply_to, map) end,
@@ -766,26 +767,22 @@ defmodule BotArmyLlm.NATS.Consumer do
 
     announce_local_wait(job_id, payload)
 
-    spawn(fn ->
-      # Names this job for the per-node queue: a node being busy can then say
-      # *which* job is why (see BotArmyLlm.NodeQueue.queued_label/0).
-      Process.put(:llm_job_id, job_id)
-
-      try do
-        JobStore.complete(job_id, runner.(payload, subject))
-        JobBell.ring(job_id, "completed")
-      rescue
-        error ->
-          Logger.error("LLM job #{job_id} failed: #{Exception.message(error)}")
-          JobStore.fail(job_id, Exception.message(error))
-          JobBell.ring(job_id, "failed")
-      catch
-        kind, reason ->
-          Logger.error("LLM job #{job_id} crashed (#{kind}): #{inspect(reason)}")
-          JobStore.fail(job_id, "#{kind}: #{inspect(reason)}")
-          JobBell.ring(job_id, "failed")
-      end
-    end)
+    if BotArmyLlm.TriageAdmission.enabled?() do
+      # Async jobs share the triage queue with sync requests: same lanes, same ranking,
+      # same mode. The job id is the queue item id, and the answer lands in the job store.
+      :ok =
+        BotArmyLlm.TriageAdmission.admit(payload, lane,
+          id: job_id,
+          ack: false,
+          reply: fn result ->
+            JobStore.complete(job_id, result)
+            JobBell.ring(job_id, "completed")
+          end,
+          compute: fn -> runner.(payload, subject) end
+        )
+    else
+      spawn(fn -> run_job(job_id, payload, subject, runner) end)
+    end
 
     %{
       "request_id" => request_id,
@@ -871,6 +868,28 @@ defmodule BotArmyLlm.NATS.Consumer do
       is_binary(nested) -> nested
       is_map(message) and is_binary(Map.get(message, "job_id")) -> Map.get(message, "job_id")
       true -> nil
+    end
+  end
+
+  # Runs one async job without the triage queue (triage off). Records the outcome.
+  defp run_job(job_id, payload, subject, runner) do
+    # Names this job for the per-node queue: a node being busy can then say
+    # *which* job is why (see BotArmyLlm.NodeQueue.queued_label/0).
+    Process.put(:llm_job_id, job_id)
+
+    try do
+      JobStore.complete(job_id, runner.(payload, subject))
+      JobBell.ring(job_id, "completed")
+    rescue
+      error ->
+        Logger.error("LLM job #{job_id} failed: #{Exception.message(error)}")
+        JobStore.fail(job_id, Exception.message(error))
+        JobBell.ring(job_id, "failed")
+    catch
+      kind, reason ->
+        Logger.error("LLM job #{job_id} crashed (#{kind}): #{inspect(reason)}")
+        JobStore.fail(job_id, "#{kind}: #{inspect(reason)}")
+        JobBell.ring(job_id, "failed")
     end
   end
 

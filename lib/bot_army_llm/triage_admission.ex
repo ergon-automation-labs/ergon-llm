@@ -5,8 +5,10 @@ defmodule BotArmyLlm.TriageAdmission do
   Off by default (`config :bot_army_llm, triage_enabled: false`). When on, a sync
   chat request is admitted to `BotArmyLlm.TriageQueue` instead of running at once.
 
-  If the request is still queued after `triage_ack_after_ms` (default 8000, keep it
-  below the callers' timeout), the caller gets a queued reply instead of silence:
+  A caller that sets `"accepts_queued": true` gets a queued reply when the request is
+  still waiting after `triage_ack_after_ms` (default 8000, keep it below that caller's
+  timeout). Callers that do not set it never receive one, so a caller written for the
+  answer-or-nothing contract is not broken by triage:
 
       %{"ok" => true, "status" => "queued", "request_id" => id, "job_id" => id,
         "retry_after_ms" => ..., "poll_subject" => "llm.job.status", "message" => "..."}
@@ -68,7 +70,12 @@ defmodule BotArmyLlm.TriageAdmission do
     item = build_item(payload, lane, work) |> Map.put(:id, id)
 
     :ok = TriageQueue.enqueue(server, item)
-    Task.start(fn -> maybe_ack(id, lane, reply, server, ack_after) end)
+    # Only callers that said they can handle a queued reply get one. Everyone else
+    # keeps the answer-or-nothing contract they were written against.
+    if Map.get(payload, "accepts_queued") == true do
+      Task.start(fn -> maybe_ack(id, lane, reply, server, ack_after) end)
+    end
+
     :ok
   end
 

@@ -62,7 +62,7 @@ defmodule BotArmyLlm.TriageAdmissionFlowTest do
     test = self()
 
     :ok =
-      TriageAdmission.admit(%{"request_id" => "req-wait"}, "interactive",
+      TriageAdmission.admit(%{"request_id" => "req-wait", "accepts_queued" => true}, "interactive",
         reply: fn m -> send(test, {:reply, m}) end,
         compute: fn -> %{"ok" => true, "answer" => "later"} end,
         server: server,
@@ -72,6 +72,21 @@ defmodule BotArmyLlm.TriageAdmissionFlowTest do
     assert_receive {:reply, %{"status" => "queued", "job_id" => "req-wait"} = ack}, 1_000
     assert ack["poll_subject"] == "llm.job.status"
     assert {:ok, _job} = JobStore.get("req-wait")
+  end
+
+  test "a caller that did not opt in never gets a queued reply, only its answer" do
+    server = queue(:flow_optout_q, 0)
+    test = self()
+
+    :ok =
+      TriageAdmission.admit(%{"request_id" => "req-old"}, "background",
+        reply: fn m -> send(test, {:reply, m}) end,
+        compute: fn -> %{"ok" => true, "answer" => "later"} end,
+        server: server,
+        ack_after_ms: 20
+      )
+
+    refute_receive {:reply, %{"status" => "queued"}}, 300
   end
 
   test "a request dispatched before the ack window is answered directly, with no queued reply" do

@@ -583,6 +583,9 @@ defmodule BotArmyLlm.LlmClient do
           {:error, {:model_not_configured, :local_ollama} = reason} ->
             {:error, reason}
 
+          {:error, {:model_not_configured, {:uncensored, _tier}} = reason} ->
+            {:error, reason}
+
           {:error, {:ollama_node_busy, _} = reason} when provider == :local_ollama ->
             Logger.warning("Provider #{provider} busy: #{inspect(reason)}#{caller_tag(opts)}")
             {:error, reason}
@@ -640,23 +643,8 @@ defmodule BotArmyLlm.LlmClient do
   end
 
   defp call_provider(:ollama, text, complexity, opts) do
-    # Use model from opts if provided, otherwise let health checker decide
-    requested_model = Keyword.get(opts, :model)
-
-    case best_ollama_node_for(complexity, opts) do
-      {:ok, {url, default_model}} ->
-        model =
-          if is_binary(requested_model) and requested_model != "auto",
-            do: requested_model,
-            else: default_model
-
-        case ollama_call(url, model, text, opts) do
-          {:ok, completion} -> {:ok, %{completion: completion, model_used: model}}
-          {:error, reason} -> {:error, busy_or(reason)}
-        end
-
-      {:error, reason} ->
-        {:error, {:ollama_unavailable, reason}}
+    with {:ok, opts} <- BotArmyLlm.UncensoredTier.apply(opts, complexity) do
+      call_ollama(text, complexity, opts)
     end
   end
 
@@ -714,6 +702,27 @@ defmodule BotArmyLlm.LlmClient do
       {nil, _} -> {:error, :provider_not_configured}
       {_, ""} -> {:error, :model_not_configured}
       {key, m} -> anthropic_call(key, text, m, opts)
+    end
+  end
+
+  defp call_ollama(text, complexity, opts) do
+    # Use model from opts if provided, otherwise let health checker decide
+    requested_model = Keyword.get(opts, :model)
+
+    case best_ollama_node_for(complexity, opts) do
+      {:ok, {url, default_model}} ->
+        model =
+          if is_binary(requested_model) and requested_model != "auto",
+            do: requested_model,
+            else: default_model
+
+        case ollama_call(url, model, text, opts) do
+          {:ok, completion} -> {:ok, %{completion: completion, model_used: model}}
+          {:error, reason} -> {:error, busy_or(reason)}
+        end
+
+      {:error, reason} ->
+        {:error, {:ollama_unavailable, reason}}
     end
   end
 
@@ -1062,6 +1071,9 @@ defmodule BotArmyLlm.LlmClient do
           {:error, {:model_not_configured, :local_ollama} = reason} ->
             {:error, reason}
 
+          {:error, {:model_not_configured, {:uncensored, _tier}} = reason} ->
+            {:error, reason}
+
           {:error, {:ollama_node_busy, _} = reason} when provider == :local_ollama ->
             Logger.warning("Provider #{provider} busy: #{inspect(reason)}#{caller_tag(opts)}")
             {:error, reason}
@@ -1104,25 +1116,8 @@ defmodule BotArmyLlm.LlmClient do
   end
 
   defp call_provider_messages(:ollama, messages, complexity, opts) do
-    # Mirrors call_provider/4 — the multi-turn path used by llm.request.chat was
-    # pinned to :medium and dropped opts[:model] entirely, so a caller could not
-    # choose a model or a node on the chat path.
-    requested_model = Keyword.get(opts, :model)
-
-    case best_ollama_node_for(complexity, opts) do
-      {:ok, {url, default_model}} ->
-        model =
-          if is_binary(requested_model) and requested_model != "auto",
-            do: requested_model,
-            else: default_model
-
-        case ollama_call_messages(url, model, messages) do
-          {:ok, completion} -> {:ok, %{completion: completion, model_used: model}}
-          {:error, reason} -> {:error, busy_or(reason)}
-        end
-
-      {:error, reason} ->
-        {:error, {:ollama_unavailable, reason}}
+    with {:ok, opts} <- BotArmyLlm.UncensoredTier.apply(opts, complexity) do
+      call_ollama_messages(messages, complexity, opts)
     end
   end
 
@@ -1183,6 +1178,29 @@ defmodule BotArmyLlm.LlmClient do
 
   defp call_provider_messages(_, _messages, _complexity, _opts) do
     {:error, :unknown_provider}
+  end
+
+  defp call_ollama_messages(messages, complexity, opts) do
+    # Mirrors call_provider/4 — the multi-turn path used by llm.request.chat was
+    # pinned to :medium and dropped opts[:model] entirely, so a caller could not
+    # choose a model or a node on the chat path.
+    requested_model = Keyword.get(opts, :model)
+
+    case best_ollama_node_for(complexity, opts) do
+      {:ok, {url, default_model}} ->
+        model =
+          if is_binary(requested_model) and requested_model != "auto",
+            do: requested_model,
+            else: default_model
+
+        case ollama_call_messages(url, model, messages) do
+          {:ok, completion} -> {:ok, %{completion: completion, model_used: model}}
+          {:error, reason} -> {:error, busy_or(reason)}
+        end
+
+      {:error, reason} ->
+        {:error, {:ollama_unavailable, reason}}
+    end
   end
 
   defp ollama_call_messages(url, model, messages, opts \\ []) do

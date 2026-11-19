@@ -1195,6 +1195,7 @@ defmodule BotArmyLlm.NATS.Consumer do
     |> put_think(message)
     |> put_source(message)
     |> put_caller(message)
+    |> put_uncensored_tier(message)
   end
 
   defp resolve_routing_option(:ollama_node, value) do
@@ -1330,6 +1331,35 @@ defmodule BotArmyLlm.NATS.Consumer do
     case Map.get(message, "_caller") do
       value when is_binary(value) and value != "" -> Keyword.put(opts, :caller, value)
       _ -> opts
+    end
+  end
+
+  # `uncensored_tier: "light" | "heavy"` picks which of the pillar's uncensored models answers a
+  # `model_type: "uncensored"` request. A closed allowlist like model_type: an unknown tier is dropped
+  # with a warning, and a tier without the uncensored type means nothing, so it is not carried.
+  defp put_uncensored_tier(opts, message) do
+    case Map.get(message, "uncensored_tier") do
+      nil ->
+        opts
+
+      value ->
+        case BotArmyLlm.UncensoredTier.parse(value) do
+          {:ok, tier} when is_map_key(message, "model_type") ->
+            if Keyword.get(opts, :model_type) == :uncensored,
+              do: Keyword.put(opts, :uncensored_tier, tier),
+              else: opts
+
+          {:ok, _tier} ->
+            opts
+
+          :error ->
+            Logger.warning(
+              "llm.request.chat: ignoring unknown uncensored_tier #{inspect(value)} " <>
+                "(allowed: #{Enum.join(BotArmyLlm.UncensoredTier.tiers(), ", ")})"
+            )
+
+            opts
+        end
     end
   end
 

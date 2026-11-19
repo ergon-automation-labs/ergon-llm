@@ -409,11 +409,11 @@ defmodule BotArmyLlm.NATS.Consumer do
     end
   end
 
-  defp process_message(%{reply_to: reply_to, topic: topic, body: body})
+  defp process_message(%{reply_to: reply_to, topic: topic, body: body} = msg)
        when not is_nil(reply_to) do
     Logger.debug("Processing request/reply on #{topic}, reply_to: #{reply_to}")
 
-    decoded = decode_message_fallback(body)
+    decoded = decode_message_fallback(body, topic, reply_to, Map.get(msg, :headers, []))
 
     spawn(fn -> handle_request_reply(topic, decoded, reply_to) end)
   end
@@ -428,18 +428,83 @@ defmodule BotArmyLlm.NATS.Consumer do
     end
   end
 
-  defp decode_message_fallback(body) do
+  defp decode_message_fallback(body, topic, reply_to, headers) do
     case Decoder.decode(body) do
       {:ok, decoded_message} ->
         decoded_message
 
       {:error, _reason} ->
-        case Jason.decode(body) do
-          {:ok, plain} -> plain
-          _ -> %{}
-        end
+        plain =
+          case Jason.decode(body) do
+            {:ok, plain} -> plain
+            _ -> %{}
+          end
+
+        trace_bare_request(topic, reply_to, plain, headers, byte_size(body))
+        plain
     end
   end
+
+  # A request without an envelope is served (the decoder's warning is for a message nobody
+  # will answer), but NATS carries no sender identity, so the warning alone cannot say who
+  # sent it. This line is that evidence: subject, the caller's own `source`/`model`/`lane`
+  # fields, which keys it sent, header names, size, and the reply-inbox prefix. Values of
+  # anything else are never logged. One line per subject+source per minute, with a count.
+  @bare_trace_ms 60_000
+  @trace_fields ~w(source model model_type lane async)
+
+  @doc false
+  def trace_bare_request(topic, reply_to, decoded, headers, size, now_ms \\ nil) do
+    now = now_ms || System.monotonic_time(:millisecond)
+    fields = bare_trace_fields(decoded)
+    key = {:bare_request_trace, topic, fields["source"]}
+    {last, count} = Process.get(key, {nil, 0})
+
+    if last == nil or now - last >= @bare_trace_ms do
+      Process.put(key, {now, 0})
+
+      Logger.info(
+        "[BareRequest] #{bare_trace_line(topic, reply_to, decoded, headers, size, fields)} " <>
+          "(+#{count} since last line)"
+      )
+    else
+      Process.put(key, {last, count + 1})
+    end
+
+    :ok
+  end
+
+  @doc false
+  def bare_trace_line(topic, reply_to, decoded, headers, size, fields \\ nil) do
+    fields = fields || bare_trace_fields(decoded)
+    keys = if is_map(decoded), do: decoded |> Map.keys() |> Enum.sort() |> Enum.join(","), else: "-"
+
+    header_names =
+      headers
+      |> List.wrap()
+      |> Enum.map(fn
+        {name, _value} -> to_string(name)
+        other -> inspect(other)
+      end)
+      |> Enum.sort()
+      |> Enum.join(",")
+
+    inbox = reply_to |> to_string() |> String.slice(0, 14)
+    shown = Enum.map_join(fields, " ", fn {k, v} -> "#{k}=#{v}" end)
+
+    "topic=#{topic} #{shown} keys=[#{keys}] headers=[#{header_names}] bytes=#{size} reply_inbox=#{inbox}"
+  end
+
+  defp bare_trace_fields(decoded) when is_map(decoded) do
+    for field <- @trace_fields,
+        value = Map.get(decoded, field),
+        is_binary(value) or is_boolean(value) or is_number(value),
+        into: %{} do
+      {field, value |> to_string() |> String.slice(0, 80)}
+    end
+  end
+
+  defp bare_trace_fields(_decoded), do: %{}
 
   # Private functions
 

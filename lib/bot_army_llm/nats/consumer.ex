@@ -140,6 +140,12 @@ defmodule BotArmyLlm.NATS.Consumer do
       type: :request_reply,
       description: "Triage queue: mode (cloud|triage), depth by lane, oldest wait, in flight"
     },
+    %{
+      subject: "llm.decide",
+      type: :request_reply,
+      description:
+        "Fast decisions via Clef: state + typed questions (choice|noul|score) -> scored answers; where local|large|cloud"
+    },
     # Cross-bot conversation protocol
     %{
       subject: "conv.request.llm.*",
@@ -296,6 +302,7 @@ defmodule BotArmyLlm.NATS.Consumer do
     "llm.capacity.resume",
     "llm.job.status",
     "llm.triage.status",
+    "llm.decide",
     "conv.request.llm.>",
     "conv.mailbox.llm",
     "conv.followup.>",
@@ -585,6 +592,11 @@ defmodule BotArmyLlm.NATS.Consumer do
     publish_reply(reply_to, job_status_response(message))
   end
 
+  # A decision can take a model load, so it answers off the consumer's process.
+  defp handle_request_reply("llm.decide", message, reply_to) do
+    spawn(fn -> publish_reply(reply_to, decide_response(message)) end)
+  end
+
   defp handle_request_reply("llm.triage.status", message, reply_to) do
     publish_reply(reply_to, triage_status_response(message))
   end
@@ -755,6 +767,72 @@ defmodule BotArmyLlm.NATS.Consumer do
     Logger.debug("Publishing queue status response")
     publish_reply(reply_to, response)
   end
+
+  @doc """
+  The `llm.decide` answer: Clef's scored answers with `"ok": true`, or `"ok": false` and an
+  `error` with a `code` (`invalid_request`, `model_not_configured`, `circuit_open`, `clef_http`,
+  `unreachable`, `bad_answer`, `crashed`) that never carries the request's state.
+
+  Reads the caller's fields from `"payload"` when the request arrives in an envelope.
+  `decide` is injectable so each answer is assertable without a model.
+  """
+  @spec decide_response(map(), (map() -> {:ok, map()} | {:error, term()})) :: map()
+  def decide_response(message, decide \\ &BotArmyLlm.Clef.decide/1) do
+    request =
+      case message do
+        %{"payload" => %{} = inner} -> inner
+        other -> other
+      end
+
+    payload =
+      try do
+        case decide.(request) do
+          {:ok, reply} -> Map.put(reply, "ok", true)
+          {:error, reason} -> %{"ok" => false, "error" => decide_error(reason)}
+        end
+      rescue
+        e ->
+          %{
+            "ok" => false,
+            "error" => %{
+              "code" => "crashed",
+              "detail" => Exception.message(e) |> String.slice(0, 200)
+            }
+          }
+      end
+
+    capacity_response("llm.decide.response", payload, message)
+  end
+
+  defp decide_error({:invalid_request, msg}), do: %{"code" => "invalid_request", "detail" => msg}
+
+  defp decide_error({:model_not_configured, {:clef, where}}),
+    do: %{
+      "code" => "model_not_configured",
+      "detail" => "no Clef model configured for where=#{where}"
+    }
+
+  defp decide_error({:unknown_node, node}),
+    do: %{"code" => "unknown_node", "detail" => "no URL for node #{node}"}
+
+  defp decide_error({:circuit_open, breaker, retry_after_ms}),
+    do: %{
+      "code" => "circuit_open",
+      "detail" => "#{breaker} breaker open",
+      "retry_after_ms" => retry_after_ms
+    }
+
+  defp decide_error({:clef_http, status, detail}),
+    do: %{"code" => "clef_http", "status" => status, "detail" => detail}
+
+  defp decide_error({:clef_unreachable, reason}),
+    do: %{"code" => "unreachable", "detail" => inspect(reason)}
+
+  defp decide_error(:clef_bad_answer),
+    do: %{"code" => "bad_answer", "detail" => "Clef's reply had no answers"}
+
+  defp decide_error(other),
+    do: %{"code" => "error", "detail" => inspect(other) |> String.slice(0, 200)}
 
   @doc """
   The `llm.triage.status` answer: whether triage is on, whether its queue is running,

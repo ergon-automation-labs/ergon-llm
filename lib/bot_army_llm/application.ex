@@ -35,6 +35,10 @@ defmodule BotArmyLlm.Application do
         {BotArmyLlm.CircuitBreaker, :blackbox},
         {BotArmyLlm.CircuitBreaker, :openrouter},
         {BotArmyLlm.CircuitBreaker, :anthropic},
+        # Clef decision models (llm.decide), one breaker per where
+        {BotArmyLlm.CircuitBreaker, :clef_local},
+        {BotArmyLlm.CircuitBreaker, :clef_large},
+        {BotArmyLlm.CircuitBreaker, :clef_cloud},
 
         # Note: BotArmyLibraryRuntime.NATS.Connection is started by BotArmyLibraryRuntime.Application supervisor.
         # Do not start it here - it's already managed by the runtime library.

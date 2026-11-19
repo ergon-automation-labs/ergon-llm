@@ -545,7 +545,9 @@ defmodule BotArmyLlm.LlmClient do
   # A node-queue refusal is not a broken provider: the provider is healthy, the
   # node is *busy*. Saying so keeps the cause reachable from the log line, where
   # a bare `:queue_timeout` looks like a timeout against the model.
-  defp busy_or(reason) when reason in [:queue_full, :queue_timeout], do: {:ollama_node_busy, reason}
+  defp busy_or(reason) when reason in [:queue_full, :queue_timeout],
+    do: {:ollama_node_busy, reason}
+
   defp busy_or(reason), do: reason
 
   # Chain traversal
@@ -593,7 +595,7 @@ defmodule BotArmyLlm.LlmClient do
             do: requested_model,
             else: default_model
 
-        case ollama_call(url, model, text) do
+        case ollama_call(url, model, text, opts) do
           {:ok, completion} -> {:ok, %{completion: completion, model_used: model}}
           {:error, reason} -> {:error, busy_or(reason)}
         end
@@ -619,7 +621,10 @@ defmodule BotArmyLlm.LlmClient do
     api_key = BotArmyLibraryRuntime.ConfigLoader.get("OPENROUTER_API_KEY")
 
     base_url =
-      BotArmyLlm.Config.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1/chat/completions")
+      BotArmyLlm.Config.get(
+        "OPENROUTER_BASE_URL",
+        "https://openrouter.ai/api/v1/chat/completions"
+      )
 
     model = cloud_model(:openrouter, complexity)
 
@@ -715,14 +720,32 @@ defmodule BotArmyLlm.LlmClient do
     end
   end
 
-  defp ollama_call(url, model, text) do
+  defp ollama_call(url, model, text, opts) do
     queued(url, fn ->
       if OllamaWireFormat.wire_format() == :openai do
-        ollama_call_openai(url, model, text)
+        ollama_call_openai(url, model, text, opts)
       else
-        ollama_call_native(url, model, text)
+        ollama_call_native(url, model, text, opts)
       end
     end)
+  end
+
+  # Reasoning models (qwen3.5 and kin) spend a small token budget on hidden thinking and
+  # answer with an empty `content`. A caller that wants a short direct answer sends
+  # `think: false`; absent means the model's own default.
+  @doc false
+  def think_fields(opts, :native) do
+    case Keyword.get(opts, :think) do
+      value when is_boolean(value) -> %{"think" => value}
+      _ -> %{}
+    end
+  end
+
+  def think_fields(opts, :openai) do
+    case Keyword.get(opts, :think) do
+      false -> %{"reasoning_effort" => "none"}
+      _ -> %{}
+    end
   end
 
   # One generation at a time per node (see BotArmyLlm.NodeQueue). Wrapping the
@@ -734,17 +757,22 @@ defmodule BotArmyLlm.LlmClient do
     BotArmyLlm.NodeQueue.run(url, BotArmyLlm.NodeQueue.queued_label(), fun)
   end
 
-  defp ollama_call_native(url, model, text) do
+  defp ollama_call_native(url, model, text, opts) do
     endpoint = "#{url}/api/chat"
     headers = [{"Content-Type", "application/json"}]
     timeout_ms = ollama_timeout_ms()
 
     payload =
-      Jason.encode!(%{
-        "model" => model,
-        "messages" => [%{"role" => "user", "content" => text}],
-        "stream" => false
-      })
+      Jason.encode!(
+        Map.merge(
+          %{
+            "model" => model,
+            "messages" => [%{"role" => "user", "content" => text}],
+            "stream" => false
+          },
+          think_fields(opts, :native)
+        )
+      )
 
     case HTTPoison.post(endpoint, payload, headers, recv_timeout: timeout_ms, timeout: timeout_ms) do
       {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
@@ -765,17 +793,22 @@ defmodule BotArmyLlm.LlmClient do
     _ -> {:error, :request_failed}
   end
 
-  defp ollama_call_openai(url, model, text) do
+  defp ollama_call_openai(url, model, text, opts) do
     endpoint = "#{OllamaWireFormat.chat_url()}/v1/chat/completions"
     headers = [{"Content-Type", "application/json"}]
     timeout_ms = ollama_timeout_ms()
 
     payload =
-      Jason.encode!(%{
-        "model" => model,
-        "messages" => [%{"role" => "user", "content" => text}],
-        "stream" => false
-      })
+      Jason.encode!(
+        Map.merge(
+          %{
+            "model" => model,
+            "messages" => [%{"role" => "user", "content" => text}],
+            "stream" => false
+          },
+          think_fields(opts, :openai)
+        )
+      )
 
     case HTTPoison.post(endpoint, payload, headers, recv_timeout: timeout_ms, timeout: timeout_ms) do
       {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
@@ -790,7 +823,7 @@ defmodule BotArmyLlm.LlmClient do
       result ->
         if HttpFallback.down?(result) do
           Logger.warning("[headroom-down] ollama chat fell back to native direct")
-          ollama_call_native(url, model, text)
+          ollama_call_native(url, model, text, opts)
         else
           case result do
             {:ok, %HTTPoison.Response{status_code: status}} -> {:error, {:http_error, status}}
@@ -998,7 +1031,10 @@ defmodule BotArmyLlm.LlmClient do
     api_key = BotArmyLibraryRuntime.ConfigLoader.get("OPENROUTER_API_KEY")
 
     base_url =
-      BotArmyLlm.Config.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1/chat/completions")
+      BotArmyLlm.Config.get(
+        "OPENROUTER_BASE_URL",
+        "https://openrouter.ai/api/v1/chat/completions"
+      )
 
     model = cloud_model(:openrouter, complexity)
     extra_headers = [{"HTTP-Referer", "https://github.com/ergon-automation-labs"}]

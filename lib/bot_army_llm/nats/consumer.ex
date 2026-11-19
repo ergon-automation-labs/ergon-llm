@@ -1095,6 +1095,7 @@ defmodule BotArmyLlm.NATS.Consumer do
       end
     end)
     |> put_model_type(message)
+    |> put_think(message)
   end
 
   defp resolve_routing_option(:ollama_node, value) do
@@ -1165,6 +1166,15 @@ defmodule BotArmyLlm.NATS.Consumer do
 
             opts
         end
+    end
+  end
+
+  # `think` is Ollama's switch for hidden reasoning. Only a real boolean is passed on;
+  # anything else leaves the model's own default alone.
+  defp put_think(opts, message) do
+    case Map.get(message, "think") do
+      value when is_boolean(value) -> Keyword.put(opts, :think, value)
+      _ -> opts
     end
   end
 

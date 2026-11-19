@@ -135,6 +135,11 @@ defmodule BotArmyLlm.NATS.Consumer do
       type: :request_reply,
       description: "Poll a backgrounded (async) chat job by job_id"
     },
+    %{
+      subject: "llm.triage.status",
+      type: :request_reply,
+      description: "Triage queue: mode (cloud|triage), depth by lane, oldest wait, in flight"
+    },
     # Cross-bot conversation protocol
     %{
       subject: "conv.request.llm.*",
@@ -290,6 +295,7 @@ defmodule BotArmyLlm.NATS.Consumer do
     "llm.capacity.pause",
     "llm.capacity.resume",
     "llm.job.status",
+    "llm.triage.status",
     "conv.request.llm.>",
     "conv.mailbox.llm",
     "conv.followup.>",
@@ -579,6 +585,10 @@ defmodule BotArmyLlm.NATS.Consumer do
     publish_reply(reply_to, job_status_response(message))
   end
 
+  defp handle_request_reply("llm.triage.status", message, reply_to) do
+    publish_reply(reply_to, triage_status_response(message))
+  end
+
   defp handle_request_reply("llm.army.opinion.vote", message, reply_to) do
     vote = ArmyOpinionVote.build_reply(:llm, message)
     publish_reply(reply_to, vote)
@@ -745,6 +755,43 @@ defmodule BotArmyLlm.NATS.Consumer do
     Logger.debug("Publishing queue status response")
     publish_reply(reply_to, response)
   end
+
+  @doc """
+  The `llm.triage.status` answer: whether triage is on, whether its queue is running,
+  and the queue's own summary (mode, depth by lane, oldest wait, in flight, totals).
+
+  Triage that is enabled but whose queue is not running answers `running: false`
+  rather than crashing, so a stopped queue reads as stopped and not as a dead door.
+  `status_fun` is injectable so the shape is assertable without a running queue.
+  """
+  @spec triage_status_response(map(), (-> map() | nil)) :: map()
+  def triage_status_response(message, status_fun \\ &live_triage_status/0) do
+    payload =
+      case status_fun.() do
+        summary when is_map(summary) ->
+          summary
+          |> Map.new(fn {k, v} -> {to_string(k), triage_value(v)} end)
+          |> Map.merge(%{"enabled" => BotArmyLlm.TriageAdmission.enabled?(), "running" => true})
+
+        nil ->
+          %{"enabled" => BotArmyLlm.TriageAdmission.enabled?(), "running" => false}
+      end
+
+    capacity_response("llm.triage.status.response", payload, message)
+  end
+
+  defp live_triage_status do
+    if Process.whereis(BotArmyLlm.TriageQueue) do
+      try do
+        BotArmyLlm.TriageQueue.status()
+      catch
+        :exit, _ -> nil
+      end
+    end
+  end
+
+  defp triage_value(v) when is_atom(v) and not is_boolean(v) and not is_nil(v), do: to_string(v)
+  defp triage_value(v), do: v
 
   defp handle_capacity_status(message, reply_to) do
     publish_reply(

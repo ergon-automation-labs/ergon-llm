@@ -816,7 +816,11 @@ defmodule BotArmyLlm.NATS.Consumer do
     # drops every routing opt — and still answers, which looks like a content
     # problem rather than a plumbing one. The bridge survives this only because it
     # duplicates its fields top-level; nesting correctly must not be a penalty.
-    payload = message |> chat_payload() |> Map.put("_caller", caller_label(message, subject))
+    payload =
+      message
+      |> chat_payload()
+      |> Map.put("_caller", caller_label(message, subject))
+      |> put_caller_bot(message)
 
     cond do
       async_requested?(payload) ->
@@ -1196,6 +1200,8 @@ defmodule BotArmyLlm.NATS.Consumer do
     |> put_source(message)
     |> put_caller(message)
     |> put_uncensored_tier(message)
+    |> put_provider(message)
+    |> put_route(message)
   end
 
   defp resolve_routing_option(:ollama_node, value) do
@@ -1361,6 +1367,69 @@ defmodule BotArmyLlm.NATS.Consumer do
             opts
         end
     end
+  end
+
+  # The bot name a route is looked up by: the stamped `x-source-bot` header, else the envelope's own
+  # `source`. Stamped over any caller-supplied value, like the caller label, and dropped when unknown.
+  defp put_caller_bot(payload, message) do
+    sender = Process.get(:llm_sender)
+
+    bot =
+      cond do
+        is_map(sender) and is_binary(sender[:bot]) -> sender[:bot]
+        is_map(message) and is_map_key(message, "event_id") -> label_part(message["source"])
+        true -> nil
+      end
+
+    if is_binary(bot) and bot != "?",
+      do: Map.put(payload, "_caller_bot", bot),
+      else: Map.delete(payload, "_caller_bot")
+  end
+
+  # `provider` names where the request runs: one provider, or an ordered list. See BotArmyLlm.ProviderPin.
+  # An unknown name is carried as a refusal, not dropped: a typo'd provider silently walking the default
+  # chain is a routing change nobody asked for.
+  defp put_provider(opts, message) do
+    case Map.get(message, "provider") do
+      nil ->
+        opts
+
+      value ->
+        case BotArmyLlm.ProviderPin.parse(value) do
+          {:ok, providers} -> Keyword.put(opts, :providers, providers)
+          :error -> Keyword.put(opts, :providers, {:invalid, value})
+        end
+    end
+  end
+
+  # The calling bot's route (`llm:routes`) fills in what the request did not say. It never overrides a field
+  # the request set, and applies nothing to a caller with no route.
+  defp put_route(opts, message) do
+    route = BotArmyLlm.ProviderPin.route_for(Map.get(message, "_caller_bot"))
+
+    Enum.reduce(route, opts, fn
+      {"provider", value}, acc ->
+        if Keyword.has_key?(acc, :providers) or Keyword.has_key?(acc, :source),
+          do: acc,
+          else: put_provider(acc, %{"provider" => value})
+
+      {"model", value}, acc when is_binary(value) ->
+        if Keyword.has_key?(acc, :model), do: acc, else: Keyword.put(acc, :model, value)
+
+      {"model_type", value}, acc ->
+        if Keyword.has_key?(acc, :model_type),
+          do: acc,
+          else: put_model_type(acc, %{"model_type" => value})
+
+      {"uncensored_tier", value}, acc ->
+        if Keyword.has_key?(acc, :uncensored_tier),
+          do: acc,
+          else:
+            put_uncensored_tier(acc, %{"model_type" => "uncensored", "uncensored_tier" => value})
+
+      _other, acc ->
+        acc
+    end)
   end
 
   # `think` is Ollama's switch for hidden reasoning. Only a real boolean is passed on;

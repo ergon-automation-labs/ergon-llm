@@ -491,8 +491,13 @@ defmodule BotArmyLlm.LlmClient do
   # A caller that names `source: :local_ollama` gets that provider and no other: the
   # source is a promise about where the request runs, so it never widens to a chain.
   defp apply_source(providers, opts) do
-    if Keyword.get(opts, :source) == :local_ollama, do: [:local_ollama], else: providers
+    providers =
+      if Keyword.get(opts, :source) == :local_ollama, do: [:local_ollama], else: providers
+
+    BotArmyLlm.ProviderPin.resolve(providers, opts)
   end
+
+  defp drop_failed_providers({:error, _} = refused, _opts), do: refused
 
   defp drop_failed_providers(providers, opts) when is_list(providers) do
     skip = failed_provider_skip_set(opts)
@@ -559,6 +564,8 @@ defmodule BotArmyLlm.LlmClient do
   defp busy_or(reason), do: reason
 
   # Chain traversal
+
+  defp try_providers({:error, _reason} = refused, _text, _complexity, _opts), do: refused
 
   defp try_providers([], _text, _complexity, _opts) do
     {:error, :no_providers_available}
@@ -651,7 +658,9 @@ defmodule BotArmyLlm.LlmClient do
   defp call_provider(:blackbox, text, complexity, opts) do
     api_key = BotArmyLlm.Config.get("BLACKBOX_API_KEY")
     base_url = BotArmyLlm.Config.get("BLACKBOX_BASE_URL", "https://api.blackbox.ai/api/chat")
-    model = cloud_model(:blackbox, complexity)
+
+    model =
+      BotArmyLlm.ProviderPin.model_for(:blackbox, opts) || cloud_model(:blackbox, complexity)
 
     case {api_key, model} do
       {nil, _} -> {:error, :provider_not_configured}
@@ -669,7 +678,8 @@ defmodule BotArmyLlm.LlmClient do
         "https://openrouter.ai/api/v1/chat/completions"
       )
 
-    model = cloud_model(:openrouter, complexity)
+    model =
+      BotArmyLlm.ProviderPin.model_for(:openrouter, opts) || cloud_model(:openrouter, complexity)
 
     # OpenRouter requires HTTP-Referer header
     extra_headers = [{"HTTP-Referer", "https://github.com/ergon-automation-labs"}]
@@ -696,7 +706,9 @@ defmodule BotArmyLlm.LlmClient do
 
   defp call_provider(:anthropic, text, complexity, opts) do
     api_key = BotArmyLlm.Config.get("ANTHROPIC_API_KEY")
-    model = cloud_model(:anthropic, complexity)
+
+    model =
+      BotArmyLlm.ProviderPin.model_for(:anthropic, opts) || cloud_model(:anthropic, complexity)
 
     case {api_key, model} do
       {nil, _} -> {:error, :provider_not_configured}
@@ -1048,6 +1060,9 @@ defmodule BotArmyLlm.LlmClient do
 
   # Messages-based provider chain traversal (for conversations)
 
+  defp try_providers_messages({:error, _reason} = refused, _messages, _complexity, _opts),
+    do: refused
+
   defp try_providers_messages([], _messages, _complexity, _opts) do
     {:error, :no_providers_available}
   end
@@ -1124,7 +1139,9 @@ defmodule BotArmyLlm.LlmClient do
   defp call_provider_messages(:blackbox, messages, complexity, opts) do
     api_key = BotArmyLlm.Config.get("BLACKBOX_API_KEY")
     base_url = BotArmyLlm.Config.get("BLACKBOX_BASE_URL", "https://api.blackbox.ai/api/chat")
-    model = cloud_model(:blackbox, complexity)
+
+    model =
+      BotArmyLlm.ProviderPin.model_for(:blackbox, opts) || cloud_model(:blackbox, complexity)
 
     case {api_key, model} do
       {nil, _} -> {:error, :provider_not_configured}
@@ -1142,7 +1159,9 @@ defmodule BotArmyLlm.LlmClient do
         "https://openrouter.ai/api/v1/chat/completions"
       )
 
-    model = cloud_model(:openrouter, complexity)
+    model =
+      BotArmyLlm.ProviderPin.model_for(:openrouter, opts) || cloud_model(:openrouter, complexity)
+
     extra_headers = [{"HTTP-Referer", "https://github.com/ergon-automation-labs"}]
 
     case {api_key, model} do
@@ -1167,7 +1186,9 @@ defmodule BotArmyLlm.LlmClient do
 
   defp call_provider_messages(:anthropic, messages, complexity, opts) do
     api_key = BotArmyLlm.Config.get("ANTHROPIC_API_KEY")
-    model = cloud_model(:anthropic, complexity)
+
+    model =
+      BotArmyLlm.ProviderPin.model_for(:anthropic, opts) || cloud_model(:anthropic, complexity)
 
     case {api_key, model} do
       {nil, _} -> {:error, :provider_not_configured}

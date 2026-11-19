@@ -39,7 +39,9 @@ defmodule BotArmyLlm.LocalOllamaTest do
       System.delete_env("LOCAL_OLLAMA_MODELS")
 
       assert {:error, {:model_not_configured, :local_ollama}} = LocalOllama.resolve([])
-      assert {:error, {:model_not_configured, :local_ollama}} = LocalOllama.resolve(model: "m-small")
+
+      assert {:error, {:model_not_configured, :local_ollama}} =
+               LocalOllama.resolve(model: "m-small")
     end
 
     test "unreadable config is the same as unset" do
@@ -94,12 +96,12 @@ defmodule BotArmyLlm.LocalOllamaTest do
 
   test "an unconfigured source is refused through the client and trips no breaker" do
     System.delete_env("LOCAL_OLLAMA_MODELS")
-    before = BotArmyLlm.CircuitBreaker.allow?(:local_ollama)
+    before = BotArmyLlm.CircuitBreaker.get_state(:local_ollama).failures
 
     assert {:error, {:model_not_configured, :local_ollama}} =
              BotArmyLlm.LlmClient.complete("hi", source: :local_ollama)
 
-    assert BotArmyLlm.CircuitBreaker.allow?(:local_ollama) == before
+    assert BotArmyLlm.CircuitBreaker.get_state(:local_ollama).failures == before
   end
 
   test "the lane is local" do
@@ -108,12 +110,12 @@ defmodule BotArmyLlm.LocalOllamaTest do
 
   describe "the provider, through the client" do
     test "a model off the allowlist is refused and does not trip any breaker" do
-      before = BotArmyLlm.CircuitBreaker.allow?(:local_ollama)
+      before = BotArmyLlm.CircuitBreaker.get_state(:local_ollama).failures
 
       assert {:error, {:model_not_allowed, "gemma3:1b", _}} =
                BotArmyLlm.LlmClient.complete("hi", source: :local_ollama, model: "gemma3:1b")
 
-      assert BotArmyLlm.CircuitBreaker.allow?(:local_ollama) == before
+      assert BotArmyLlm.CircuitBreaker.get_state(:local_ollama).failures == before
     end
   end
 end

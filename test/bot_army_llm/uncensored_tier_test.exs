@@ -111,11 +111,11 @@ defmodule BotArmyLlm.UncensoredTierTest do
 
   test "through the client: an unconfigured tier is refused and trips no breaker" do
     System.delete_env("OLLAMA_UNCENSORED_TIERS")
-    before = BotArmyLlm.CircuitBreaker.allow?(:ollama)
+    before = BotArmyLlm.CircuitBreaker.get_state(:ollama).failures
 
     assert {:error, {:model_not_configured, {:uncensored, :heavy}}} =
              BotArmyLlm.LlmClient.complete("hi", model_type: :uncensored, uncensored_tier: :heavy)
 
-    assert BotArmyLlm.CircuitBreaker.allow?(:ollama) == before
+    assert BotArmyLlm.CircuitBreaker.get_state(:ollama).failures == before
   end
 end

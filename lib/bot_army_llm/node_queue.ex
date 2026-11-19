@@ -87,10 +87,10 @@ defmodule BotArmyLlm.NodeQueue do
   `{:error, :queue_timeout}`, or `{:error, :paused}` — which is shaped like a
   provider error so a caller (and the provider chain) can treat it as one.
   """
-  @spec run(key(), label(), (-> result)) :: result | {:error, atom()}
+  @spec run(key(), label(), (-> result), keyword()) :: result | {:error, atom()}
         when result: term()
-  def run(key, label, fun) when is_function(fun, 0) do
-    case acquire_if_running(key, label) do
+  def run(key, label, fun, opts \\ []) when is_function(fun, 0) do
+    case acquire_if_running(key, label, opts) do
       :ok ->
         try do
           fun.()
@@ -110,9 +110,9 @@ defmodule BotArmyLlm.NodeQueue do
   `{:error, :paused}` — so a caller may block on it forever without hanging on
   an answer that will never come.
   """
-  @spec acquire(key(), label()) :: :ok | {:error, atom()}
-  def acquire(key, label \\ nil) do
-    GenServer.call(server(), {:acquire, key_for(key), label}, :infinity)
+  @spec acquire(key(), label(), keyword()) :: :ok | {:error, atom()}
+  def acquire(key, label \\ nil, opts \\ []) do
+    GenServer.call(server(), {:acquire, key_for(key), label, opts[:max_waiting]}, :infinity)
   end
 
   @doc "Gives back the slot taken by `acquire/2` on `key`."
@@ -219,7 +219,11 @@ defmodule BotArmyLlm.NodeQueue do
 
   @impl true
   def handle_call({:acquire, key, label}, from, state) do
-    admit(key, from, label, state)
+    admit(key, from, label, state.max_waiting, state)
+  end
+
+  def handle_call({:acquire, key, label, max_waiting}, from, state) do
+    admit(key, from, label, wait_limit(max_waiting, state), state)
   end
 
   def handle_call(:status, _from, state) do
@@ -288,12 +292,19 @@ defmodule BotArmyLlm.NodeQueue do
 
   # The bot must keep serving if the guard is missing, so an absent queue means
   # "go ahead" rather than an exception on the generation path.
-  defp acquire_if_running(key, label) do
+  defp acquire_if_running(key, label, opts) do
     case Process.whereis(server()) do
       nil -> :ok
-      _pid -> acquire(key, label)
+      _pid -> acquire(key, label, opts)
     end
   end
+
+  # A caller that polls an async job can afford a deeper line than the env default,
+  # never a shallower one.
+  defp wait_limit(requested, state) when is_integer(requested) and requested > state.max_waiting,
+    do: requested
+
+  defp wait_limit(_requested, state), do: state.max_waiting
 
   # The gate is a singleton in production and an injectable *name* in tests, the
   # same seam this bot uses for its health checker and rotator.
@@ -301,7 +312,7 @@ defmodule BotArmyLlm.NodeQueue do
     Application.get_env(:bot_army_llm, :node_queue_server, __MODULE__)
   end
 
-  defp admit(key, from, label, state) do
+  defp admit(key, from, label, max_waiting, state) do
     node = node(state, key)
     {pid, _tag} = from
 
@@ -312,7 +323,7 @@ defmodule BotArmyLlm.NodeQueue do
       map_size(node.holders) < state.max_concurrency ->
         {:reply, :ok, put_node(state, key, add_holder(node, pid, label))}
 
-      length(node.waiting) < state.max_waiting ->
+      length(node.waiting) < max_waiting ->
         {:noreply, put_node(state, key, enqueue(node, key, from, label, state))}
 
       true ->

@@ -1096,6 +1096,7 @@ defmodule BotArmyLlm.NATS.Consumer do
     end)
     |> put_model_type(message)
     |> put_think(message)
+    |> put_source(message)
   end
 
   defp resolve_routing_option(:ollama_node, value) do
@@ -1166,6 +1167,32 @@ defmodule BotArmyLlm.NATS.Consumer do
 
             opts
         end
+    end
+  end
+
+  # `source: "local_ollama"` asks for the local-only source (see BotArmyLlm.LocalOllama). It is a
+  # closed allowlist like model_type; an unknown source is dropped with a warning rather than
+  # minting an atom or quietly routing somewhere the caller did not ask for. `timeout_ms` only
+  # means something to that source, so it rides along only with it.
+  defp put_source(opts, message) do
+    case message |> Map.get("source") |> trimmed_string() do
+      nil ->
+        opts
+
+      "local_ollama" ->
+        opts = Keyword.put(opts, :source, :local_ollama)
+
+        case Map.get(message, "timeout_ms") do
+          value when is_integer(value) and value > 0 -> Keyword.put(opts, :timeout_ms, value)
+          _ -> opts
+        end
+
+      unknown ->
+        Logger.warning(
+          "llm.request.chat: ignoring unknown source #{inspect(unknown)} (allowed: local_ollama)"
+        )
+
+        opts
     end
   end
 

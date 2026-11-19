@@ -18,7 +18,7 @@ defmodule BotArmyLlm.ExecutionLane do
 
   @lanes ~w(cloud local unknown)
   @cloud_providers ~w(blackbox openrouter anthropic)
-  @local_providers ~w(ollama local_fallback deterministic_fallback)
+  @local_providers ~w(ollama local_ollama local_fallback deterministic_fallback)
   @cloud_suffixes ["-cloud", ":cloud"]
 
   @doc "Every lane this module can report."

@@ -30,6 +30,7 @@ defmodule BotArmyLlm.Application do
 
         # Circuit breakers for each LLM provider
         {BotArmyLlm.CircuitBreaker, :ollama},
+        {BotArmyLlm.CircuitBreaker, :local_ollama},
         {BotArmyLlm.CircuitBreaker, :blackbox},
         {BotArmyLlm.CircuitBreaker, :openrouter},
         {BotArmyLlm.CircuitBreaker, :anthropic},

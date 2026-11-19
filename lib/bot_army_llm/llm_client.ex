@@ -176,6 +176,7 @@ defmodule BotArmyLlm.LlmClient do
         # Local only
         [:ollama]
       end
+      |> apply_source(opts)
       |> drop_failed_providers(opts)
 
     Logger.debug(
@@ -300,6 +301,7 @@ defmodule BotArmyLlm.LlmClient do
         # Local only
         [:ollama]
       end
+      |> apply_source(opts)
       |> drop_failed_providers(opts)
 
     Logger.debug(
@@ -486,6 +488,12 @@ defmodule BotArmyLlm.LlmClient do
     end)
   end
 
+  # A caller that names `source: :local_ollama` gets that provider and no other: the
+  # source is a promise about where the request runs, so it never widens to a chain.
+  defp apply_source(providers, opts) do
+    if Keyword.get(opts, :source) == :local_ollama, do: [:local_ollama], else: providers
+  end
+
   defp drop_failed_providers(providers, opts) when is_list(providers) do
     skip = failed_provider_skip_set(opts)
 
@@ -565,6 +573,16 @@ defmodule BotArmyLlm.LlmClient do
             Logger.info("LLM provider #{provider} succeeded, model=#{result.model_used}")
             {:ok, Map.put(result, :provider, provider)}
 
+          {:error, {:model_not_allowed, _, _} = reason} ->
+            {:error, reason}
+
+          {:error, {:model_not_configured, :local_ollama} = reason} ->
+            {:error, reason}
+
+          {:error, {:ollama_node_busy, _} = reason} when provider == :local_ollama ->
+            Logger.warning("Provider #{provider} busy: #{inspect(reason)}")
+            {:error, reason}
+
           {:error, :rate_limited} ->
             BotArmyLlm.CircuitBreaker.record_failure(provider, :rate_limited)
             Logger.warning("Provider #{provider} rate limited, trying next")
@@ -583,6 +601,29 @@ defmodule BotArmyLlm.LlmClient do
   end
 
   # Provider implementations
+
+  # The model must be on the allowlist; its node comes from the allowlist too, so a
+  # caller cannot aim a model at a node that does not hold it.
+  defp local_ollama_target(opts) do
+    with {:ok, resolved} <- BotArmyLlm.LocalOllama.resolve(opts),
+         opts = opts |> Keyword.put(:timeout_ms, resolved.timeout_ms) |> Keyword.put(:ollama_node, resolved.node),
+         {:ok, {url, _default_model}} <- best_ollama_node_for(:light, opts) do
+      {:ok, %{url: url, model: resolved.model}, opts}
+    else
+      {:error, {:model_not_allowed, _, _} = reason} -> {:error, reason}
+      {:error, {:model_not_configured, :local_ollama} = reason} -> {:error, reason}
+      {:error, reason} -> {:error, {:ollama_unavailable, reason}}
+    end
+  end
+
+  defp call_provider(:local_ollama, text, _complexity, opts) do
+    with {:ok, target, opts} <- local_ollama_target(opts),
+         {:ok, completion} <- ollama_call(target.url, target.model, text, opts) do
+      {:ok, %{completion: completion, model_used: target.model}}
+    else
+      {:error, reason} -> {:error, busy_or(reason)}
+    end
+  end
 
   defp call_provider(:ollama, text, complexity, opts) do
     # Use model from opts if provided, otherwise let health checker decide
@@ -707,8 +748,14 @@ defmodule BotArmyLlm.LlmClient do
 
   # HTTP implementations
 
-  defp ollama_timeout_ms do
-    parse_timeout_ms(BotArmyLibraryRuntime.ConfigLoader.get("OLLAMA_TIMEOUT_MS"), 15_000)
+  defp ollama_timeout_ms(opts \\ []) do
+    case Keyword.get(opts, :timeout_ms) do
+      value when is_integer(value) and value > 0 ->
+        value
+
+      _ ->
+        parse_timeout_ms(BotArmyLibraryRuntime.ConfigLoader.get("OLLAMA_TIMEOUT_MS"), 15_000)
+    end
   end
 
   defp parse_timeout_ms(nil, default), do: default
@@ -721,13 +768,17 @@ defmodule BotArmyLlm.LlmClient do
   end
 
   defp ollama_call(url, model, text, opts) do
-    queued(url, fn ->
-      if OllamaWireFormat.wire_format() == :openai do
-        ollama_call_openai(url, model, text, opts)
-      else
-        ollama_call_native(url, model, text, opts)
-      end
-    end)
+    queued(
+      url,
+      fn ->
+        if OllamaWireFormat.wire_format() == :openai do
+          ollama_call_openai(url, model, text, opts)
+        else
+          ollama_call_native(url, model, text, opts)
+        end
+      end,
+      opts
+    )
   end
 
   # Reasoning models (qwen3.5 and kin) spend a small token budget on hidden thinking and
@@ -753,14 +804,19 @@ defmodule BotArmyLlm.LlmClient do
   # generation is gated, whichever wire format is configured and whichever lane
   # asked. A refusal comes back shaped like a provider error, so a cloud-eligible
   # job still falls through to a cloud provider and a local-only job refuses.
-  defp queued(url, fun) do
-    BotArmyLlm.NodeQueue.run(url, BotArmyLlm.NodeQueue.queued_label(), fun)
+  defp queued(url, fun, opts) do
+    queue_opts =
+      if Keyword.get(opts, :source) == :local_ollama,
+        do: [max_waiting: BotArmyLlm.LocalOllama.max_waiting()],
+        else: []
+
+    BotArmyLlm.NodeQueue.run(url, BotArmyLlm.NodeQueue.queued_label(), fun, queue_opts)
   end
 
   defp ollama_call_native(url, model, text, opts) do
     endpoint = "#{url}/api/chat"
     headers = [{"Content-Type", "application/json"}]
-    timeout_ms = ollama_timeout_ms()
+    timeout_ms = ollama_timeout_ms(opts)
 
     payload =
       Jason.encode!(
@@ -796,7 +852,7 @@ defmodule BotArmyLlm.LlmClient do
   defp ollama_call_openai(url, model, text, opts) do
     endpoint = "#{OllamaWireFormat.chat_url()}/v1/chat/completions"
     headers = [{"Content-Type", "application/json"}]
-    timeout_ms = ollama_timeout_ms()
+    timeout_ms = ollama_timeout_ms(opts)
 
     payload =
       Jason.encode!(
@@ -971,6 +1027,16 @@ defmodule BotArmyLlm.LlmClient do
 
             {:ok, Map.put(result, :provider, provider)}
 
+          {:error, {:model_not_allowed, _, _} = reason} ->
+            {:error, reason}
+
+          {:error, {:model_not_configured, :local_ollama} = reason} ->
+            {:error, reason}
+
+          {:error, {:ollama_node_busy, _} = reason} when provider == :local_ollama ->
+            Logger.warning("Provider #{provider} busy: #{inspect(reason)}")
+            {:error, reason}
+
           {:error, :rate_limited} ->
             BotArmyLlm.CircuitBreaker.record_failure(provider, :rate_limited)
             Logger.warning("Provider #{provider} rate limited (messages), trying next")
@@ -989,6 +1055,15 @@ defmodule BotArmyLlm.LlmClient do
       {:open, retry_after} ->
         Logger.warning("Circuit open for #{provider} (messages), retry after #{retry_after}ms")
         try_providers_messages(rest, messages, complexity, opts)
+    end
+  end
+
+  defp call_provider_messages(:local_ollama, messages, _complexity, opts) do
+    with {:ok, target, opts} <- local_ollama_target(opts),
+         {:ok, completion} <- ollama_call_messages(target.url, target.model, messages, opts) do
+      {:ok, %{completion: completion, model_used: target.model}}
+    else
+      {:error, reason} -> {:error, busy_or(reason)}
     end
   end
 
@@ -1074,20 +1149,24 @@ defmodule BotArmyLlm.LlmClient do
     {:error, :unknown_provider}
   end
 
-  defp ollama_call_messages(url, model, messages) do
-    queued(url, fn ->
-      if OllamaWireFormat.wire_format() == :openai do
-        ollama_call_messages_openai(url, model, messages)
-      else
-        ollama_call_messages_native(url, model, messages)
-      end
-    end)
+  defp ollama_call_messages(url, model, messages, opts \\ []) do
+    queued(
+      url,
+      fn ->
+        if OllamaWireFormat.wire_format() == :openai do
+          ollama_call_messages_openai(url, model, messages, opts)
+        else
+          ollama_call_messages_native(url, model, messages, opts)
+        end
+      end,
+      opts
+    )
   end
 
-  defp ollama_call_messages_native(url, model, messages) do
+  defp ollama_call_messages_native(url, model, messages, opts) do
     endpoint = "#{url}/api/chat"
     headers = [{"Content-Type", "application/json"}]
-    timeout_ms = ollama_timeout_ms()
+    timeout_ms = ollama_timeout_ms(opts)
 
     payload =
       Jason.encode!(%{
@@ -1115,10 +1194,10 @@ defmodule BotArmyLlm.LlmClient do
     _ -> {:error, :request_failed}
   end
 
-  defp ollama_call_messages_openai(url, model, messages) do
+  defp ollama_call_messages_openai(url, model, messages, opts) do
     endpoint = "#{OllamaWireFormat.chat_url()}/v1/chat/completions"
     headers = [{"Content-Type", "application/json"}]
-    timeout_ms = ollama_timeout_ms()
+    timeout_ms = ollama_timeout_ms(opts)
 
     payload =
       Jason.encode!(%{
@@ -1140,7 +1219,7 @@ defmodule BotArmyLlm.LlmClient do
       result ->
         if HttpFallback.down?(result) do
           Logger.warning("[headroom-down] ollama chat fell back to native direct")
-          ollama_call_messages_native(url, model, messages)
+          ollama_call_messages_native(url, model, messages, opts)
         else
           case result do
             {:ok, %HTTPoison.Response{status_code: status}} -> {:error, {:http_error, status}}

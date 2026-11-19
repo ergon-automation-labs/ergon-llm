@@ -570,7 +570,11 @@ defmodule BotArmyLlm.LlmClient do
         case call_provider(provider, text, complexity, opts) do
           {:ok, result} ->
             BotArmyLlm.CircuitBreaker.record_success(provider)
-            Logger.info("LLM provider #{provider} succeeded, model=#{result.model_used}")
+
+            Logger.info(
+              "LLM provider #{provider} succeeded, model=#{result.model_used}#{caller_tag(opts)}"
+            )
+
             {:ok, Map.put(result, :provider, provider)}
 
           {:error, {:model_not_allowed, _, _} = reason} ->
@@ -580,22 +584,29 @@ defmodule BotArmyLlm.LlmClient do
             {:error, reason}
 
           {:error, {:ollama_node_busy, _} = reason} when provider == :local_ollama ->
-            Logger.warning("Provider #{provider} busy: #{inspect(reason)}")
+            Logger.warning("Provider #{provider} busy: #{inspect(reason)}#{caller_tag(opts)}")
             {:error, reason}
 
           {:error, :rate_limited} ->
             BotArmyLlm.CircuitBreaker.record_failure(provider, :rate_limited)
-            Logger.warning("Provider #{provider} rate limited, trying next")
+            Logger.warning("Provider #{provider} rate limited, trying next#{caller_tag(opts)}")
             try_providers(rest, text, complexity, opts)
 
           {:error, reason} ->
             BotArmyLlm.CircuitBreaker.record_failure(provider, reason)
-            Logger.warning("Provider #{provider} failed: #{inspect(reason)}, trying next")
+
+            Logger.warning(
+              "Provider #{provider} failed: #{inspect(reason)}, trying next#{caller_tag(opts)}"
+            )
+
             try_providers(rest, text, complexity, opts)
         end
 
       {:open, retry_after} ->
-        Logger.warning("Circuit open for #{provider}, retry after #{retry_after}ms")
+        Logger.warning(
+          "Circuit open for #{provider}, retry after #{retry_after}ms#{caller_tag(opts)}"
+        )
+
         try_providers(rest, text, complexity, opts)
     end
   end
@@ -606,7 +617,10 @@ defmodule BotArmyLlm.LlmClient do
   # caller cannot aim a model at a node that does not hold it.
   defp local_ollama_target(opts) do
     with {:ok, resolved} <- BotArmyLlm.LocalOllama.resolve(opts),
-         opts = opts |> Keyword.put(:timeout_ms, resolved.timeout_ms) |> Keyword.put(:ollama_node, resolved.node),
+         opts =
+           opts
+           |> Keyword.put(:timeout_ms, resolved.timeout_ms)
+           |> Keyword.put(:ollama_node, resolved.node),
          {:ok, {url, _default_model}} <- best_ollama_node_for(:light, opts) do
       {:ok, %{url: url, model: resolved.model}, opts}
     else
@@ -747,6 +761,14 @@ defmodule BotArmyLlm.LlmClient do
       BotArmyLibraryRuntime.ConfigLoader.get("ANTHROPIC_MODEL_HEAVY", "claude-3-5-sonnet-latest")
 
   # HTTP implementations
+
+  # Who asked, for the log lines that otherwise name only the provider that failed.
+  defp caller_tag(opts) do
+    case Keyword.get(opts, :caller) do
+      value when is_binary(value) and value != "" -> " caller=#{value}"
+      _ -> ""
+    end
+  end
 
   defp ollama_timeout_ms(opts \\ []) do
     case Keyword.get(opts, :timeout_ms) do
@@ -1029,7 +1051,7 @@ defmodule BotArmyLlm.LlmClient do
             BotArmyLlm.CircuitBreaker.record_success(provider)
 
             Logger.info(
-              "LLM provider #{provider} succeeded (messages), model=#{result.model_used}"
+              "LLM provider #{provider} succeeded (messages), model=#{result.model_used}#{caller_tag(opts)}"
             )
 
             {:ok, Map.put(result, :provider, provider)}
@@ -1041,26 +1063,33 @@ defmodule BotArmyLlm.LlmClient do
             {:error, reason}
 
           {:error, {:ollama_node_busy, _} = reason} when provider == :local_ollama ->
-            Logger.warning("Provider #{provider} busy: #{inspect(reason)}")
+            Logger.warning("Provider #{provider} busy: #{inspect(reason)}#{caller_tag(opts)}")
             {:error, reason}
 
           {:error, :rate_limited} ->
             BotArmyLlm.CircuitBreaker.record_failure(provider, :rate_limited)
-            Logger.warning("Provider #{provider} rate limited (messages), trying next")
+
+            Logger.warning(
+              "Provider #{provider} rate limited (messages), trying next#{caller_tag(opts)}"
+            )
+
             try_providers_messages(rest, messages, complexity, opts)
 
           {:error, reason} ->
             BotArmyLlm.CircuitBreaker.record_failure(provider, reason)
 
             Logger.warning(
-              "Provider #{provider} failed (messages): #{inspect(reason)}, trying next"
+              "Provider #{provider} failed (messages): #{inspect(reason)}, trying next#{caller_tag(opts)}"
             )
 
             try_providers_messages(rest, messages, complexity, opts)
         end
 
       {:open, retry_after} ->
-        Logger.warning("Circuit open for #{provider} (messages), retry after #{retry_after}ms")
+        Logger.warning(
+          "Circuit open for #{provider} (messages), retry after #{retry_after}ms#{caller_tag(opts)}"
+        )
+
         try_providers_messages(rest, messages, complexity, opts)
     end
   end

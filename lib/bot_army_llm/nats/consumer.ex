@@ -413,9 +413,15 @@ defmodule BotArmyLlm.NATS.Consumer do
        when not is_nil(reply_to) do
     Logger.debug("Processing request/reply on #{topic}, reply_to: #{reply_to}")
 
-    decoded = decode_message_fallback(body, topic, reply_to, Map.get(msg, :headers, []))
+    headers = Map.get(msg, :headers, [])
+    decoded = decode_message_fallback(body, topic, reply_to, headers)
+    sender = sender_from_headers(headers)
 
-    spawn(fn -> handle_request_reply(topic, decoded, reply_to) end)
+    spawn(fn ->
+      # Handed to caller_label/2 in this request's own process; the work then fans out.
+      Process.put(:llm_sender, sender)
+      handle_request_reply(topic, decoded, reply_to)
+    end)
   end
 
   defp process_message(%{body: body, topic: topic}) do
@@ -457,7 +463,8 @@ defmodule BotArmyLlm.NATS.Consumer do
   def trace_bare_request(topic, reply_to, decoded, headers, size, now_ms \\ nil) do
     now = now_ms || System.monotonic_time(:millisecond)
     fields = bare_trace_fields(decoded)
-    key = {:bare_request_trace, topic, fields["source"]}
+    sender = sender_from_headers(headers).bot
+    key = {:bare_request_trace, topic, sender, fields["source"]}
     {last, count} = Process.get(key, {nil, 0})
 
     if last == nil or now - last >= @bare_trace_ms do
@@ -474,10 +481,29 @@ defmodule BotArmyLlm.NATS.Consumer do
     :ok
   end
 
+  # The sender a bot's runtime stamped on its message: `x-source-bot` / `x-source-node`. Read here
+  # rather than through the runtime so this bot does not depend on which runtime release it was
+  # built against; an unstamped message simply has no sender.
+  @doc false
+  def sender_from_headers(headers) do
+    pairs = if is_list(headers), do: headers, else: []
+
+    find = fn name ->
+      Enum.find_value(pairs, fn
+        {^name, value} when is_binary(value) and value != "" -> value
+        _ -> nil
+      end)
+    end
+
+    %{bot: find.("x-source-bot"), node: find.("x-source-node")}
+  end
+
   @doc false
   def bare_trace_line(topic, reply_to, decoded, headers, size, fields \\ nil) do
     fields = fields || bare_trace_fields(decoded)
-    keys = if is_map(decoded), do: decoded |> Map.keys() |> Enum.sort() |> Enum.join(","), else: "-"
+
+    keys =
+      if is_map(decoded), do: decoded |> Map.keys() |> Enum.sort() |> Enum.join(","), else: "-"
 
     header_names =
       headers
@@ -492,7 +518,13 @@ defmodule BotArmyLlm.NATS.Consumer do
     inbox = reply_to |> to_string() |> String.slice(0, 14)
     shown = Enum.map_join(fields, " ", fn {k, v} -> "#{k}=#{v}" end)
 
-    "topic=#{topic} #{shown} keys=[#{keys}] headers=[#{header_names}] bytes=#{size} reply_inbox=#{inbox}"
+    from =
+      case sender_from_headers(headers) do
+        %{bot: bot} = sender when is_binary(bot) -> "#{bot}@#{label_part(sender.node)}"
+        _ -> "unstamped"
+      end
+
+    "topic=#{topic} from=#{from} #{shown} keys=[#{keys}] headers=[#{header_names}] bytes=#{size} reply_inbox=#{inbox}"
   end
 
   defp bare_trace_fields(decoded) when is_map(decoded) do
@@ -784,7 +816,7 @@ defmodule BotArmyLlm.NATS.Consumer do
     # drops every routing opt — and still answers, which looks like a content
     # problem rather than a plumbing one. The bridge survives this only because it
     # duplicates its fields top-level; nesting correctly must not be a penalty.
-    payload = chat_payload(message)
+    payload = message |> chat_payload() |> Map.put("_caller", caller_label(message, subject))
 
     cond do
       async_requested?(payload) ->
@@ -1162,6 +1194,7 @@ defmodule BotArmyLlm.NATS.Consumer do
     |> put_model_type(message)
     |> put_think(message)
     |> put_source(message)
+    |> put_caller(message)
   end
 
   defp resolve_routing_option(:ollama_node, value) do
@@ -1258,6 +1291,45 @@ defmodule BotArmyLlm.NATS.Consumer do
         )
 
         opts
+    end
+  end
+
+  @doc """
+  Who sent a chat request, as one short label for log lines.
+
+  Read from the envelope the sender wrote (`source`, `source_node`, `triggered_by`), because
+  NATS itself carries no sender identity. A body without an envelope has no `source` that
+  means "sender" (the sieve's `source` field is a routing choice), so it is labelled `bare`
+  with the subject, and the `[BareRequest]` trace says more.
+  """
+  @spec caller_label(term(), String.t()) :: String.t()
+  def caller_label(message, subject), do: caller_label(message, subject, Process.get(:llm_sender))
+
+  @doc false
+  def caller_label(message, subject, sender) do
+    case sender do
+      %{bot: bot} when is_binary(bot) -> "#{bot}@#{label_part(sender[:node])}"
+      _ -> envelope_or_bare_label(message, subject)
+    end
+  end
+
+  defp envelope_or_bare_label(%{"event_id" => _, "source_node" => node} = envelope, _subject) do
+    source = label_part(envelope["source"])
+    by = label_part(envelope["triggered_by"])
+    "#{source}@#{label_part(node)}" <> if(by == "?" or by == source, do: "", else: " via #{by}")
+  end
+
+  defp envelope_or_bare_label(_message, subject), do: "bare:#{subject}"
+
+  defp label_part(value) when is_binary(value) and value != "", do: String.slice(value, 0, 60)
+  defp label_part(_value), do: "?"
+
+  # The label rides in the payload under a reserved key and is overwritten on every request,
+  # so a caller cannot choose its own. It is a log label, never a routing input.
+  defp put_caller(opts, message) do
+    case Map.get(message, "_caller") do
+      value when is_binary(value) and value != "" -> Keyword.put(opts, :caller, value)
+      _ -> opts
     end
   end
 

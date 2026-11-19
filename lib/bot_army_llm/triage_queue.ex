@@ -80,6 +80,10 @@ defmodule BotArmyLlm.TriageQueue do
       dispatched_total: 0
     }
 
+    Logger.info(
+      "[TriageQueue] started: mode=#{state.mode} auto_mode=#{state.auto_mode} slots=#{state.slots}"
+    )
+
     schedule(state.tick_ms)
     {:ok, state}
   end

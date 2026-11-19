@@ -9,6 +9,7 @@ defmodule BotArmyLlm.Application do
   """
 
   use Application
+  require Logger
 
   @env Mix.env()
   @version Mix.Project.config()[:version]
@@ -139,6 +140,7 @@ defmodule BotArmyLlm.Application do
            ]}
         ]
     else
+      if @env != :test, do: Logger.info("[TriageQueue] disabled (TRIAGE_ENABLED is not true)")
       children
     end
   end

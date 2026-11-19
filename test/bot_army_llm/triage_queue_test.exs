@@ -23,6 +23,15 @@ defmodule BotArmyLlm.TriageQueueTest do
     Map.merge(%{id: id, lane: lane, enqueued_at: @now}, attrs)
   end
 
+  test "starting the queue says so, with its mode and slots" do
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        start(mode: :cloud, auto_mode: true, slots: 3)
+      end)
+
+    assert log =~ "[TriageQueue] started: mode=cloud auto_mode=true slots=3"
+  end
+
   test "a tick dispatches the top-ranked items up to the free slots and keeps the rest" do
     q = start()
     TriageQueue.enqueue(q, item("bg", "background"))

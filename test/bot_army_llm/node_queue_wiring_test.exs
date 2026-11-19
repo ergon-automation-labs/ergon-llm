@@ -108,6 +108,28 @@ defmodule BotArmyLlm.NodeQueueWiringTest do
     Task.shutdown(second, :brutal_kill)
   end
 
+  test "an Ollama cloud model does not take, or wait for, the local node's slot" do
+    start_queue(max_wait_ms: 5_000)
+    url = start_hanging_node()
+
+    local = Task.async(fn -> LlmClient.complete("hi") end)
+    assert wait_until(fn -> status(url).running != [] end), "the local call must hold the slot"
+
+    # Same hanging node, but the model runs in the cloud: it must go straight to the wire.
+    cloud = Task.async(fn -> LlmClient.complete("hi", model: "some-model:cloud") end)
+    Process.sleep(300)
+
+    assert length(status(url).running) == 1, "the cloud call must not take a second slot"
+    assert status(url).waiting == [], "the cloud call must not queue behind the local one"
+    assert Task.yield(cloud, 0) == nil, "it is in flight on the wire, not refused"
+
+    # Positive control: the same call with a local model name does queue.
+    queued = Task.async(fn -> LlmClient.complete("hi", model: "some-model") end)
+    assert wait_until(fn -> length(status(url).waiting) == 1 end)
+
+    for task <- [local, cloud, queued], do: Task.shutdown(task, :brutal_kill)
+  end
+
   test "a local-only job that cannot get a slot refuses instead of hanging" do
     start_queue(max_wait_ms: 100)
     url = start_hanging_node()

@@ -770,6 +770,7 @@ defmodule BotArmyLlm.LlmClient do
   defp ollama_call(url, model, text, opts) do
     queued(
       url,
+      model,
       fn ->
         if OllamaWireFormat.wire_format() == :openai do
           ollama_call_openai(url, model, text, opts)
@@ -804,13 +805,19 @@ defmodule BotArmyLlm.LlmClient do
   # generation is gated, whichever wire format is configured and whichever lane
   # asked. A refusal comes back shaped like a provider error, so a cloud-eligible
   # job still falls through to a cloud provider and a local-only job refuses.
-  defp queued(url, fun, opts) do
-    queue_opts =
-      if Keyword.get(opts, :source) == :local_ollama,
-        do: [max_waiting: BotArmyLlm.LocalOllama.max_waiting()],
-        else: []
+  defp queued(url, model, fun, opts) do
+    if BotArmyLlm.ExecutionLane.cloud_model_name?(model) do
+      # An Ollama cloud model (`:cloud` / `-cloud`) runs on someone else's hardware; the
+      # local GPU slot is not what it waits for, and holding one blocks real local work.
+      fun.()
+    else
+      queue_opts =
+        if Keyword.get(opts, :source) == :local_ollama,
+          do: [max_waiting: BotArmyLlm.LocalOllama.max_waiting()],
+          else: []
 
-    BotArmyLlm.NodeQueue.run(url, BotArmyLlm.NodeQueue.queued_label(), fun, queue_opts)
+      BotArmyLlm.NodeQueue.run(url, BotArmyLlm.NodeQueue.queued_label(), fun, queue_opts)
+    end
   end
 
   defp ollama_call_native(url, model, text, opts) do
@@ -1152,6 +1159,7 @@ defmodule BotArmyLlm.LlmClient do
   defp ollama_call_messages(url, model, messages, opts \\ []) do
     queued(
       url,
+      model,
       fn ->
         if OllamaWireFormat.wire_format() == :openai do
           ollama_call_messages_openai(url, model, messages, opts)

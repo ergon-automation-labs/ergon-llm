@@ -785,23 +785,58 @@ defmodule BotArmyLlm.NATS.Consumer do
       end
 
     payload =
-      try do
-        case decide.(request) do
-          {:ok, reply} -> Map.put(reply, "ok", true)
-          {:error, reason} -> %{"ok" => false, "error" => decide_error(reason)}
-        end
-      rescue
-        e ->
-          %{
-            "ok" => false,
-            "error" => %{
-              "code" => "crashed",
-              "detail" => Exception.message(e) |> String.slice(0, 200)
-            }
-          }
-      end
+      if BotArmyLlm.Sealed.sealed?(request),
+        do: sealed_decide(request, decide),
+        else: plain_decide(request, decide)
 
     capacity_response("llm.decide.response", payload, message)
+  end
+
+  defp plain_decide(request, decide) do
+    case decide.(request) do
+      {:ok, reply} -> Map.put(reply, "ok", true)
+      {:error, reason} -> %{"ok" => false, "error" => decide_error(reason)}
+    end
+  rescue
+    e ->
+      %{
+        "ok" => false,
+        "error" => %{
+          "code" => "crashed",
+          "detail" => Exception.message(e) |> String.slice(0, 200)
+        }
+      }
+  end
+
+  # A sealed decision: state and questions arrive sealed, the answers leave sealed, and it
+  # never runs where=cloud (that would send the state to ollama.com). Errors carry codes only.
+  defp sealed_decide(%{"sealed" => env} = request, decide) do
+    rid = request["request_id"]
+
+    with true <- (is_binary(rid) and rid != "") || {:error, :sealed_needs_request_id},
+         {:ok, inner} <- BotArmyLlm.Sealed.open(env, BotArmyLlm.Sealed.aad(:request, rid)),
+         opened = request |> Map.delete("sealed") |> Map.merge(inner),
+         true <- opened["where"] != "cloud" || {:error, :sealed_requires_local},
+         {:ok, reply} <- safe_decide(decide, opened),
+         {:ok, sealed} <-
+           BotArmyLlm.Sealed.seal(
+             Map.take(reply, ["answers"]),
+             env["kid"],
+             BotArmyLlm.Sealed.aad(:response, rid)
+           ) do
+      reply
+      |> Map.drop(["answers"])
+      |> Map.merge(%{"ok" => true, "request_id" => rid, "sealed" => sealed})
+    else
+      {:error, reason} ->
+        %{"ok" => false, "request_id" => rid, "error" => %{"code" => sealed_error_code(reason)}}
+    end
+  end
+
+  defp safe_decide(decide, request) do
+    decide.(request)
+  rescue
+    _ -> {:error, :crashed}
   end
 
   defp decide_error({:invalid_request, msg}), do: %{"code" => "invalid_request", "detail" => msg}
@@ -947,9 +982,16 @@ defmodule BotArmyLlm.NATS.Consumer do
       |> Map.put("_caller", caller_label(message, subject))
       |> put_caller_bot(message)
 
+    case prepare_chat(payload) do
+      {:ok, payload, runner} -> dispatch_chat(payload, runner, subject, reply_to)
+      {:refuse, reply} -> publish_reply(reply_to, reply)
+    end
+  end
+
+  defp dispatch_chat(payload, runner, subject, reply_to) do
     cond do
       async_requested?(payload) ->
-        publish_reply(reply_to, submit_chat_job(payload, subject))
+        publish_reply(reply_to, submit_chat_job(payload, subject, runner))
 
       BotArmyLlm.TriageAdmission.enabled?() ->
         lane = lane_for_chat_subject(subject, payload)
@@ -957,13 +999,113 @@ defmodule BotArmyLlm.NATS.Consumer do
         :ok =
           BotArmyLlm.TriageAdmission.admit(payload, lane,
             reply: fn map -> publish_reply(reply_to, map) end,
-            compute: fn -> run_chat(payload, subject) end
+            compute: fn -> runner.(payload, subject) end
           )
 
       true ->
-        spawn(fn -> publish_reply(reply_to, run_chat(payload, subject)) end)
+        spawn(fn -> publish_reply(reply_to, runner.(payload, subject)) end)
     end
   end
+
+  @doc """
+  A chat payload ready to run, and the runner to run it with.
+
+  A plain payload runs as it is. A sealed one (`"sealed"` envelope, see `BotArmyLlm.Sealed`) is
+  opened in memory, must name a `request_id`, and must run locally (`"source": "local_ollama"` or
+  `"model_type": "uncensored"`, checked after opening so the sealed fields cannot route it to a
+  cloud provider). Its runner seals the answer's `content` back and never lets the private text
+  reach a log, an error or the job store. Anything else is refused by name, before any model runs.
+  """
+  @spec prepare_chat(map(), (map(), String.t() -> map())) ::
+          {:ok, map(), (map(), String.t() -> map())} | {:refuse, map()}
+  def prepare_chat(payload, run \\ &run_chat/2) do
+    if BotArmyLlm.Sealed.sealed?(payload) do
+      case open_sealed_chat(payload) do
+        {:ok, opened, ctx} -> {:ok, opened, sealed_runner(ctx, run)}
+        {:error, reason} -> {:refuse, sealed_refusal(payload, reason)}
+      end
+    else
+      {:ok, payload, run}
+    end
+  end
+
+  @local_providers ["local_ollama", "ollama"]
+
+  defp open_sealed_chat(%{"sealed" => envelope} = payload) do
+    request_id = payload["request_id"]
+
+    with true <-
+           (is_binary(request_id) and request_id != "") || {:error, :sealed_needs_request_id},
+         {:ok, inner} <-
+           BotArmyLlm.Sealed.open(envelope, BotArmyLlm.Sealed.aad(:request, request_id)),
+         opened = payload |> Map.delete("sealed") |> Map.merge(inner),
+         :ok <- sealed_local?(opened) do
+      {:ok, opened, %{request_id: request_id, kid: envelope["kid"]}}
+    end
+  end
+
+  defp sealed_local?(p) do
+    local = p["source"] == "local_ollama" or p["model_type"] == "uncensored"
+    provider_ok = is_nil(p["provider"]) or p["provider"] in @local_providers
+
+    if local and provider_ok, do: :ok, else: {:error, :sealed_requires_local}
+  end
+
+  defp sealed_refusal(payload, reason) do
+    %{
+      "request_id" => payload["request_id"],
+      "ok" => false,
+      "error" => sealed_error_code(reason),
+      "sealed" => nil
+    }
+  end
+
+  # The tag of an error tuple is ours; whatever follows it may quote a provider, so it is dropped.
+  defp sealed_error_code(reason) when is_tuple(reason) and is_atom(elem(reason, 0)),
+    do: Atom.to_string(elem(reason, 0))
+
+  defp sealed_error_code(code) when is_atom(code), do: Atom.to_string(code)
+  defp sealed_error_code(_), do: "sealed_error"
+
+  @doc false
+  # The runner for an opened sealed request: run it, then seal what came back. It catches its
+  # own crashes so the job runner never logs an exception message that could quote the prompt.
+  def sealed_runner(ctx, run) do
+    fn payload, subject ->
+      try do
+        payload |> run.(subject) |> seal_chat_response(ctx)
+      rescue
+        _ -> sealed_failure(ctx, "crashed")
+      catch
+        kind, _ -> sealed_failure(ctx, "crashed (#{kind})")
+      end
+    end
+  end
+
+  @doc false
+  def seal_chat_response(response, %{request_id: rid, kid: kid} = ctx) when is_map(response) do
+    private = Map.take(response, ["content"])
+
+    case BotArmyLlm.Sealed.seal(private, kid, BotArmyLlm.Sealed.aad(:response, rid)) do
+      {:ok, env} ->
+        response
+        |> Map.drop(["content", "degrade_reason", "error"])
+        |> Map.merge(%{"sealed" => env, "request_id" => rid})
+        |> put_plain_error(response)
+
+      {:error, reason} ->
+        sealed_failure(ctx, sealed_error_code(reason))
+    end
+  end
+
+  # A model-path error's text can quote a provider's body; a sealed reply says only that one happened.
+  defp put_plain_error(sealed, %{"error" => _}),
+    do: Map.merge(sealed, %{"ok" => false, "error" => "model_error"})
+
+  defp put_plain_error(sealed, _), do: sealed
+
+  defp sealed_failure(%{request_id: rid}, code),
+    do: %{"request_id" => rid, "ok" => false, "error" => "sealed_" <> code, "sealed" => nil}
 
   @doc """
   Starts a chat request as a background job and returns the acceptance reply.

@@ -680,73 +680,86 @@ defmodule BotArmyLlm.NATS.Consumer do
   end
 
   defp handle_prompt_request_reply(message, reply_to, allow_cloud_when_sensitive) do
+    llm_client = Application.get_env(:bot_army_llm, :llm_client, BotArmyLlm.LlmClient)
+
+    run_prompt_door(message, allow_cloud_when_sensitive, llm_client, &publish_reply(reply_to, &1))
+  end
+
+  @doc """
+  Answers a `llm.prompt.submit` off the request's process. The caller is stamped *here*, before
+  the spawn: the sender rides in the request process's dictionary, and the spawned process does
+  not inherit it - stamped after, every prompt would arrive unattributed and no route would match.
+  """
+  @spec run_prompt_door(map(), boolean(), module(), (map() -> term())) :: pid()
+  def run_prompt_door(message, allow_cloud_when_sensitive, llm_client, publish) do
+    payload = prompt_payload(message)
+
     spawn(fn ->
-      payload = message["payload"] || message
-      text = payload["text"]
-      model = Map.get(payload, "model", "auto")
-      prompt_id = Map.get(payload, "prompt_id", UUID.uuid4())
-      reasoning_mode = Map.get(payload, "reasoning_mode")
-      allow_cloud = Map.get(payload, "allow_cloud_when_sensitive", allow_cloud_when_sensitive)
-
-      Logger.warning(
-        "[PromptHandler] Received message=#{inspect(message)}, payload=#{inspect(payload)}, text_len=#{byte_size(text || "")}"
-      )
-
-      llm_client = Application.get_env(:bot_army_llm, :llm_client, BotArmyLlm.LlmClient)
-
-      result =
-        try do
-          BotArmyLlm.LocalQueueManager.increment()
-
-          if is_nil(text) or text == "" do
-            {:error, :empty_prompt}
-          else
-            llm_client.complete(
-              text,
-              [
-                model: model,
-                allow_cloud_when_sensitive: allow_cloud,
-                reasoning_mode: reasoning_mode
-              ] ++ List.wrap(model_type_opt(payload))
-            )
-          end
-        after
-          BotArmyLlm.LocalQueueManager.decrement()
-        end
-
-      response =
-        case result do
-          {:ok, resp} ->
-            # Record tokens and cost for metrics
-            if Process.whereis(BotArmyLlm.Metrics) do
-              tokens_in = Map.get(resp, :tokens_input, 0)
-              tokens_out = Map.get(resp, :tokens_output, 0)
-              # Cost calculation would go here if we had pricing data in this process
-              BotArmyLlm.Metrics.record_tokens_and_cost(
-                Atom.to_string(resp.provider),
-                resp.model_used,
-                tokens_in,
-                tokens_out,
-                nil
-              )
-            end
-
-            %{
-              "completion" => resp.completion,
-              "model" => resp.model_used,
-              "tokens" => %{
-                "input" => Map.get(resp, :tokens_input, 0),
-                "output" => Map.get(resp, :tokens_output, 0)
-              },
-              "prompt_id" => prompt_id
-            }
-
-          {:error, reason} ->
-            %{"error" => inspect(reason), "prompt_id" => prompt_id}
-        end
-
-      publish_reply(reply_to, response)
+      publish.(prompt_response(payload, message, allow_cloud_when_sensitive, llm_client))
     end)
+  end
+
+  @doc """
+  The answer to a `llm.prompt.submit`: `completion` and the model that wrote it, or an `error`.
+  `llm_client` is injectable so what the door asks of it is assertable without a model.
+  """
+  @spec prompt_response(map(), map(), boolean(), module()) :: map()
+  def prompt_response(payload, message, allow_cloud_when_sensitive, llm_client) do
+    text = payload["text"]
+    model = Map.get(payload, "model", "auto")
+    prompt_id = Map.get(payload, "prompt_id", UUID.uuid4())
+    reasoning_mode = Map.get(payload, "reasoning_mode")
+    allow_cloud = Map.get(payload, "allow_cloud_when_sensitive", allow_cloud_when_sensitive)
+
+    Logger.warning(
+      "[PromptHandler] Received message=#{inspect(message)}, payload=#{inspect(payload)}, text_len=#{byte_size(text || "")}"
+    )
+
+    result =
+      try do
+        BotArmyLlm.LocalQueueManager.increment()
+
+        if is_nil(text) or text == "" do
+          {:error, :empty_prompt}
+        else
+          llm_client.complete(
+            text,
+            prompt_opts(payload, model, allow_cloud, reasoning_mode)
+          )
+        end
+      after
+        BotArmyLlm.LocalQueueManager.decrement()
+      end
+
+    case result do
+      {:ok, resp} ->
+        # Record tokens and cost for metrics
+        if Process.whereis(BotArmyLlm.Metrics) do
+          tokens_in = Map.get(resp, :tokens_input, 0)
+          tokens_out = Map.get(resp, :tokens_output, 0)
+          # Cost calculation would go here if we had pricing data in this process
+          BotArmyLlm.Metrics.record_tokens_and_cost(
+            Atom.to_string(resp.provider),
+            resp.model_used,
+            tokens_in,
+            tokens_out,
+            nil
+          )
+        end
+
+        %{
+          "completion" => resp.completion,
+          "model" => resp.model_used,
+          "tokens" => %{
+            "input" => Map.get(resp, :tokens_input, 0),
+            "output" => Map.get(resp, :tokens_output, 0)
+          },
+          "prompt_id" => prompt_id
+        }
+
+      {:error, reason} ->
+        %{"error" => inspect(reason), "prompt_id" => prompt_id}
+    end
   end
 
   defp handle_queue_status(message, reply_to) do
@@ -1716,6 +1729,49 @@ defmodule BotArmyLlm.NATS.Consumer do
   end
 
   defp trimmed_string(_value), do: nil
+
+  @doc """
+  The caller's fields of a `llm.prompt.submit`, with who sent it stamped over anything the body
+  claims: a log label, and the bot name a route is looked up by. Reads the envelope's payload when
+  there is one, so an enveloped prompt's routing fields are not lost one level up.
+  """
+  @spec prompt_payload(map()) :: map()
+  def prompt_payload(message) do
+    message
+    |> chat_payload()
+    |> Map.put("_caller", caller_label(message, "llm.prompt.submit"))
+    |> put_caller_bot(message)
+  end
+
+  defp prompt_opts(payload, model, allow_cloud, reasoning_mode) do
+    routing = prompt_routing_opts(payload)
+
+    [
+      model: Keyword.get(routing, :model, model),
+      allow_cloud_when_sensitive: allow_cloud,
+      reasoning_mode: reasoning_mode
+    ] ++ List.wrap(model_type_opt(payload)) ++ Keyword.delete(routing, :model)
+  end
+
+  @doc """
+  Where a `llm.prompt.submit` runs, as options: the same `source`, `provider`, caller label and
+  per-bot route the chat door honors, and nothing when the prompt names none of them.
+
+  The prompt door used to read only `model`, so a bot that wanted its prompt on local models
+  (`"source": "local_ollama"`) was silently sent down the default chain. A route's model fills in
+  only when the prompt names no model of its own.
+  """
+  @spec prompt_routing_opts(map()) :: keyword()
+  def prompt_routing_opts(payload) when is_map(payload) do
+    routed =
+      []
+      |> put_source(payload)
+      |> put_caller(payload)
+      |> put_provider(payload)
+      |> put_route(payload)
+
+    if Map.has_key?(payload, "model"), do: Keyword.delete(routed, :model), else: routed
+  end
 
   # Shared by the prompt path: a model type is a closed allowlist, and absent
   # means absent (no :model_type opt at all).

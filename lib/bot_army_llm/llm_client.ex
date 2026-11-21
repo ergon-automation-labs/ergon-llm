@@ -627,18 +627,30 @@ defmodule BotArmyLlm.LlmClient do
   # caller cannot aim a model at a node that does not hold it.
   defp local_ollama_target(opts) do
     with {:ok, resolved} <- BotArmyLlm.LocalOllama.resolve(opts),
-         opts =
-           opts
-           |> Keyword.put(:timeout_ms, resolved.timeout_ms)
-           |> Keyword.put(:ollama_node, resolved.node),
-         {:ok, {url, _default_model}} <- best_ollama_node_for(:light, opts) do
-      {:ok, %{url: url, model: resolved.model}, opts}
+         opts = Keyword.put(opts, :timeout_ms, resolved.timeout_ms),
+         {:ok, {node, url}} <-
+           BotArmyLlm.LocalOllama.first_usable(candidate_nodes(resolved), fn node ->
+             case best_ollama_node_for(:light, Keyword.put(opts, :ollama_node, node)) do
+               {:ok, {url, _default_model}} -> {:ok, {node, url}}
+               {:error, _reason} = refused -> refused
+             end
+           end) do
+      Logger.info(
+        "[LocalOllama] #{resolved.model} on #{node || "the best local node"}#{caller_tag(opts)}"
+      )
+
+      {:ok, %{url: url, model: resolved.model}, Keyword.put(opts, :ollama_node, node)}
     else
       {:error, {:model_not_allowed, _, _} = reason} -> {:error, reason}
       {:error, {:model_not_configured, :local_ollama} = reason} -> {:error, reason}
       {:error, reason} -> {:error, {:ollama_unavailable, reason}}
     end
   end
+
+  # A multi-node model is spread across its healthy nodes; a single-node one is that node (nil =
+  # the best local node, as before).
+  defp candidate_nodes(%{nodes: [_ | _] = nodes}), do: BotArmyLlm.LocalOllama.order_nodes(nodes)
+  defp candidate_nodes(%{node: node}), do: [node]
 
   defp call_provider(:local_ollama, text, _complexity, opts) do
     with {:ok, target, opts} <- local_ollama_target(opts),

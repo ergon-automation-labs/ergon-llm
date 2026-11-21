@@ -679,6 +679,9 @@ defmodule BotArmyLlm.NATS.Consumer do
     end
   end
 
+  @lanes ["urgent", "interactive", "background"]
+  @senders ["user", "system", "automated"]
+
   defp handle_prompt_request_reply(message, reply_to, allow_cloud_when_sensitive) do
     llm_client = Application.get_env(:bot_army_llm, :llm_client, BotArmyLlm.LlmClient)
 
@@ -686,17 +689,38 @@ defmodule BotArmyLlm.NATS.Consumer do
   end
 
   @doc """
-  Answers a `llm.prompt.submit` off the request's process. The caller is stamped *here*, before
-  the spawn: the sender rides in the request process's dictionary, and the spawned process does
-  not inherit it - stamped after, every prompt would arrive unattributed and no route would match.
-  """
-  @spec run_prompt_door(map(), boolean(), module(), (map() -> term())) :: pid()
-  def run_prompt_door(message, allow_cloud_when_sensitive, llm_client, publish) do
-    payload = prompt_payload(message)
+  Answers a `llm.prompt.submit`. The caller is stamped *here*, before any work leaves the request's
+  process: the sender rides in the request process's dictionary, and a spawned process does not
+  inherit it - stamped after, every prompt would arrive unattributed and no route would match.
 
-    spawn(fn ->
-      publish.(prompt_response(payload, message, allow_cloud_when_sensitive, llm_client))
-    end)
+  With triage on, the prompt is admitted to the queue like a chat request: in the lane its route
+  (or its own `priority`) names, ranked by sender, and dropped with `expired_in_queue` if it waits
+  past what its caller can. With triage off it runs at once, as it always did.
+  """
+  @spec run_prompt_door(map(), boolean(), module(), (map() -> term()), keyword()) :: :ok | pid()
+  def run_prompt_door(message, allow_cloud_when_sensitive, llm_client, publish, opts \\ []) do
+    payload = prompt_payload(message)
+    compute = fn -> prompt_response(payload, message, allow_cloud_when_sensitive, llm_client) end
+
+    if Keyword.get(opts, :triage?, BotArmyLlm.TriageAdmission.enabled?()) do
+      lane = prompt_lane(payload)
+
+      BotArmyLlm.TriageAdmission.admit(payload, lane,
+        reply: publish,
+        compute: compute,
+        server: Keyword.get(opts, :server, BotArmyLlm.TriageQueue),
+        expire_after_ms: BotArmyLlm.TriageAdmission.expire_after_ms(payload)
+      )
+    else
+      spawn(fn -> publish.(compute.()) end)
+    end
+  end
+
+  defp prompt_lane(payload) do
+    case Map.get(payload, "priority") do
+      lane when lane in @lanes -> lane
+      _ -> "interactive"
+    end
   end
 
   @doc """
@@ -989,11 +1013,7 @@ defmodule BotArmyLlm.NATS.Consumer do
     # drops every routing opt — and still answers, which looks like a content
     # problem rather than a plumbing one. The bridge survives this only because it
     # duplicates its fields top-level; nesting correctly must not be a penalty.
-    payload =
-      message
-      |> chat_payload()
-      |> Map.put("_caller", caller_label(message, subject))
-      |> put_caller_bot(message)
+    payload = stamped_chat_payload(message, subject)
 
     case prepare_chat(payload) do
       {:ok, payload, runner} -> dispatch_chat(payload, runner, subject, reply_to)
@@ -1010,9 +1030,13 @@ defmodule BotArmyLlm.NATS.Consumer do
         lane = lane_for_chat_subject(subject, payload)
 
         :ok =
-          BotArmyLlm.TriageAdmission.admit(payload, lane,
-            reply: fn map -> publish_reply(reply_to, map) end,
-            compute: fn -> runner.(payload, subject) end
+          BotArmyLlm.TriageAdmission.admit(
+            payload,
+            lane,
+            [
+              reply: fn map -> publish_reply(reply_to, map) end,
+              compute: fn -> runner.(payload, subject) end
+            ] ++ chat_admission_opts(payload)
           )
 
       true ->
@@ -1730,6 +1754,54 @@ defmodule BotArmyLlm.NATS.Consumer do
 
   defp trimmed_string(_value), do: nil
 
+  @doc false
+  @spec stamped_chat_payload(map(), String.t()) :: map()
+  def stamped_chat_payload(message, subject) do
+    message
+    |> chat_payload()
+    |> Map.put("_caller", caller_label(message, subject))
+    |> put_caller_bot(message)
+    |> route_triage(subject)
+  end
+
+  @doc """
+  Fills a request's `priority` and `sender` from its calling bot's route (`llm:routes`) when the
+  request set neither, so the pillar can say which bots are a person waiting and which are a batch,
+  without a change to each bot. A request's own fields win, a lane named by the subject
+  (`pi-go.llm.request.chat.urgent`) is not overridden, and a value that is not a lane or a sender
+  is ignored rather than carried.
+  """
+  @spec route_triage(map(), String.t() | nil) :: map()
+  def route_triage(payload, subject) do
+    route = BotArmyLlm.ProviderPin.route_for(Map.get(payload, "_caller_bot"))
+
+    payload
+    |> fill_from_route("priority", route["priority"], @lanes, subject_lane?(subject))
+    |> fill_from_route("sender", route["sender"], @senders, false)
+  end
+
+  defp subject_lane?(subject) when is_binary(subject),
+    do: String.starts_with?(subject, "pi-go.llm.request.chat.")
+
+  defp subject_lane?(_subject), do: false
+
+  defp fill_from_route(payload, key, value, allowed, locked?) do
+    if locked? or Map.has_key?(payload, key) or value not in allowed,
+      do: payload,
+      else: Map.put(payload, key, value)
+  end
+
+  @doc """
+  What a sync chat request asks of the queue. Expiry is the point: a request still waiting when its
+  caller has long since stopped listening is dropped, not run. A caller that said it accepts a queued
+  reply (`accepts_queued`) is promised a job instead, so it is never expired.
+  """
+  @spec chat_admission_opts(map()) :: keyword()
+  def chat_admission_opts(%{"accepts_queued" => true}), do: []
+
+  def chat_admission_opts(payload),
+    do: [expire_after_ms: BotArmyLlm.TriageAdmission.expire_after_ms(payload)]
+
   @doc """
   The caller's fields of a `llm.prompt.submit`, with who sent it stamped over anything the body
   claims: a log label, and the bot name a route is looked up by. Reads the envelope's payload when
@@ -1741,6 +1813,7 @@ defmodule BotArmyLlm.NATS.Consumer do
     |> chat_payload()
     |> Map.put("_caller", caller_label(message, "llm.prompt.submit"))
     |> put_caller_bot(message)
+    |> route_triage(nil)
   end
 
   defp prompt_opts(payload, model, allow_cloud, reasoning_mode) do

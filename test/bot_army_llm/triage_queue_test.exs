@@ -113,7 +113,9 @@ defmodule BotArmyLlm.TriageQueueTest do
   end
 
   test "a single flap does not toggle the mode" do
-    probe = scripted_probe([[:open, :open, :open], [:closed, :open, :open], [:open, :open, :open]])
+    probe =
+      scripted_probe([[:open, :open, :open], [:closed, :open, :open], [:open, :open, :open]])
+
     q = start(auto_mode: true, cloud_probe: probe)
 
     for _ <- 1..3, do: TriageQueue.tick(q)
@@ -128,6 +130,7 @@ defmodule BotArmyLlm.TriageQueueTest do
 
   test "claims older than an hour are pruned on a tick" do
     {:ok, clock} = Agent.start_link(fn -> @now end)
+
     {:ok, q} =
       TriageQueue.start_link(
         name: nil,
@@ -160,5 +163,115 @@ defmodule BotArmyLlm.TriageQueueTest do
     status = TriageQueue.tick(q)
     assert status.depth == 2
     assert status.shed_total == 2
+  end
+
+  describe "an item whose caller will not wait" do
+    defp clocked(start_at) do
+      {:ok, agent} = Agent.start_link(fn -> start_at end)
+      {agent, fn _unit -> Agent.get(agent, & &1) end}
+    end
+
+    test "is removed at its expiry and told so, and never dispatched" do
+      {clock_agent, clock} = clocked(@now)
+      q = start(clock: clock, slots: 0)
+      test = self()
+
+      TriageQueue.enqueue(
+        q,
+        item("sync", "interactive", %{
+          expires_at: @now + 30,
+          on_expire: fn -> send(test, {:expired, "sync"}) end
+        })
+      )
+
+      TriageQueue.tick(q)
+      refute_received {:expired, "sync"}
+
+      Agent.update(clock_agent, fn _ -> @now + 30 end)
+      status = TriageQueue.tick(q)
+
+      assert_receive {:expired, "sync"}
+      assert status.depth == 0
+      assert status.expired_total == 1
+      refute_received {:dispatched, "sync"}
+    end
+
+    test "an item without an expiry waits as long as it takes" do
+      {clock_agent, clock} = clocked(@now)
+      q = start(clock: clock, slots: 0)
+
+      TriageQueue.enqueue(q, item("job", "interactive"))
+      Agent.update(clock_agent, fn _ -> @now + 86_400 end)
+
+      assert TriageQueue.tick(q).depth == 1
+    end
+
+    test "one that is dispatched before its expiry is not expired afterwards" do
+      {clock_agent, clock} = clocked(@now)
+      q = start(clock: clock)
+      test = self()
+
+      TriageQueue.enqueue(
+        q,
+        item("fast", "interactive", %{
+          expires_at: @now + 30,
+          on_expire: fn -> send(test, {:expired, "fast"}) end
+        })
+      )
+
+      TriageQueue.tick(q)
+      assert_receive {:dispatched, "fast"}
+      Agent.update(clock_agent, fn _ -> @now + 60 end)
+      TriageQueue.tick(q)
+      refute_received {:expired, "fast"}
+    end
+  end
+
+  describe "kick on enqueue" do
+    # A dispatch that holds its slot for a while, like a model generating.
+    defp holding(ms) do
+      test = self()
+
+      fn item ->
+        send(test, {:dispatched, item.id})
+        Process.sleep(ms)
+      end
+    end
+
+    test "off (the default), an item waits for the tick" do
+      q = start()
+      TriageQueue.enqueue(q, item("a", "interactive"))
+      refute_receive {:dispatched, "a"}, 50
+    end
+
+    test "on, an item that finds a free slot runs at once" do
+      q = start(kick: true)
+      TriageQueue.enqueue(q, item("a", "interactive"))
+      assert_receive {:dispatched, "a"}, 200
+    end
+
+    test "on, an item that finds no free slot still waits, and runs when one frees" do
+      q = start(kick: true, slots: 1, dispatch: holding(150))
+      TriageQueue.enqueue(q, item("a", "interactive"))
+      TriageQueue.enqueue(q, item("b", "interactive"))
+      assert_receive {:dispatched, "a"}, 200
+      refute_receive {:dispatched, "b"}, 50
+      Process.sleep(200)
+      TriageQueue.tick(q)
+      assert_receive {:dispatched, "b"}, 200
+    end
+
+    test "on, a higher lane arriving does not displace a running item, it goes first in line" do
+      q = start(kick: true, slots: 1, dispatch: holding(150))
+      TriageQueue.enqueue(q, item("bg", "background"))
+      assert_receive {:dispatched, "bg"}, 200
+      TriageQueue.enqueue(q, item("low", "background"))
+      TriageQueue.enqueue(q, item("urg", "urgent"))
+      refute_receive {:dispatched, "urg"}, 50
+      Process.sleep(200)
+      TriageQueue.tick(q)
+      assert_receive {:dispatched, "urg"}, 200
+      refute_received {:dispatched, "low"}
+    end
   end
 end

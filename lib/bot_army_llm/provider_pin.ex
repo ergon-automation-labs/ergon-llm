@@ -26,7 +26,7 @@ defmodule BotArmyLlm.ProviderPin do
 
   @providers ~w(ollama local_ollama openrouter anthropic blackbox)
   @local [:ollama, :local_ollama]
-  @route_keys ~w(provider model model_type uncensored_tier)
+  @route_keys ~w(provider model model_type uncensored_tier priority sender)
 
   @type error ::
           {:unknown_provider, term()}

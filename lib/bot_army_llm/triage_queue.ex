@@ -77,6 +77,8 @@ defmodule BotArmyLlm.TriageQueue do
       tick_ms: Keyword.get(opts, :tick_ms, @default_tick_ms),
       last_tick_at: nil,
       shed_total: 0,
+      expired_total: 0,
+      kick: Keyword.get(opts, :kick, false),
       dispatched_total: 0
     }
 
@@ -91,7 +93,14 @@ defmodule BotArmyLlm.TriageQueue do
   @impl true
   def handle_call({:enqueue, item}, _from, state) do
     item = Map.put_new_lazy(item, :enqueued_at, fn -> state.clock.(:second) end)
-    {:reply, :ok, %{state | items: state.items ++ [item]}}
+    item = with_expiry(item)
+    state = %{state | items: state.items ++ [item]}
+
+    # With `kick` on, an item that finds a free slot runs at once instead of waiting for the next
+    # tick, which would add up to a whole tick to every request. An item that finds none waits and
+    # is ranked as before. Off by default so a test (or an operator) can watch the line form.
+    state = if state.kick, do: dispatch_free(state), else: state
+    {:reply, :ok, state}
   end
 
   def handle_call({:set_mode, mode}, _from, state) do
@@ -165,17 +174,68 @@ defmodule BotArmyLlm.TriageQueue do
     state = auto_mode(state)
     now = state.clock.(:second)
     state = %{state | claims: prune_claims(state.claims, now)}
+    state = expire_items(state, now)
 
     {kept, shed} = Triage.shed(state.items, now, shed_bound: state.shed_bound)
+
     Enum.each(shed, fn {item, reason} ->
       Logger.warning("[TriageQueue] shed #{item.id} (#{item.lane}): #{reason}")
     end)
 
+    state = %{state | items: kept, shed_total: state.shed_total + length(shed)}
+    state = dispatch_free(state)
+    %{state | last_tick_at: now}
+  end
+
+  # `expire_after_s` is relative to the queue's own clock, so there is one clock in the system.
+  defp with_expiry(%{expire_after_s: s} = item) when is_integer(s) and s > 0 do
+    Map.put_new(item, :expires_at, item.enqueued_at + s)
+  end
+
+  defp with_expiry(item), do: item
+
+  # An item may carry `expires_at` (when its caller will have stopped listening) and `on_expire`
+  # (how to tell them). Waiting past it, it is removed and told so rather than run for nobody: on
+  # a loaded host a slot spent on an answer no one reads is a slot a live request did not get.
+  defp expire_items(state, now) do
+    {expired, live} =
+      Enum.split_with(state.items, fn
+        %{expires_at: at} when is_integer(at) -> now >= at
+        _ -> false
+      end)
+
+    Enum.each(expired, fn item ->
+      Logger.warning("[TriageQueue] expired #{item.id} (#{item.lane}) still waiting")
+
+      case Map.get(item, :on_expire) do
+        fun when is_function(fun, 0) ->
+          Task.start(fn ->
+            try do
+              fun.()
+            rescue
+              error ->
+                Logger.error(
+                  "[TriageQueue] on_expire for #{item.id} failed: #{Exception.message(error)}"
+                )
+            end
+          end)
+
+        _ ->
+          :ok
+      end
+    end)
+
+    %{state | items: live, expired_total: state.expired_total + length(expired)}
+  end
+
+  # Runs the best-ranked items that fit in the free slots; the rest keep waiting.
+  defp dispatch_free(state) do
+    now = state.clock.(:second)
     free = max(state.slots - state.in_flight, 0)
     me = self()
 
     {to_run, rest} =
-      kept
+      state.items
       |> Triage.rank(now)
       |> Enum.reduce({[], []}, fn {item, _score, _reasons}, {run, wait} ->
         route = Triage.route(item, state.mode)
@@ -201,9 +261,7 @@ defmodule BotArmyLlm.TriageQueue do
       state
       | items: Enum.reverse(rest),
         in_flight: state.in_flight + length(to_run),
-        shed_total: state.shed_total + length(shed),
-        dispatched_total: state.dispatched_total + length(to_run),
-        last_tick_at: now
+        dispatched_total: state.dispatched_total + length(to_run)
     }
   end
 
@@ -215,7 +273,8 @@ defmodule BotArmyLlm.TriageQueue do
     now = state.clock.(:second)
 
     by_lane =
-      Enum.reduce(state.items, %{"urgent" => 0, "interactive" => 0, "background" => 0}, fn item, acc ->
+      Enum.reduce(state.items, %{"urgent" => 0, "interactive" => 0, "background" => 0}, fn item,
+                                                                                           acc ->
         Map.update(acc, item.lane, 1, &(&1 + 1))
       end)
 
@@ -237,6 +296,7 @@ defmodule BotArmyLlm.TriageQueue do
       in_flight: state.in_flight,
       slots: state.slots,
       shed_total: state.shed_total,
+      expired_total: state.expired_total,
       dispatched_total: state.dispatched_total,
       last_tick_at: state.last_tick_at
     }

@@ -68,6 +68,7 @@ defmodule BotArmyLlm.TriageAdmission do
     id = Keyword.get(opts, :id) || request_id(payload)
     work = fn -> run_work(id, reply, compute, server) end
     item = build_item(payload, lane, work) |> Map.put(:id, id)
+    item = with_expiry(item, id, lane, reply, server, Keyword.get(opts, :expire_after_ms))
 
     :ok = TriageQueue.enqueue(server, item)
     # Only callers that said they can handle a queued reply get one. Async jobs pass
@@ -79,6 +80,66 @@ defmodule BotArmyLlm.TriageAdmission do
     end
 
     :ok
+  end
+
+  @default_expire_ms 120_000
+
+  @doc "How long a sync request may wait in the queue by default, before it is expired."
+  def default_expire_ms do
+    case BotArmyLibraryRuntime.ConfigLoader.get("TRIAGE_SYNC_EXPIRE_MS", nil) do
+      nil -> Application.get_env(:bot_army_llm, :triage_sync_expire_ms, @default_expire_ms)
+      value -> parse_ms(value, @default_expire_ms)
+    end
+  end
+
+  @doc """
+  How long a sync request waits in the queue before it is expired: the configured default, or the
+  caller's own `"deadline_ms"` when that is shorter. A caller can only ask to be dropped sooner,
+  never to hold a slot longer than the operator allows.
+  """
+  @spec expire_after_ms(map()) :: pos_integer()
+  def expire_after_ms(payload) do
+    default = default_expire_ms()
+
+    case Map.get(payload, "deadline_ms") do
+      ms when is_integer(ms) and ms > 0 -> min(ms, default)
+      _ -> default
+    end
+  end
+
+  defp parse_ms(value, default) do
+    case Integer.parse(to_string(value)) do
+      {ms, ""} when ms > 0 -> ms
+      _ -> default
+    end
+  end
+
+  # A sync request is answered when it runs; one still waiting when its caller has long since
+  # given up is told so and dropped, so its work never runs for nobody. An async job names no
+  # expiry: its caller holds a job id and will look.
+  defp with_expiry(item, _id, _lane, _reply, _server, nil), do: item
+
+  defp with_expiry(item, id, lane, reply, server, ms) do
+    on_expire = fn ->
+      if TriageQueue.claim(server, id, :dispatch), do: reply.(expired_map(id, lane))
+    end
+
+    item
+    |> Map.put(:expire_after_s, max(div(ms + 999, 1000), 1))
+    |> Map.put(:on_expire, on_expire)
+  end
+
+  @doc "The answer to a sync request that waited in the queue past its expiry."
+  def expired_map(id, lane) do
+    %{
+      "ok" => false,
+      "error" => "expired_in_queue",
+      "request_id" => id,
+      "lane" => lane,
+      "message" =>
+        "The request waited in the queue longer than it could be answered in time, so it was " <>
+          "dropped rather than run for nobody. Ask again, or send it as an async job."
+    }
   end
 
   @doc "Build the queue item for a request. Pure; exposed for tests."

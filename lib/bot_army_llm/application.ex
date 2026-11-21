@@ -140,7 +140,8 @@ defmodule BotArmyLlm.Application do
            [
              slots: Application.get_env(:bot_army_llm, :triage_slots, 2),
              mode: Application.get_env(:bot_army_llm, :triage_mode, :cloud),
-             auto_mode: true
+             auto_mode: true,
+             kick: true
            ]}
         ]
     else

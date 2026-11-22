@@ -387,6 +387,59 @@ defmodule BotArmyLlm.LlmClient do
     BotArmyLlm.ClaudePassthroughChain.run(payload)
   end
 
+  @probe_providers [:blackbox, :openrouter, :anthropic]
+  @probe_text "Reply with the single word: ok"
+
+  @doc """
+  Send one minimal request to a cloud provider whose breaker is open, so the breaker can recover.
+
+  Recovery is not driven by traffic: the chain tries Ollama first, so ordinary requests may
+  never reach a cloud breaker. This is the only thing that asks an open cloud breaker for its
+  half-open probe. It does nothing unless the breaker is `:open` and its wait has passed.
+
+  Returns `:ok` (the provider answered and its breaker closed), `{:error, reason}` (it did not
+  answer, and the breaker counted the failure), or `:skipped` (not open, or not yet due).
+  """
+  @spec probe_provider(atom()) :: :ok | {:error, term()} | :skipped
+  def probe_provider(provider) when provider in @probe_providers do
+    if BotArmyLlm.CircuitBreaker.get_state(provider).state == :open do
+      case BotArmyLlm.CircuitBreaker.allow?(provider) do
+        :ok -> run_probe(provider)
+        _not_due -> :skipped
+      end
+    else
+      :skipped
+    end
+  end
+
+  def probe_provider(_provider), do: :skipped
+
+  defp run_probe(provider) do
+    result =
+      try do
+        call_provider(provider, @probe_text, :light, [])
+      rescue
+        error -> {:error, {:exception, Exception.message(error)}}
+      end
+
+    case result do
+      {:ok, _} ->
+        BotArmyLlm.CircuitBreaker.record_success(provider)
+        Logger.info("[CloudProbe] #{provider} answered; breaker closing")
+        :ok
+
+      {:error, reason} ->
+        BotArmyLlm.CircuitBreaker.record_failure(provider)
+        Logger.warning("[CloudProbe] #{provider} did not answer: #{inspect(reason)}")
+        {:error, reason}
+
+      other ->
+        BotArmyLlm.CircuitBreaker.record_failure(provider)
+        Logger.warning("[CloudProbe] #{provider} unexpected reply: #{inspect(other)}")
+        {:error, {:unexpected, other}}
+    end
+  end
+
   # Provider chain selection
 
   @doc false

@@ -274,4 +274,56 @@ defmodule BotArmyLlm.TriageQueueTest do
       refute_received {:dispatched, "low"}
     end
   end
+
+  describe "probing open cloud breakers in triage" do
+    test "in triage, an open cloud breaker is probed on a tick, and a closed one is not" do
+      test = self()
+
+      q =
+        start(
+          mode: :triage,
+          breaker_state: fn
+            :openrouter -> :open
+            _other -> :closed
+          end,
+          probe: fn provider -> send(test, {:probed, provider}) end
+        )
+
+      TriageQueue.tick(q)
+
+      assert_receive {:probed, :openrouter}
+      refute_received {:probed, :blackbox}
+      refute_received {:probed, :anthropic}
+    end
+
+    test "in cloud mode, no breaker is probed by the queue" do
+      test = self()
+
+      q =
+        start(
+          mode: :cloud,
+          breaker_state: fn _ -> :open end,
+          probe: fn provider -> send(test, {:probed, provider}) end
+        )
+
+      TriageQueue.tick(q)
+
+      refute_receive {:probed, _}, 50
+    end
+
+    test "a probe that is already in flight (half-open) is not started again" do
+      test = self()
+
+      q =
+        start(
+          mode: :triage,
+          breaker_state: fn _ -> :half_open end,
+          probe: fn provider -> send(test, {:probed, provider}) end
+        )
+
+      TriageQueue.tick(q)
+
+      refute_receive {:probed, _}, 50
+    end
+  end
 end

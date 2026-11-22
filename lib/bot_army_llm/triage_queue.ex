@@ -65,6 +65,8 @@ defmodule BotArmyLlm.TriageQueue do
       mode: Keyword.get(opts, :mode, :cloud),
       auto_mode: Keyword.get(opts, :auto_mode, false),
       cloud_probe: Keyword.get(opts, :cloud_probe, &cloud_states/0),
+      breaker_state: Keyword.get(opts, :breaker_state, &breaker_state/1),
+      probe: Keyword.get(opts, :probe, &BotArmyLlm.LlmClient.probe_provider/1),
       to_triage_after: Keyword.get(opts, :to_triage_after, 2),
       to_cloud_after: Keyword.get(opts, :to_cloud_after, 2),
       flip_run: 0,
@@ -143,8 +145,25 @@ defmodule BotArmyLlm.TriageQueue do
 
   # The cloud breakers' view of the world, read once per tick.
   defp cloud_states do
-    Enum.map(@cloud_providers, fn p -> CircuitBreaker.get_state(p).state end)
+    Enum.map(@cloud_providers, &breaker_state/1)
   end
+
+  defp breaker_state(provider), do: CircuitBreaker.get_state(provider).state
+
+  # In triage, the queue probes its own open cloud breakers. Ordinary traffic runs on Ollama
+  # first and may never reach a cloud provider, so nothing else would move an open breaker to
+  # half-open and let it recover. Each probe runs in its own task: the tick never waits on it,
+  # and a breaker that is already half-open is not probed twice.
+  defp probe_open_clouds(%{mode: :triage} = state) do
+    for provider <- @cloud_providers, state.breaker_state.(provider) == :open do
+      Logger.info("[TriageQueue] probing open cloud breaker #{provider}")
+      Task.start(fn -> state.probe.(provider) end)
+    end
+
+    state
+  end
+
+  defp probe_open_clouds(state), do: state
 
   # Automatic mode with hysteresis: the desired mode must hold for N consecutive
   # ticks before the queue flips, so a flapping provider cannot toggle it.
@@ -172,6 +191,7 @@ defmodule BotArmyLlm.TriageQueue do
 
   defp evaluate(state) do
     state = auto_mode(state)
+    state = probe_open_clouds(state)
     now = state.clock.(:second)
     state = %{state | claims: prune_claims(state.claims, now)}
     state = expire_items(state, now)

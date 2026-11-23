@@ -26,7 +26,7 @@ defmodule BotArmyLlm.TriageQueueTest do
   test "starting the queue says so, with its mode and slots" do
     log =
       ExUnit.CaptureLog.capture_log(fn ->
-        start(mode: :cloud, auto_mode: true, slots: 3)
+        start(mode: :cloud, auto_mode: true, slots: 3, breaker_state: fn _ -> :closed end)
       end)
 
     assert log =~ "[TriageQueue] started: mode=cloud auto_mode=true slots=3"
@@ -96,8 +96,10 @@ defmodule BotArmyLlm.TriageQueueTest do
   end
 
   test "automatic mode goes to triage after two ticks of no closed cloud breaker, and back after two closed" do
+    # The first reading is the startup read, so the tick readings start one step later.
     probe =
       scripted_probe([
+        [:closed, :open, :open],
         [:open, :open, :open],
         [:open, :open, :open],
         [:closed, :open, :open],
@@ -113,8 +115,14 @@ defmodule BotArmyLlm.TriageQueueTest do
   end
 
   test "a single flap does not toggle the mode" do
+    # The first reading is the startup read: a closed cloud breaker starts the queue in cloud.
     probe =
-      scripted_probe([[:open, :open, :open], [:closed, :open, :open], [:open, :open, :open]])
+      scripted_probe([
+        [:closed, :open, :open],
+        [:open, :open, :open],
+        [:closed, :open, :open],
+        [:open, :open, :open]
+      ])
 
     q = start(auto_mode: true, cloud_probe: probe)
 
@@ -324,6 +332,46 @@ defmodule BotArmyLlm.TriageQueueTest do
       TriageQueue.tick(q)
 
       refute_receive {:probed, _}, 50
+    end
+  end
+
+  describe "starting from the breakers, and the providers the queue watches" do
+    test "a restart with every cloud breaker open starts in triage, not in the configured cloud default" do
+      q =
+        start(
+          auto_mode: true,
+          cloud_providers: [:openrouter, :anthropic],
+          breaker_state: fn _ -> :open end
+        )
+
+      assert %{mode: :triage, cloud_breakers: %{"openrouter" => "open", "anthropic" => "open"}} =
+               TriageQueue.status(q)
+    end
+
+    test "a restart with one cloud breaker closed starts in cloud" do
+      q =
+        start(
+          auto_mode: true,
+          cloud_providers: [:openrouter, :anthropic],
+          breaker_state: fn
+            :anthropic -> :closed
+            _ -> :open
+          end
+        )
+
+      assert %{mode: :cloud} = TriageQueue.status(q)
+    end
+
+    test "only the providers in the configured chain are watched" do
+      q =
+        start(
+          auto_mode: true,
+          cloud_providers: [:anthropic],
+          breaker_state: fn _ -> :closed end
+        )
+
+      assert %{cloud_breakers: %{"anthropic" => "closed"} = breakers} = TriageQueue.status(q)
+      assert map_size(breakers) == 1
     end
   end
 end

@@ -21,7 +21,7 @@ defmodule BotArmyLlm.TriageQueue do
 
   alias BotArmyLlm.{CircuitBreaker, Triage}
 
-  @cloud_providers [:blackbox, :openrouter, :anthropic]
+  @all_cloud_providers [:blackbox, :openrouter, :anthropic]
 
   @default_slots 2
   @default_tick_ms 5_000
@@ -60,12 +60,16 @@ defmodule BotArmyLlm.TriageQueue do
 
   @impl true
   def init(opts) do
+    providers = Keyword.get(opts, :cloud_providers, configured_cloud_providers())
+    breaker = Keyword.get(opts, :breaker_state, &breaker_state/1)
+
     state = %{
       items: [],
       mode: Keyword.get(opts, :mode, :cloud),
       auto_mode: Keyword.get(opts, :auto_mode, false),
-      cloud_probe: Keyword.get(opts, :cloud_probe, &cloud_states/0),
-      breaker_state: Keyword.get(opts, :breaker_state, &breaker_state/1),
+      cloud_providers: providers,
+      cloud_probe: Keyword.get(opts, :cloud_probe, fn -> Enum.map(providers, breaker) end),
+      breaker_state: breaker,
       probe: Keyword.get(opts, :probe, &BotArmyLlm.LlmClient.probe_provider/1),
       to_triage_after: Keyword.get(opts, :to_triage_after, 2),
       to_cloud_after: Keyword.get(opts, :to_cloud_after, 2),
@@ -83,6 +87,13 @@ defmodule BotArmyLlm.TriageQueue do
       kick: Keyword.get(opts, :kick, false),
       dispatched_total: 0
     }
+
+    # Start in the mode the breakers call for, not in the configured default. A restart with every
+    # cloud breaker open must start in triage; it used to start in cloud and wait two ticks to find out.
+    state =
+      if state.auto_mode,
+        do: %{state | mode: Triage.cloud_mode(state.cloud_probe.())},
+        else: state
 
     Logger.info(
       "[TriageQueue] started: mode=#{state.mode} auto_mode=#{state.auto_mode} slots=#{state.slots}"
@@ -144,8 +155,11 @@ defmodule BotArmyLlm.TriageQueue do
   defp schedule(_), do: :ok
 
   # The cloud breakers' view of the world, read once per tick.
-  defp cloud_states do
-    Enum.map(@cloud_providers, &breaker_state/1)
+  # The cloud providers the configured chain can use, in chain order. A provider removed from the
+  # chain drops out here, so the queue never waits on a breaker nothing can call.
+  defp configured_cloud_providers do
+    BotArmyLlm.LlmClient.resolved_provider_chain()
+    |> Enum.filter(&(&1 in @all_cloud_providers))
   end
 
   defp breaker_state(provider), do: CircuitBreaker.get_state(provider).state
@@ -155,7 +169,7 @@ defmodule BotArmyLlm.TriageQueue do
   # half-open and let it recover. Each probe runs in its own task: the tick never waits on it,
   # and a breaker that is already half-open is not probed twice.
   defp probe_open_clouds(%{mode: :triage} = state) do
-    for provider <- @cloud_providers, state.breaker_state.(provider) == :open do
+    for provider <- state.cloud_providers, state.breaker_state.(provider) == :open do
       Logger.info("[TriageQueue] probing open cloud breaker #{provider}")
       Task.start(fn -> state.probe.(provider) end)
     end
@@ -318,7 +332,11 @@ defmodule BotArmyLlm.TriageQueue do
       shed_total: state.shed_total,
       expired_total: state.expired_total,
       dispatched_total: state.dispatched_total,
-      last_tick_at: state.last_tick_at
+      last_tick_at: state.last_tick_at,
+      cloud_breakers:
+        Map.new(state.cloud_providers, fn provider ->
+          {to_string(provider), to_string(state.breaker_state.(provider))}
+        end)
     }
   end
 end

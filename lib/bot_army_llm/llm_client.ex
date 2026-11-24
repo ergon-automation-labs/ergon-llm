@@ -464,12 +464,15 @@ defmodule BotArmyLlm.LlmClient do
     |> Enum.reject(&(&1 == ""))
     |> Enum.map(&String.downcase/1)
     |> Enum.map(fn
+      # local_ollama is the local Ollama provider; in a chain it is the same provider as ollama.
       "ollama" -> :ollama
+      "local_ollama" -> :ollama
       "blackbox" -> :blackbox
       "openrouter" -> :openrouter
       "anthropic" -> :anthropic
       unknown -> raise ArgumentError, "Unknown provider: #{unknown}"
     end)
+    |> Enum.uniq()
   end
 
   @doc """

@@ -227,6 +227,34 @@ defmodule BotArmyLlm.ModelTypeTest do
       assert payload["model_type"] == "uncensored"
     end
 
+    test "an envelope's own async control reaches the request it wraps" do
+      # The bridge's Decision is a correctly nested envelope with `"async": true`
+      # at the outer level (its payload is the request body alone). Reading only the
+      # payload made every decision a synchronous triage request, which the caller's
+      # 10s submit deadline always lost — and the queue held a slot for a job nobody
+      # waited for.
+      envelope = %{
+        "event" => "llm.request.chat",
+        "async" => true,
+        "payload" => %{"request_id" => "r-2", "messages" => [%{"role" => "user"}]}
+      }
+
+      payload = Consumer.chat_payload(envelope)
+
+      assert payload["async"] == true
+      assert payload["request_id"] == "r-2"
+    end
+
+    test "the payload's own value wins over the envelope's" do
+      envelope = %{
+        "event" => "llm.request.chat",
+        "async" => true,
+        "payload" => %{"async" => false, "request_id" => "r-3"}
+      }
+
+      assert Consumer.chat_payload(envelope)["async"] == false
+    end
+
     test "a bare payload passes through unchanged" do
       bare = %{"prompt_context" => %{"prompt" => "say BANANA"}, "model_type" => "uncensored"}
 

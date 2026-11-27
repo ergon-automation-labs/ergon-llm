@@ -1447,6 +1447,16 @@ defmodule BotArmyLlm.NATS.Consumer do
   # to track which machines are up (see BotArmyLlm.NodeRotator).
   @rotation_sentinels ["round-robin", "rotate", "rotation"]
 
+  # Controls a caller may write on the *envelope* rather than inside `payload`.
+  # A well-formed envelope nests the caller's fields (see `Decoder`), so these are
+  # the only request controls the bridge keeps at the outer level. Dropping them is
+  # silent: the bridge's `"async": true` was read as absent, every Decision call
+  # became a synchronous triage request, and the caller timed out on its own 10s
+  # submit deadline while the async job it had asked for sat in the queue (measured
+  # 2026-11-27 against `llm.request.chat`). The payload's own value wins; an
+  # envelope may only supply a control the request body did not set.
+  @envelope_controls ~w(async accepts_queued deadline_ms priority sender)
+
   @doc """
   Unwrap a decoded envelope down to the caller's payload.
 
@@ -1455,14 +1465,29 @@ defmodule BotArmyLlm.NATS.Consumer do
   level. The nested payload wins whenever it is a map; a bare payload map passes
   through unchanged, so both producer styles work.
 
+  The envelope's own routing controls (`@envelope_controls`) are lifted into the
+  payload when the payload does not set them, so a correct envelope is not served
+  worse than a bare request.
+
   Public (and pure) for the same reason as `chat_opts/2`: a field read at the wrong
   level is silent, and silence here reads as a model problem — an empty prompt still
   gets a fluent answer.
   """
   @spec chat_payload(map()) :: map()
-  def chat_payload(%{"payload" => payload}) when is_map(payload), do: payload
+  def chat_payload(%{"payload" => payload} = envelope) when is_map(payload),
+    do: lift_controls(envelope, payload)
+
   def chat_payload(message) when is_map(message), do: message
   def chat_payload(_other), do: %{}
+
+  defp lift_controls(envelope, payload) do
+    Enum.reduce(@envelope_controls, payload, fn key, acc ->
+      case {Map.get(acc, key), Map.get(envelope, key)} do
+        {nil, value} when not is_nil(value) -> Map.put(acc, key, value)
+        _ -> acc
+      end
+    end)
+  end
 
   @doc """
   Translate a chat payload's per-request routing controls into provider opts.
